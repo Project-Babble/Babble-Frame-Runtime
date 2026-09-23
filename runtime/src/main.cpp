@@ -12,6 +12,7 @@
 #include "core/metrics.h"
 #include "core/paths.h"
 #include "core/threading.h"
+#include "model/executorch_runner.h"
 #include "model/pipeline.h"
 #include "platform/camera_arbiter_client.h"
 #include "sink/sink.h"
@@ -44,12 +45,14 @@ struct Options {
     int stats_interval = -1;
     bool no_eye = false, no_mouth = false;
     std::string log_level;
+    int probe_orientation = 0;
 };
 
 void usage() {
     fprintf(stderr,
             "usage: babble-runtime [--config FILE] [--standalone] [--dump-frames DIR] [--dump-count N]\n"
-            "                      [--stats-interval SECONDS] [--no-eye] [--no-mouth] [--log-level LEVEL]\n");
+            "                      [--stats-interval SECONDS] [--no-eye] [--no-mouth] [--log-level LEVEL]\n"
+            "                      [--probe-orientation FRAMES]\n");
 }
 
 bool parse_args(int argc, char **argv, Options *o) {
@@ -65,6 +68,7 @@ bool parse_args(int argc, char **argv, Options *o) {
         else if (a == "--no-eye") o->no_eye = true;
         else if (a == "--no-mouth") o->no_mouth = true;
         else if (a == "--log-level" && (v = next())) o->log_level = v;
+        else if (a == "--probe-orientation" && (v = next())) o->probe_orientation = atoi(v);
         else if (a == "-h" || a == "--help") { usage(); exit(0); }
         else { usage(); return false; }
     }
@@ -91,6 +95,8 @@ json load(const Options &opt) {
     }
     if (opt.stats_interval > 0) c["stats_interval_s"] = opt.stats_interval;
     if (!opt.log_level.empty()) c["log_level"] = opt.log_level;
+    if (opt.probe_orientation > 0 && c["pipelines"].contains("mouth"))
+        c["pipelines"]["mouth"]["probe_orientation"] = opt.probe_orientation;
     return cl.config;
 }
 
@@ -172,25 +178,27 @@ int main(int argc, char **argv) {
         sinks.push_back({it.key(), std::move(sink)});
     }
 
-    std::vector<std::unique_ptr<Pipeline>> pipelines;
+    // Model pipelines, built from config["pipelines"] by type. XNNPACK's
+    // threadpool is process-global and ignores per-thread pinning, so keep it
+    // at one thread: each model runs on its own pinned pipeline thread.
+    ExecuTorchRunner::set_threads(1);
+    const std::filesystem::path models_dir = paths::resource_dir() / "models";
+    auto slot_of = [&](const std::string &source) -> LatestSlot<StereoFrame> * {
+        auto it = slots.find(source);
+        return it == slots.end() ? nullptr : it->second.get();
+    };
+    std::vector<std::unique_ptr<IPipeline>> pipelines;
     const json pcfg = cfg.value("pipelines", json::object());
     for (auto it = pcfg.begin(); it != pcfg.end(); ++it) {
-        const std::string &name = it.key();
-        const json &pc = it.value();
-        if (!pc.value("enabled", true))
-            continue;
-        const json inputs = pc.value("inputs", json::array());
-        std::string from = inputs.empty() ? "" : inputs[0].value("from", "");
-        auto slot = slots.find(from);
-        if (slot == slots.end()) {
-            LOG_ERROR("pipeline %s: input source '%s' is not configured", name.c_str(), from.c_str());
+        if (!it.value().value("enabled", true)) {
+            LOG_INFO("pipeline %s: disabled", it.key().c_str());
             continue;
         }
-        std::string key = pc.value("thread", "inf-" + name);
-        auto p = std::make_unique<Pipeline>(name, pc, thread_spec(threads, key, ("bbl-" + key).c_str()), *slot->second,
-                                            state, stats, frame_taps);
-        if (p->init())
+        auto p = make_pipeline(it.value(), PipelineDeps{it.key(), threads, slot_of, state, stats, frame_taps, models_dir});
+        if (p && p->init())
             pipelines.push_back(std::move(p));
+        else
+            LOG_ERROR("pipeline %s: not started", it.key().c_str());
     }
 
     struct SourceEntry {

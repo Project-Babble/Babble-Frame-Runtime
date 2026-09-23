@@ -25,12 +25,20 @@
       "nice": 0
     },
     "infE": {
-      "cpus": [2],
+      "cpus": [3],
       "nice": 0
     },
     "sink": {
       "cpus": [0],
       "nice": 0
+    },
+    "osc": {
+      "cpus": [0],
+      "nice": 0
+    },
+    "pupil": {
+      "cpus": [4],
+      "nice": 5
     }
   },
   "sources": {
@@ -58,7 +66,7 @@
       "dsp_version": 17,
       "ctrl_base_candidates": ["0x234000", "0x124000"],
       "request_fps": 120,
-      "process_fps": 120,
+      "process_fps": 90,
       "poll_interval_us": 400,
       "no_frames_timeout_ms": 2000,
       "reopen_backoff_ms": { "min": 5000, "max": 60000 },
@@ -71,60 +79,57 @@
   },
   "pipelines": {
     "mouth": {
-      "thread": "infM",
+      "type": "fusionnet_mouth",
       "enabled": true,
-      "runner": "null",
-      "model": "models/mouth.pte",
-      "inputs": [
-        {
-          "name": "stereo",
-          "from": "mouth",
-          "layout": "sbs_gray_u8",
-          "size": [240, 480]
-        }
-      ],
-      "outputs": [
-        {
-          "name": "blendshapes",
-          "signals": [
-            "jawOpen",
-            "mouthClosed",
-            "mouthSmileLeft",
-            "mouthSmileRight",
-            "mouthFrownLeft",
-            "mouthFrownRight",
-            "mouthPucker",
-            "mouthFunnel",
-            "tongueOut",
-            "cheekPuffLeft",
-            "cheekPuffRight"
-          ]
-        }
-      ]
+      "from": "mouth",
+      "thread": "infM",
+      "model": "fusionnet_int8_xnnpack_qat_linear.pte",
+      "swap": false,
+      "flip": "r",
+      "rotate": 0,
+      "interp": "linear",
+      "ema": 0.5,
+      "presence": true,
+      "presence_threshold": 0.5,
+      "calibration": { "mode": "manual", "file": "calibration_mouth.json" }
     },
     "eye": {
-      "thread": "infE",
+      "type": "babble_eye",
       "enabled": true,
-      "runner": "null",
-      "model": "models/eye.pte",
-      "inputs": [
-        {
-          "name": "stereo",
-          "from": "eye",
-          "layout": "sbs_gray_u8",
-          "size": [240, 480]
-        }
-      ],
-      "outputs": [
-        {
-          "name": "eye",
-          "signals": ["eyeOpenL", "eyeOpenR", "gazeX", "gazeY"]
-        }
-      ]
+      "from": "eye",
+      "thread": "infE",
+      "pupil_thread": "pupil",
+      "lid_model": "lid_mnv4_160_int8.pte",
+      "pupil_model": "pupil_cnx_160_fp32.pte",
+      "update_hz": 90,
+      "pupil_hz": 3,
+      "pupil_gain": 2.0,
+      "lid_alpha": 0.6,
+      "calib": true,
+      "calib_window_s": 20,
+      "calib_warmup_s": 3,
+      "pupil_gate": 0.4,
+      "pupil_gate_hys": 0.1,
+      "pupil_hold_s": 0.1,
+      "pupil_alpha": 0.2,
+      "pupil_rate": 0.6,
+      "pupil_base_s": 60,
+      "babble_swap": false
     }
   },
   "sinks": {
-    "debug": { "type": "debug", "enabled": true, "thread": "sink", "rate_hz": 2, "dump_dir": null, "dump_count": 0 }
+    "debug": { "type": "debug", "enabled": true, "thread": "sink", "rate_hz": 2, "dump_dir": null, "dump_count": 0 },
+    "vrcft": {
+      "type": "osc",
+      "enabled": true,
+      "thread": "osc",
+      "host": "127.0.0.1",
+      "port": 8888,
+      "prefix": "",
+      "max_rate_hz": 0,
+      "test_pattern": false,
+      "exclude": ["userPresent"]
+    }
   },
   "arbiter": {
     "root": "/etc/babble-camera",

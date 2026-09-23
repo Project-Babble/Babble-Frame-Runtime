@@ -20,6 +20,13 @@ file(READ ${BABBLE_DEFAULTS_FILE} BABBLE_DEFAULTS_JSON)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${BABBLE_DEFAULTS_FILE})
 configure_file(src/core/defaults_json.h.in ${CMAKE_CURRENT_BINARY_DIR}/generated/defaults_json.h @ONLY)
 
+# ExecuTorch runtime, built and installed once by tools/build_executorch.sh
+# (XNNPACK backend + the selected portable kernels our models need).
+set(BABBLE_EXECUTORCH_PREFIX "${CMAKE_CURRENT_SOURCE_DIR}/../../et-install" CACHE PATH
+    "Install prefix of the ExecuTorch build (tools/build_executorch.sh)")
+find_package(executorch CONFIG REQUIRED
+    PATHS "${BABBLE_EXECUTORCH_PREFIX}/lib/cmake/ExecuTorch" NO_DEFAULT_PATH)
+
 add_library(babble_core STATIC
     src/core/config.cpp
     src/core/lifecycle.cpp
@@ -41,16 +48,27 @@ add_library(babble_core STATIC
     src/platform/media_graph.cpp
     src/model/null_model_runner.cpp
     src/model/preprocess.cpp
+    src/model/image_ops.cpp
+    src/model/executorch_runner.cpp
     src/model/pipeline.cpp
+    src/model/null_pipeline.cpp
+    src/model/fusionnet_mouth.cpp
+    src/model/babble_eye.cpp
+    src/model/postprocess/mouth_post.cpp
+    src/model/postprocess/eye_post.cpp
     src/state/expression_state.cpp
     src/sink/debug_sink.cpp
     src/sink/sink.cpp
+    src/sink/osc.cpp
+    src/sink/osc_sink.cpp
 )
 target_include_directories(babble_core
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_BINARY_DIR}/generated
     SYSTEM PUBLIC ${THIRD_PARTY}/nlohmann_json/single_include)
 target_compile_options(babble_core PUBLIC -Wall -Wextra -Wno-unused-parameter)
-target_link_libraries(babble_core PUBLIC pthread)
+target_link_libraries(babble_core PUBLIC pthread
+    executorch extension_module_static extension_tensor extension_threadpool
+    xnnpack_backend executorch_selected_kernels portable_kernels)
 
 if(BABBLE_ASAN)
     target_compile_options(babble_core PUBLIC -fsanitize=address -fno-omit-frame-pointer)
@@ -76,8 +94,13 @@ if(BABBLE_TESTS)
         tests/test_config.cpp
         tests/test_tracking_source.cpp
         tests/test_sinks.cpp
+        tests/test_image_ops.cpp
+        tests/test_executorch_runner.cpp
+        tests/test_postprocess.cpp
     )
     target_link_libraries(babble_tests PRIVATE babble_core)
     target_include_directories(babble_tests SYSTEM PRIVATE ${THIRD_PARTY}/doctest)
+    target_compile_definitions(babble_tests PRIVATE BABBLE_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data"
+        BABBLE_MODELS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/resources/models")
     add_test(NAME babble_tests COMMAND babble_tests)
 endif()

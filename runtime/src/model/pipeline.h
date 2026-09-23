@@ -4,12 +4,13 @@
 #include "core/threading.h"
 #include "frame/frame.h"
 #include "frame/mailbox.h"
-#include "model/model_runner.h"
 #include "state/expression_state.h"
 
 #include <nlohmann/json.hpp>
 
 #include <atomic>
+#include <filesystem>
+#include <functional>
 #include <memory>
 #include <string>
 #include <thread>
@@ -19,46 +20,65 @@ namespace babble {
 
 class ISink;
 
-// Config-driven inference stage: takes the latest stereo frame from its
-// source, preprocesses it into the runner's input tensors, runs the model and
-// writes the output signals into ExpressionState.
-//
-// A pipeline's "inputs" name a source ("mouth" or "eye") and a layout; its
-// "outputs" map each output tensor's values, in order, to signal names. A
-// merged model later is one pipeline with inputs from both sources.
-class Pipeline {
+// A model pipeline module: takes the latest frames from its source's slot,
+// runs its model(s) with the model-specific pre- and post-processing, and
+// writes named signals into ExpressionState. Registered by config "type" in
+// make_pipeline(): "fusionnet_mouth", "babble_eye", "null".
+class IPipeline {
 public:
-    // frame_taps: output modules that asked for camera frames (ISink::wants_frames).
-    Pipeline(std::string name, const nlohmann::json &cfg, ThreadSpec thread, LatestSlot<StereoFrame> &input,
-             ExpressionState &state, StatsRegistry &stats, std::vector<ISink *> frame_taps);
-    ~Pipeline();
+    virtual ~IPipeline() = default;
+    virtual bool init() = 0;    // load models, validate tensors, register signals; false = drop it
+    virtual void start() = 0;
+    virtual void stop() = 0;
+};
 
-    bool init();   // builds the runner and validates tensor specs against the config
-    void start();
-    void stop();
+struct PipelineDeps {
+    std::string name;                         // config key, also the stats prefix ("pipe.<name>.")
+    const nlohmann::json &threads;            // config["threads"]
+    std::function<LatestSlot<StereoFrame> *(const std::string &source)> slot;   // null if not configured
+    ExpressionState &state;
+    StatsRegistry &stats;
+    std::vector<ISink *> frame_taps;          // output modules that asked for camera frames
+    std::filesystem::path models_dir;         // relative "model" paths resolve here
+};
 
-private:
-    void run();
+std::unique_ptr<IPipeline> make_pipeline(const nlohmann::json &cfg, PipelineDeps deps);
+
+// Shared plumbing: one pinned thread that waits for the newest frame from the
+// input slot, hands it to frame taps, and calls process(). Subclasses do the
+// model work.
+class PipelineBase : public IPipeline {
+public:
+    ~PipelineBase() override;
+    void start() override;
+    void stop() override;
+
+protected:
+    PipelineBase(const nlohmann::json &cfg, PipelineDeps deps, const char *default_thread_key);
+
+    // Resolves the input slot from cfg["from"] (or cfg["inputs"][0]["from"]); logs on failure.
+    bool bind_input();
+    std::filesystem::path model_path(const std::string &key) const;
+
+    virtual void process(const StereoFrame &frames) = 0;   // pipeline thread
+    virtual void on_start() {}
+    virtual void on_stop() {}
 
     std::string name_;
     nlohmann::json cfg_;
+    PipelineDeps deps_;
     ThreadSpec thread_spec_;
-    LatestSlot<StereoFrame> &input_;
-    ExpressionState &state_;
-    StatsRegistry &stats_;
-    std::vector<ISink *> frame_taps_;
-    std::string source_;   // input source name, passed to frame taps
-
-    std::unique_ptr<IModelRunner> runner_;
-    uint32_t in_h_ = 0, in_w_ = 0;
-    std::vector<std::vector<uint8_t>> in_buffers_, out_buffers_;
-    std::vector<std::vector<SignalId>> out_signals_;   // per output tensor
-
-    std::thread thread_;
-    std::atomic<bool> stop_{false};
+    std::string source_;
+    LatestSlot<StereoFrame> *input_ = nullptr;
 
     RateStat rate_;
     LatencyStat preprocess_, inference_, capture_to_state_;
+
+private:
+    void run();
+    std::thread thread_;
+    std::atomic<bool> stop_{false};
+    bool stats_registered_ = false;
 };
 
 } // namespace babble

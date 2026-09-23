@@ -1,10 +1,16 @@
 #include <doctest/doctest.h>
 
 #include "core/metrics.h"
+#include "sink/osc.h"
 #include "sink/sink.h"
 #include "state/expression_state.h"
 
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
 #include <chrono>
+#include <cstring>
 #include <thread>
 
 using namespace babble;
@@ -50,4 +56,52 @@ TEST_CASE("ExpressionState wakes waiting outputs on update") {
 
     // No update: returns on timeout with the same sequence.
     CHECK(state.wait_update(now_seq, std::chrono::milliseconds(10)) == now_seq);
+}
+
+TEST_CASE("OSC float messages are encoded per the OSC 1.0 spec") {
+    uint8_t buf[64];
+    // "/jawOpen" is 8 chars -> 8 + NUL, padded to 12; ",f" padded to 4; float 0.5 = 0x3f000000 big-endian.
+    size_t n = osc::encode_float("/jawOpen", 0.5f, buf, sizeof(buf));
+    REQUIRE(n == 20);
+    const uint8_t expect[20] = {'/', 'j', 'a', 'w', 'O', 'p', 'e', 'n', 0, 0, 0, 0, ',', 'f', 0, 0, 0x3f, 0, 0, 0};
+    CHECK(memcmp(buf, expect, 20) == 0);
+    // 3 chars -> 4 bytes exactly with its NUL.
+    CHECK(osc::encode_float("/ab", 1.0f, buf, sizeof(buf)) == 12);
+    CHECK(osc::encode_float("/too-long-for-the-buffer", 1.0f, buf, 8) == 0);
+}
+
+TEST_CASE("the osc module sends changed signals to its UDP target") {
+    // Receiver on an ephemeral loopback port.
+    int rx = socket(AF_INET, SOCK_DGRAM, 0);
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    REQUIRE(bind(rx, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) == 0);
+    socklen_t len = sizeof(addr);
+    getsockname(rx, reinterpret_cast<sockaddr *>(&addr), &len);
+    timeval tv{2, 0};
+    setsockopt(rx, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+    json threads = json::object();
+    ExpressionState state;
+    StatsRegistry stats;
+    SignalId jaw = state.add_signal("jawOpen");
+    state.add_signal("tongueOut");   // never updated: must not be sent
+    auto sink = make_sink(json{{"type", "osc"}, {"port", ntohs(addr.sin_port)}, {"prefix", "/babble"}},
+                          SinkDeps{"osc", threads, state, stats});
+    REQUIRE(sink);
+    REQUIRE(sink->start());
+
+    std::pair<SignalId, Signal> v{jaw, Signal{0.25f, 1.0f, 42}};
+    state.update(std::span(&v, 1));
+
+    uint8_t buf[256];
+    ssize_t n = recv(rx, buf, sizeof(buf), 0);
+    sink->stop();
+    close(rx);
+    REQUIRE(n > 0);
+    uint8_t expect[64];
+    size_t en = osc::encode_float("/babble/jawOpen", 0.25f, expect, sizeof(expect));
+    CHECK(size_t(n) == en);
+    CHECK(memcmp(buf, expect, en) == 0);
 }

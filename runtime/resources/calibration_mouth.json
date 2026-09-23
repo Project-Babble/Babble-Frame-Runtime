@@ -1,0 +1,174 @@
+{
+  "CheekPuffLeft": {
+    "min": 0.0,
+    "max": 1.0
+  },
+  "CheekPuffRight": {
+    "min": 0.0,
+    "max": 1.0
+  },
+  "CheekSuckLeft": {
+    "min": 0.0,
+    "max": 1.0
+  },
+  "CheekSuckRight": {
+    "min": 0.0,
+    "max": 1.0
+  },
+  "JawOpen": {
+    "min": 0.0,
+    "max": 1.0
+  },
+  "JawForward": {
+    "min": 0.0,
+    "max": 1.0
+  },
+  "JawLeft": {
+    "min": 0.0,
+    "max": 1.0
+  },
+  "JawRight": {
+    "min": 0.0,
+    "max": 1.0
+  },
+  "NoseSneerLeft": {
+    "min": 0.0,
+    "max": 1.0
+  },
+  "NoseSneerRight": {
+    "min": 0.0,
+    "max": 1.0
+  },
+  "MouthFunnel": {
+    "min": 0.12,
+    "max": 0.54
+  },
+  "MouthPucker": {
+    "min": 0.0,
+    "max": 0.56
+  },
+  "MouthLeft": {
+    "min": 0.0,
+    "max": 1.0
+  },
+  "MouthRight": {
+    "min": 0.0,
+    "max": 1.0
+  },
+  "MouthRollUpper": {
+    "min": 0.0,
+    "max": 1.0
+  },
+  "MouthRollLower": {
+    "min": 0.0,
+    "max": 1.0
+  },
+  "MouthShrugUpper": {
+    "min": 0.0,
+    "max": 1.0
+  },
+  "MouthShrugLower": {
+    "min": 0.0,
+    "max": 1.0
+  },
+  "MouthClose": {
+    "min": 0.0,
+    "max": 1.0
+  },
+  "MouthSmileLeft": {
+    "min": 0.0,
+    "max": 1.0
+  },
+  "MouthSmileRight": {
+    "min": 0.0,
+    "max": 1.0
+  },
+  "MouthFrownLeft": {
+    "min": 0.0,
+    "max": 1.0
+  },
+  "MouthFrownRight": {
+    "min": 0.0,
+    "max": 1.0
+  },
+  "MouthDimpleLeft": {
+    "min": 0.0,
+    "max": 1.0
+  },
+  "MouthDimpleRight": {
+    "min": 0.0,
+    "max": 1.0
+  },
+  "MouthUpperUpLeft": {
+    "min": 0.0,
+    "max": 1.0
+  },
+  "MouthUpperUpRight": {
+    "min": 0.0,
+    "max": 1.0
+  },
+  "MouthLowerDownLeft": {
+    "min": 0.0,
+    "max": 1.0
+  },
+  "MouthLowerDownRight": {
+    "min": 0.0,
+    "max": 1.0
+  },
+  "MouthPressLeft": {
+    "min": 0.0,
+    "max": 1.0
+  },
+  "MouthPressRight": {
+    "min": 0.0,
+    "max": 1.0
+  },
+  "MouthStretchLeft": {
+    "min": 0.0,
+    "max": 1.0
+  },
+  "MouthStretchRight": {
+    "min": 0.0,
+    "max": 1.0
+  },
+  "TongueOut": {
+    "min": 0.0,
+    "max": 1.0
+  },
+  "TongueUp": {
+    "min": 0.0,
+    "max": 1.0
+  },
+  "TongueDown": {
+    "min": 0.0,
+    "max": 1.0
+  },
+  "TongueLeft": {
+    "min": 0.0,
+    "max": 1.0
+  },
+  "TongueRight": {
+    "min": 0.0,
+    "max": 1.0
+  },
+  "TongueRoll": {
+    "min": 0.0,
+    "max": 1.0
+  },
+  "TongueSquish": {
+    "min": 0.0,
+    "max": 1.0
+  },
+  "TongueFlat": {
+    "min": 0.0,
+    "max": 1.0
+  },
+  "TongueTwistLeft": {
+    "min": 0.0,
+    "max": 1.0
+  },
+  "TongueTwistRight": {
+    "min": 0.0,
+    "max": 1.0
+  }
+}

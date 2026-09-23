@@ -6,3 +6,7 @@
 	path = third_party/doctest
 	url = https://github.com/doctest/doctest.git
 	shallow = true
+[submodule "third_party/executorch"]
+	path = third_party/executorch
+	url = https://github.com/pytorch/executorch.git
+	shallow = true
