@@ -1,0 +1,74 @@
+{
+  "version": 1,
+  "log_level": "info",
+  "stats_interval_s": 5,
+  "threads": {
+    "main": { "name": "babble-runtime", "cpus": [0, 1], "nice": 0 },
+    "capL": { "cpus": [0], "nice": -5 },
+    "capR": { "cpus": [1], "nice": -5 },
+    "eye":  { "cpus": [1], "nice": -5 },
+    "infM": { "cpus": [2], "nice": 0 },
+    "infE": { "cpus": [2], "nice": 0 },
+    "sink": { "cpus": [0], "nice": 0 }
+  },
+  "mouth": {
+    "enabled": true,
+    "nodes": { "left": "/dev/video9", "right": "/dev/video13" },
+    "subdev_name_prefixes": ["sf-ov6211-sec", "sf-ov6211-pri"],
+    "format": { "width": 400, "height": 400, "fourcc": "BA81" },
+    "buffers": 6,
+    "pair_tolerance_us": 4000,
+    "sensor_fps": 120,
+    "process_fps": 120,
+    "controls_on_start": { "exposure": 160, "analogue_gain": 1, "frame_sync_fsin_enable": 0 },
+    "strobe": {
+      "on":  { "strobe_enable": 1, "strobe_frame_pulse_start": 1 },
+      "off": { "strobe_enable": 0 }
+    },
+    "auto_exposure": { "mode": "fixed", "target_mean": 110, "interval_frames": 8 },
+    "reopen_backoff_ms": { "min": 500, "max": 5000 }
+  },
+  "eye": {
+    "enabled": true,
+    "dsp_version": 17,
+    "ctrl_base_candidates": ["0x234000", "0x124000"],
+    "request_fps": 120,
+    "process_fps": 120,
+    "poll_interval_us": 400,
+    "no_frames_timeout_ms": 2000,
+    "reopen_backoff_ms": { "min": 5000, "max": 60000 },
+    "crop": { "left": [16, 56, 400, 400], "right": [16, 0, 400, 400] }
+  },
+  "pipelines": {
+    "mouth": {
+      "enabled": true,
+      "runner": "null",
+      "model": "models/mouth.pte",
+      "inputs": [ { "name": "stereo", "from": "mouth", "layout": "sbs_gray_u8", "size": [240, 480] } ],
+      "outputs": [ { "name": "blendshapes",
+                     "signals": ["jawOpen", "mouthClosed", "mouthSmileLeft", "mouthSmileRight",
+                                 "mouthFrownLeft", "mouthFrownRight", "mouthPucker", "mouthFunnel",
+                                 "tongueOut", "cheekPuffLeft", "cheekPuffRight"] } ]
+    },
+    "eye": {
+      "enabled": true,
+      "runner": "null",
+      "model": "models/eye.pte",
+      "inputs": [ { "name": "stereo", "from": "eye", "layout": "sbs_gray_u8", "size": [240, 480] } ],
+      "outputs": [ { "name": "eye", "signals": ["eyeOpenL", "eyeOpenR", "gazeX", "gazeY"] } ]
+    }
+  },
+  "sinks": {
+    "debug": { "enabled": true, "rate_hz": 2, "dump_dir": null, "dump_count": 0 }
+  },
+  "arbiter": {
+    "root": "/etc/babble-camera",
+    "min_version": 1,
+    "module": "steamframe_ov6211_stereo_subdev",
+    "streams_unit": "babble-camera-streams.service",
+    "fpga_read_reg": "/usr/lib/deckard-fpga/read_reg",
+    "media_device": "/dev/media0",
+    "sensor_entities": ["sf-ov6211-pri", "sf-ov6211-sec"],
+    "poll_interval_ms": { "idle": 1000, "streaming": 5000 }
+  }
+}

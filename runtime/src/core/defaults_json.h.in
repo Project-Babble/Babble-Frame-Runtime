@@ -1,0 +1,8 @@
+// Generated from runtime/resources/defaults.json at configure time. Do not edit.
+#pragma once
+
+namespace babble {
+
+inline constexpr const char kDefaultsJson[] = R"json(@BABBLE_DEFAULTS_JSON@)json";
+
+} // namespace babble
