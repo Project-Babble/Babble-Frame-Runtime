@@ -7,24 +7,27 @@
 
 #include <atomic>
 #include <filesystem>
+#include <map>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 
 namespace babble {
 
-// Development sink: logs signal snapshots at debug level and optionally dumps
-// the first N stereo pairs from each pipeline as PGM files. Pipelines offer
-// frames; all disk I/O happens on the sink thread.
+// Config type "debug". Development output: logs signal snapshots at debug
+// level and optionally dumps the first N stereo frames from each source as
+// PGM files. All disk I/O happens on the module's own thread.
 class DebugSink : public ISink {
 public:
-    DebugSink(ThreadSpec thread, double rate_hz, std::filesystem::path dump_dir, int dump_count);
+    DebugSink(const nlohmann::json &cfg, SinkDeps deps);
     ~DebugSink() override;
 
-    void start(const ExpressionState &state, StatsRegistry &stats) override;
+    bool start() override;
     void stop() override;
 
-    // Cheap when no dumps are pending. tag: "mouth" or "eye".
-    void offer(const char *tag, const StereoFrame &sf);
+    bool wants_frames() const override { return dump_count_ > 0; }
+    void offer_frames(const std::string &source, const StereoFrame &frames) override;
 
 private:
     struct Channel {
@@ -32,14 +35,22 @@ private:
         std::atomic<int> remaining{0};
         int written = 0;
     };
+    Channel &channel(const std::string &source);
     void run();
-    void write_pgm(const char *tag, Channel &ch, const StereoFrame &sf);
+    void write_pgm(const std::string &source, Channel &ch, const StereoFrame &sf);
 
+    std::string name_;
     ThreadSpec thread_spec_;
+    const ExpressionState &state_;
     double rate_hz_;
     std::filesystem::path dump_dir_;
-    Channel mouth_, eye_;
-    const ExpressionState *state_ = nullptr;
+    int dump_count_ = 0;
+
+    std::mutex channels_mutex_;
+    std::map<std::string, std::unique_ptr<Channel>> channels_;
+    std::atomic<int> pending_{0};   // channels that still want frames
+    std::atomic<bool> any_channel_{false};
+
     std::thread thread_;
     std::atomic<bool> stop_{false};
 };

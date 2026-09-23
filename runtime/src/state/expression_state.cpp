@@ -13,15 +13,25 @@ SignalId ExpressionState::add_signal(const std::string &name) {
 }
 
 void ExpressionState::update(std::span<const std::pair<SignalId, Signal>> values) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    for (const auto &[id, s] : values)
-        if (id < signals_.size())
-            signals_[id] = s;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        for (const auto &[id, s] : values)
+            if (id < signals_.size())
+                signals_[id] = s;
+        seq_++;
+    }
+    cv_.notify_all();
 }
 
 ExpressionState::Snapshot ExpressionState::snapshot() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    return {names_, signals_};
+    return {seq_, names_, signals_};
+}
+
+uint64_t ExpressionState::wait_update(uint64_t after_seq, std::chrono::nanoseconds timeout) const {
+    std::unique_lock<std::mutex> lock(mutex_);
+    cv_.wait_for(lock, timeout, [&] { return seq_ > after_seq; });
+    return seq_;
 }
 
 } // namespace babble

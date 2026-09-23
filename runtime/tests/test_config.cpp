@@ -9,10 +9,16 @@ TEST_CASE("built-in defaults parse and carry the key settings") {
     std::string err;
     auto d = parse_json(kDefaultsJson, &err);
     REQUIRE_MESSAGE(d.has_value(), err);
-    CHECK((*d)["mouth"]["process_fps"] == 120);
-    CHECK((*d)["mouth"]["nodes"]["left"] == "/dev/video9");
-    CHECK((*d)["eye"]["ctrl_base_candidates"].size() == 2);
-    CHECK((*d)["eye"]["process_fps"] == 120);
+    CHECK((*d)["sources"]["mouth"]["process_fps"] == 120);
+    CHECK((*d)["sources"]["mouth"]["nodes"]["left"] == "/dev/video9");
+    CHECK((*d)["sources"]["eye"]["ctrl_base_candidates"].size() == 2);
+    CHECK((*d)["sources"]["eye"]["process_fps"] == 120);
+    CHECK((*d)["sources"]["mouth"]["type"] == "frame_ov6211_stereo");
+    CHECK((*d)["sources"]["eye"]["type"] == "frame_dsp_eye");
+    // Every pipeline input names a configured source.
+    for (auto &[name, pc] : (*d)["pipelines"].items())
+        for (auto &in : pc["inputs"])
+            CHECK_MESSAGE((*d)["sources"].contains(in["from"].get<std::string>()), name);
 }
 
 TEST_CASE("user config merges over defaults") {

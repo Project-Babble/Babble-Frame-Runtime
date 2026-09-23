@@ -4,16 +4,16 @@
 #include "core/log.h"
 #include "model/null_model_runner.h"
 #include "model/preprocess.h"
-#include "sink/debug_sink.h"
+#include "sink/sink.h"
 
 #include <chrono>
 
 namespace babble {
 
 Pipeline::Pipeline(std::string name, const nlohmann::json &cfg, ThreadSpec thread, LatestSlot<StereoFrame> &input,
-                   ExpressionState &state, StatsRegistry &stats, DebugSink *debug)
+                   ExpressionState &state, StatsRegistry &stats, std::vector<ISink *> frame_taps)
     : name_(std::move(name)), cfg_(cfg), thread_spec_(std::move(thread)), input_(input), state_(state),
-      stats_(stats), debug_(debug) {}
+      stats_(stats), frame_taps_(std::move(frame_taps)) {}
 
 Pipeline::~Pipeline() {
     stop();
@@ -29,6 +29,7 @@ bool Pipeline::init() {
         return false;
     }
     const auto &in = inputs[0];
+    source_ = in.value("from", name_);
     if (in.value("layout", "") != "sbs_gray_u8") {
         LOG_ERROR("pipeline %s: unsupported input layout '%s'", name_.c_str(), in.value("layout", "").c_str());
         return false;
@@ -120,8 +121,8 @@ void Pipeline::run() {
         auto sf = input_.wait_take(std::chrono::milliseconds(200));
         if (!sf)
             continue;
-        if (debug_)
-            debug_->offer(name_.c_str(), *sf);
+        for (ISink *tap : frame_taps_)
+            tap->offer_frames(source_, *sf);
 
         uint64_t t0 = mono_ns();
         preprocess_sbs_gray_u8(*sf, in_buffers_[0].data(), in_h_, in_w_);

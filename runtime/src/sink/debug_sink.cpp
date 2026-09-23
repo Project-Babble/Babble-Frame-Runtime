@@ -10,24 +10,28 @@
 
 namespace babble {
 
-DebugSink::DebugSink(ThreadSpec thread, double rate_hz, std::filesystem::path dump_dir, int dump_count)
-    : thread_spec_(std::move(thread)), rate_hz_(rate_hz > 0 ? rate_hz : 1), dump_dir_(std::move(dump_dir)) {
-    int n = dump_dir_.empty() ? 0 : dump_count;
-    mouth_.remaining = n;
-    eye_.remaining = n;
-    if (n > 0) {
+DebugSink::DebugSink(const nlohmann::json &cfg, SinkDeps deps)
+    : name_(deps.name), thread_spec_(thread_spec(deps.threads, cfg.value("thread", "sink"), "bbl-sink")),
+      state_(deps.state), rate_hz_(cfg.value("rate_hz", 2.0)) {
+    if (rate_hz_ <= 0)
+        rate_hz_ = 1;
+    if (cfg.contains("dump_dir") && cfg["dump_dir"].is_string()) {
+        dump_dir_ = cfg["dump_dir"].get<std::string>();
+        dump_count_ = cfg.value("dump_count", 0);
+    }
+    if (dump_count_ > 0) {
         std::error_code ec;
         std::filesystem::create_directories(dump_dir_, ec);
-        LOG_INFO("debug: dumping %d stereo pairs per camera to %s", n, dump_dir_.c_str());
+        LOG_INFO("%s: dumping %d stereo frames per source to %s", name_.c_str(), dump_count_, dump_dir_.c_str());
     }
 }
 
 DebugSink::~DebugSink() { stop(); }
 
-void DebugSink::start(const ExpressionState &state, StatsRegistry &) {
-    state_ = &state;
+bool DebugSink::start() {
     stop_ = false;
     thread_ = start_thread(thread_spec_, [this] { run(); });
+    return true;
 }
 
 void DebugSink::stop() {
@@ -36,13 +40,27 @@ void DebugSink::stop() {
         thread_.join();
 }
 
-void DebugSink::offer(const char *tag, const StereoFrame &sf) {
-    Channel &ch = strcmp(tag, "eye") == 0 ? eye_ : mouth_;
+DebugSink::Channel &DebugSink::channel(const std::string &source) {
+    std::lock_guard<std::mutex> lock(channels_mutex_);
+    auto &ch = channels_[source];
+    if (!ch) {
+        ch = std::make_unique<Channel>();
+        ch->remaining = dump_count_;
+        pending_++;
+        any_channel_ = true;
+    }
+    return *ch;
+}
+
+void DebugSink::offer_frames(const std::string &source, const StereoFrame &sf) {
+    if (dump_count_ <= 0)
+        return;
+    Channel &ch = channel(source);
     if (ch.remaining.load(std::memory_order_relaxed) > 0)
         ch.slot.put(sf);
 }
 
-void DebugSink::write_pgm(const char *tag, Channel &ch, const StereoFrame &sf) {
+void DebugSink::write_pgm(const std::string &source, Channel &ch, const StereoFrame &sf) {
     // Side by side, left view first; both views share a height.
     const Frame &l = *sf.left, &r = *sf.right;
     uint32_t h = std::min(l.height, r.height), w = l.width + r.width;
@@ -51,34 +69,44 @@ void DebugSink::write_pgm(const char *tag, Channel &ch, const StereoFrame &sf) {
         memcpy(&img[size_t(y) * w], l.data + size_t(y) * l.stride, l.width);
         memcpy(&img[size_t(y) * w + l.width], r.data + size_t(y) * r.stride, r.width);
     }
-    char name[64];
-    snprintf(name, sizeof(name), "%s_%03d.pgm", tag, ch.written);
-    auto path = dump_dir_ / name;
+    char file[128];
+    snprintf(file, sizeof(file), "%s_%03d.pgm", source.c_str(), ch.written);
+    auto path = dump_dir_ / file;
     if (FILE *f = fopen(path.c_str(), "wb")) {
         fprintf(f, "P5\n# capture_ns %llu skew_ns %lld\n%u %u\n255\n", (unsigned long long)sf.capture_ns,
                 (long long)sf.skew_ns, w, h);
         fwrite(img.data(), 1, img.size(), f);
         fclose(f);
     } else {
-        LOG_WARN("debug: cannot write %s", path.c_str());
+        LOG_WARN("%s: cannot write %s", name_.c_str(), path.c_str());
     }
     ch.written++;
-    if (ch.remaining.fetch_sub(1) == 1)
-        LOG_INFO("debug: wrote %d %s pairs to %s", ch.written, tag, dump_dir_.c_str());
+    if (ch.remaining.fetch_sub(1) == 1) {
+        pending_--;
+        LOG_INFO("%s: wrote %d %s frames to %s", name_.c_str(), ch.written, source.c_str(), dump_dir_.c_str());
+    }
 }
 
 void DebugSink::run() {
     const uint64_t period = uint64_t(1e9 / rate_hz_);
     uint64_t next_log = mono_ns() + period;
     while (!stop_) {
-        for (auto [tag, ch] : {std::pair{"mouth", &mouth_}, std::pair{"eye", &eye_}})
-            if (ch->remaining > 0)
-                if (auto sf = ch->slot.take())
-                    write_pgm(tag, *ch, *sf);
+        if (pending_ > 0) {
+            std::vector<std::pair<std::string, Channel *>> chans;
+            {
+                std::lock_guard<std::mutex> lock(channels_mutex_);
+                for (auto &[src, ch] : channels_)
+                    chans.emplace_back(src, ch.get());
+            }
+            for (auto &[src, ch] : chans)
+                if (ch->remaining > 0)
+                    if (auto sf = ch->slot.take())
+                        write_pgm(src, *ch, *sf);
+        }
 
         uint64_t now = mono_ns();
-        if (now >= next_log && state_ && log::level() <= log::Level::Debug) {
-            auto snap = state_->snapshot();
+        if (now >= next_log && log::level() <= log::Level::Debug) {
+            auto snap = state_.snapshot();
             std::string line;
             char buf[64];
             for (size_t i = 0; i < snap.names.size(); i++) {
@@ -88,7 +116,9 @@ void DebugSink::run() {
             LOG_DEBUG("signals: %s", line.c_str());
             next_log = now + period;
         }
-        sleep_ns(5000000);
+        // Poll quickly only while dumps are pending (or may start); otherwise the log rate.
+        bool dumping = dump_count_ > 0 && (pending_ > 0 || !any_channel_);
+        sleep_ns(dumping ? 5000000ull : std::min<uint64_t>(period, 200000000ull));
     }
 }
 

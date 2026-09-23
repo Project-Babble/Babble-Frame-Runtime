@@ -17,7 +17,7 @@
 
 namespace babble {
 
-class DebugSink;
+class ISink;
 
 // Config-driven inference stage: takes the latest stereo frame from its
 // source, preprocesses it into the runner's input tensors, runs the model and
@@ -28,8 +28,9 @@ class DebugSink;
 // merged model later is one pipeline with inputs from both sources.
 class Pipeline {
 public:
+    // frame_taps: output modules that asked for camera frames (ISink::wants_frames).
     Pipeline(std::string name, const nlohmann::json &cfg, ThreadSpec thread, LatestSlot<StereoFrame> &input,
-             ExpressionState &state, StatsRegistry &stats, DebugSink *debug);
+             ExpressionState &state, StatsRegistry &stats, std::vector<ISink *> frame_taps);
     ~Pipeline();
 
     bool init();   // builds the runner and validates tensor specs against the config
@@ -45,7 +46,8 @@ private:
     LatestSlot<StereoFrame> &input_;
     ExpressionState &state_;
     StatsRegistry &stats_;
-    DebugSink *debug_;
+    std::vector<ISink *> frame_taps_;
+    std::string source_;   // input source name, passed to frame taps
 
     std::unique_ptr<IModelRunner> runner_;
     uint32_t in_h_ = 0, in_w_ = 0;

@@ -36,6 +36,7 @@ add_library(babble_core STATIC
     src/camera/mouth/frame_mouth_source.cpp
     src/camera/eye/dsp_client.cpp
     src/camera/eye/dsp_eye_source.cpp
+    src/camera/tracking_source.cpp
     src/platform/camera_arbiter_client.cpp
     src/platform/media_graph.cpp
     src/model/null_model_runner.cpp
@@ -43,6 +44,7 @@ add_library(babble_core STATIC
     src/model/pipeline.cpp
     src/state/expression_state.cpp
     src/sink/debug_sink.cpp
+    src/sink/sink.cpp
 )
 target_include_directories(babble_core
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_BINARY_DIR}/generated
@@ -72,6 +74,8 @@ if(BABBLE_TESTS)
         tests/test_rate_limiter.cpp
         tests/test_dsp_layout.cpp
         tests/test_config.cpp
+        tests/test_tracking_source.cpp
+        tests/test_sinks.cpp
     )
     target_link_libraries(babble_tests PRIVATE babble_core)
     target_include_directories(babble_tests SYSTEM PRIVATE ${THIRD_PARTY}/doctest)

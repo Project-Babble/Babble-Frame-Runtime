@@ -3,6 +3,7 @@
 #include "camera/v4l2/v4l2_subdev.h"
 #include "core/clock.h"
 #include "core/log.h"
+#include "platform/camera_arbiter_client.h"
 
 #include <cstdlib>
 
@@ -19,13 +20,12 @@ uint32_t fourcc_from(const std::string &s) {
 
 } // namespace
 
-FrameMouthSource::FrameMouthSource(const nlohmann::json &mouth_cfg, const nlohmann::json &threads_cfg,
-                                   LatestSlot<StereoFrame> &out, StatsRegistry &stats)
-    : cfg_(mouth_cfg), out_(out), stats_(stats),
-      pairer_(uint64_t(mouth_cfg.value("pair_tolerance_us", 4000)) * 1000ull, FrameOrigin::MouthL,
-              FrameOrigin::MouthR),
-      limiter_(mouth_cfg.value("process_fps", 120.0)),
-      ae_(make_exposure_controller(mouth_cfg.value("auto_exposure", nlohmann::json::object()))) {
+FrameMouthSource::FrameMouthSource(const nlohmann::json &cfg, SourceDeps deps)
+    : cfg_(cfg), name_(deps.name), out_(deps.out), stats_(deps.stats), arbiter_(deps.arbiter),
+      pairer_(uint64_t(cfg.value("pair_tolerance_us", 4000)) * 1000ull, FrameOrigin::MouthL, FrameOrigin::MouthR),
+      limiter_(cfg.value("process_fps", 120.0)),
+      ae_(make_exposure_controller(cfg.value("auto_exposure", nlohmann::json::object()))) {
+    const nlohmann::json &threads_cfg = deps.threads;
     ae_interval_ = std::max<uint32_t>(1, cfg_.value("auto_exposure", nlohmann::json::object()).value("interval_frames", 8));
     auto backoff = cfg_.value("reopen_backoff_ms", nlohmann::json::object());
     backoff_min_ns_ = uint64_t(backoff.value("min", 500)) * 1000000ull;
@@ -47,22 +47,22 @@ FrameMouthSource::FrameMouthSource(const nlohmann::json &mouth_cfg, const nlohma
 
     state_ = cfg_.value("enabled", true) ? State::WaitingForRoute : State::Disabled;
 
-    stats_.add("mouth.left_fps", &left_->frames);
-    stats_.add("mouth.right_fps", &right_->frames);
-    stats_.add("mouth.pair_fps", &pairs_);
-    stats_.add("mouth.process_fps", &processed_);
-    stats_.add("mouth.unmatched_l", &unmatched_l_);
-    stats_.add("mouth.unmatched_r", &unmatched_r_);
-    stats_.add("mouth.driver_drops_l", &left_->driver_drops);
-    stats_.add("mouth.driver_drops_r", &right_->driver_drops);
-    stats_.add("mouth.restarts", &restarts_);
-    stats_.add("mouth.skew", &skew_);
-    stats_.add("mouth.capture_to_pair", &pair_latency_);
+    stats_.add(name_ + ".left_fps", &left_->frames);
+    stats_.add(name_ + ".right_fps", &right_->frames);
+    stats_.add(name_ + ".pair_fps", &pairs_);
+    stats_.add(name_ + ".process_fps", &processed_);
+    stats_.add(name_ + ".unmatched_l", &unmatched_l_);
+    stats_.add(name_ + ".unmatched_r", &unmatched_r_);
+    stats_.add(name_ + ".driver_drops_l", &left_->driver_drops);
+    stats_.add(name_ + ".driver_drops_r", &right_->driver_drops);
+    stats_.add(name_ + ".restarts", &restarts_);
+    stats_.add(name_ + ".skew", &skew_);
+    stats_.add(name_ + ".capture_to_pair", &pair_latency_);
 }
 
 FrameMouthSource::~FrameMouthSource() {
     shutdown();
-    stats_.remove_prefix("mouth.");
+    stats_.remove_prefix(name_ + ".");
 }
 
 const char *FrameMouthSource::state_name() const {
@@ -77,7 +77,7 @@ const char *FrameMouthSource::state_name() const {
 
 void FrameMouthSource::set_process_fps(double fps) {
     limiter_.set_fps(fps);
-    LOG_INFO("mouth: process rate %.1f fps", fps);
+    LOG_INFO("%s: process rate %.1f fps", name_.c_str(), fps);
 }
 
 void FrameMouthSource::apply_control_set(const char *label, const nlohmann::json &set) {
@@ -146,7 +146,8 @@ void FrameMouthSource::stop(const char *why) {
     LOG_INFO("mouth: stopped (%s)", why);
 }
 
-void FrameMouthSource::tick(uint64_t now, bool routed) {
+void FrameMouthSource::tick(uint64_t now) {
+    const bool routed = arbiter_.state() == ArbiterState::Routed;
     // Mirror the pairer's totals into the stats counters (main thread only).
     auto counts = pairer_.counts();
     if (counts.unmatched_left > unmatched_l_.get())

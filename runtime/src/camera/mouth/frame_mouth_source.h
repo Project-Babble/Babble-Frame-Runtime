@@ -1,6 +1,7 @@
 #pragma once
 
 #include "camera/mouth/exposure_controller.h"
+#include "camera/tracking_source.h"
 #include "camera/v4l2/v4l2_capture.h"
 #include "camera/v4l2/v4l2_controls.h"
 #include "core/metrics.h"
@@ -22,27 +23,24 @@ namespace babble {
 // sensor subdev (controls are mirrored to both sensors by the driver; the
 // LED strobe path is on the secondary).
 //
-// Driven from the main thread by tick(); capture runs on two threads that
-// pair frames by timestamp and publish the latest pair to `out`, subsampled
-// to process_fps.
-class FrameMouthSource {
+// Config type "frame_ov6211_stereo". Driven from the main thread by tick(),
+// which waits for the camera arbiter to report the cameras routed; capture
+// runs on two threads that pair frames by timestamp and publish the latest
+// pair to the output slot, subsampled to process_fps.
+class FrameMouthSource : public ITrackingSource {
 public:
     enum class State { Disabled, WaitingForRoute, Streaming, Backoff };
 
-    FrameMouthSource(const nlohmann::json &mouth_cfg, const nlohmann::json &threads_cfg,
-                     LatestSlot<StereoFrame> &out, StatsRegistry &stats);
-    ~FrameMouthSource();
+    FrameMouthSource(const nlohmann::json &cfg, SourceDeps deps);
+    ~FrameMouthSource() override;
 
-    // routed: the camera arbiter reports the lower cameras are routed.
-    void tick(uint64_t now_ns, bool routed);
-    void shutdown();
+    void tick(uint64_t now_ns) override;
+    void shutdown() override;
+    void set_process_fps(double fps) override;
 
-    // User-facing subsample of the tracking rate; takes effect immediately.
-    void set_process_fps(double fps);
-
-    State state() const { return state_; }
-    const char *state_name() const;
-    const std::string &last_error() const { return last_error_; }
+    bool streaming() const override { return state_ == State::Streaming; }
+    const char *state_name() const override;
+    const std::string &last_error() const override { return last_error_; }
 
 private:
     bool start();
@@ -51,8 +49,10 @@ private:
     void apply_control_set(const char *label, const nlohmann::json &set);
 
     nlohmann::json cfg_;
+    std::string name_;
     LatestSlot<StereoFrame> &out_;
     StatsRegistry &stats_;
+    const CameraArbiterClient &arbiter_;
 
     std::unique_ptr<V4l2Capture> left_, right_;
     V4l2Controls controls_;

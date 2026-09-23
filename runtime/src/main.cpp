@@ -4,8 +4,7 @@
 // with a pipe on fd 3; EOF there or SIGTERM means shut down. --standalone
 // runs without the shim for development over SSH.
 
-#include "camera/eye/dsp_eye_source.h"
-#include "camera/mouth/frame_mouth_source.h"
+#include "camera/tracking_source.h"
 #include "core/clock.h"
 #include "core/config.h"
 #include "core/lifecycle.h"
@@ -15,7 +14,7 @@
 #include "core/threading.h"
 #include "model/pipeline.h"
 #include "platform/camera_arbiter_client.h"
-#include "sink/debug_sink.h"
+#include "sink/sink.h"
 #include "state/expression_state.h"
 
 #include <cerrno>
@@ -23,6 +22,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -78,11 +78,17 @@ json load(const Options &opt) {
     else if (cl.user_loaded)
         LOG_INFO("config: loaded %s", cl.user_file.c_str());
     json &c = cl.config;
-    if (opt.no_eye) c["eye"]["enabled"] = false;
-    if (opt.no_mouth) c["mouth"]["enabled"] = false;
-    if (!opt.dump_dir.empty()) c["sinks"]["debug"]["dump_dir"] = opt.dump_dir;
-    if (opt.dump_count >= 0) c["sinks"]["debug"]["dump_count"] = opt.dump_count;
-    if (!opt.dump_dir.empty() && opt.dump_count < 0) c["sinks"]["debug"]["dump_count"] = 10;
+    if (opt.no_eye && c["sources"].contains("eye")) c["sources"]["eye"]["enabled"] = false;
+    if (opt.no_mouth && c["sources"].contains("mouth")) c["sources"]["mouth"]["enabled"] = false;
+    // --dump-frames targets the "debug" output module (added if not configured).
+    if (!opt.dump_dir.empty() || opt.dump_count >= 0) {
+        json &d = c["sinks"]["debug"];
+        if (!d.contains("type")) d["type"] = "debug";
+        d["enabled"] = true;
+        if (!opt.dump_dir.empty()) d["dump_dir"] = opt.dump_dir;
+        if (opt.dump_count >= 0) d["dump_count"] = opt.dump_count;
+        else if (!opt.dump_dir.empty()) d["dump_count"] = 10;
+    }
     if (opt.stats_interval > 0) c["stats_interval_s"] = opt.stats_interval;
     if (!opt.log_level.empty()) c["log_level"] = opt.log_level;
     return cl.config;
@@ -137,33 +143,80 @@ int main(int argc, char **argv) {
 
     StatsRegistry stats;
     ExpressionState state;
-    LatestSlot<StereoFrame> mouth_frames, eye_frames;
+    CameraArbiterClient arbiter(cfg.value("arbiter", json::object()));
 
-    const json dbg = cfg["sinks"].value("debug", json::object());
-    std::unique_ptr<DebugSink> debug;
-    if (dbg.value("enabled", true)) {
-        std::string dump = dbg.contains("dump_dir") && dbg["dump_dir"].is_string() ? dbg["dump_dir"].get<std::string>() : "";
-        debug = std::make_unique<DebugSink>(thread_spec(threads, "sink", "bbl-sink"), dbg.value("rate_hz", 2.0), dump,
-                                            dbg.value("dump_count", 0));
+    // One output slot per configured source; pipelines find theirs by name.
+    const json scfg = cfg.value("sources", json::object());
+    std::map<std::string, std::unique_ptr<LatestSlot<StereoFrame>>> slots;
+    for (auto it = scfg.begin(); it != scfg.end(); ++it)
+        slots[it.key()] = std::make_unique<LatestSlot<StereoFrame>>();
+
+    // Output modules, built from config["sinks"] by type.
+    struct SinkEntry {
+        std::string name;
+        std::unique_ptr<ISink> sink;
+    };
+    std::vector<SinkEntry> sinks;
+    std::vector<ISink *> frame_taps;
+    const json kcfg = cfg.value("sinks", json::object());
+    for (auto it = kcfg.begin(); it != kcfg.end(); ++it) {
+        if (!it.value().value("enabled", true)) {
+            LOG_INFO("sink %s: disabled", it.key().c_str());
+            continue;
+        }
+        auto sink = make_sink(it.value(), SinkDeps{it.key(), threads, state, stats});
+        if (!sink)
+            continue;
+        if (sink->wants_frames())
+            frame_taps.push_back(sink.get());
+        sinks.push_back({it.key(), std::move(sink)});
     }
 
     std::vector<std::unique_ptr<Pipeline>> pipelines;
     const json pcfg = cfg.value("pipelines", json::object());
-    for (auto [name, key, input] : {std::tuple{"mouth", "infM", &mouth_frames}, std::tuple{"eye", "infE", &eye_frames}}) {
-        if (!pcfg.contains(name) || !pcfg[name].value("enabled", true))
+    for (auto it = pcfg.begin(); it != pcfg.end(); ++it) {
+        const std::string &name = it.key();
+        const json &pc = it.value();
+        if (!pc.value("enabled", true))
             continue;
-        auto p = std::make_unique<Pipeline>(name, pcfg[name], thread_spec(threads, key, key == std::string("infM") ? "bbl-infM" : "bbl-infE"),
-                                            *input, state, stats, debug.get());
+        const json inputs = pc.value("inputs", json::array());
+        std::string from = inputs.empty() ? "" : inputs[0].value("from", "");
+        auto slot = slots.find(from);
+        if (slot == slots.end()) {
+            LOG_ERROR("pipeline %s: input source '%s' is not configured", name.c_str(), from.c_str());
+            continue;
+        }
+        std::string key = pc.value("thread", "inf-" + name);
+        auto p = std::make_unique<Pipeline>(name, pc, thread_spec(threads, key, ("bbl-" + key).c_str()), *slot->second,
+                                            state, stats, frame_taps);
         if (p->init())
             pipelines.push_back(std::move(p));
     }
 
-    CameraArbiterClient arbiter(cfg.value("arbiter", json::object()));
-    FrameMouthSource mouth(cfg.value("mouth", json::object()), threads, mouth_frames, stats);
-    DspEyeSource eye(cfg.value("eye", json::object()), threads, eye_frames, stats);
+    struct SourceEntry {
+        std::string name;
+        std::unique_ptr<ITrackingSource> src;
+    };
+    std::vector<SourceEntry> sources;
+    for (auto it = scfg.begin(); it != scfg.end(); ++it) {
+        if (!it.value().value("enabled", true)) {
+            LOG_INFO("source %s: disabled", it.key().c_str());
+            continue;
+        }
+        auto src = make_tracking_source(it.value(), SourceDeps{it.key(), threads, *slots[it.key()], stats, arbiter});
+        if (src)
+            sources.push_back({it.key(), std::move(src)});
+    }
 
-    if (debug)
-        debug->start(state, stats);
+    for (auto it = sinks.begin(); it != sinks.end();) {
+        if (it->sink->start()) {
+            ++it;
+            continue;
+        }
+        LOG_ERROR("sink %s: failed to start; dropping it", it->name.c_str());
+        std::erase(frame_taps, it->sink.get());
+        it = sinks.erase(it);
+    }
     for (auto &p : pipelines)
         p->start();
 
@@ -172,7 +225,6 @@ int main(int argc, char **argv) {
     const uint64_t arbiter_streaming_ns = uint64_t(poll_cfg.value("streaming", 5000)) * 1000000ull;
     const uint64_t stats_ns = uint64_t(std::max(1, cfg.value("stats_interval_s", 5))) * 1000000000ull;
     uint64_t next_arbiter = 0, next_stats = mono_ns() + stats_ns;
-    bool routed = false;
     bool running = true;
     const char *exit_reason = "?";
 
@@ -189,11 +241,11 @@ int main(int argc, char **argv) {
                 signalfd_siginfo si{};
                 while (read(sfd, &si, sizeof(si)) == sizeof(si)) {
                     if (si.ssi_signo == SIGHUP) {
-                        // Live settings: the two tracking rates for now.
+                        // Live settings: each source's tracking rate for now.
                         json fresh = load(opt);
                         apply_log_level(fresh);
-                        mouth.set_process_fps(fresh["mouth"].value("process_fps", 120.0));
-                        eye.set_process_fps(fresh["eye"].value("process_fps", 120.0));
+                        for (auto &s : sources)
+                            s.src->set_process_fps(fresh["sources"][s.name].value("process_fps", 120.0));
                     } else {
                         exit_reason = si.ssi_signo == SIGTERM ? "SIGTERM" : "SIGINT";
                         running = false;
@@ -214,20 +266,25 @@ int main(int argc, char **argv) {
             break;
 
         uint64_t now = mono_ns();
-        bool streaming = mouth.state() == FrameMouthSource::State::Streaming;
+        bool any_streaming = false;
+        for (auto &s : sources)
+            any_streaming = any_streaming || s.src->streaming();
         if (now >= next_arbiter) {
-            ArbiterState a = arbiter.poll();
-            routed = a == ArbiterState::Routed;
-            next_arbiter = now + (streaming ? arbiter_streaming_ns : arbiter_idle_ns);
+            arbiter.poll();
+            next_arbiter = now + (any_streaming ? arbiter_streaming_ns : arbiter_idle_ns);
         }
-        mouth.tick(now, routed);
-        if (mouth.state() != FrameMouthSource::State::Streaming && streaming)
-            next_arbiter = now;   // capture trouble: re-check routing right away
-        eye.tick(now);
+        for (auto &s : sources) {
+            bool was = s.src->streaming();
+            s.src->tick(now);
+            if (was && !s.src->streaming())
+                next_arbiter = now;   // capture trouble: re-check the platform right away
+        }
 
         if (now >= next_stats) {
-            LOG_INFO("status: arbiter=%s mouth=%s eye=%s", to_string(arbiter.state()), mouth.state_name(),
-                     eye.state_name());
+            std::string line = std::string("arbiter=") + to_string(arbiter.state());
+            for (auto &s : sources)
+                line += " " + s.name + "=" + s.src->state_name();
+            LOG_INFO("status: %s", line.c_str());
             LOG_INFO("stats: %s", stats.render().c_str());
             next_stats = now + stats_ns;
         }
@@ -237,10 +294,11 @@ int main(int argc, char **argv) {
     // Order: consumers first so nothing holds frames when sources stop.
     for (auto &p : pipelines)
         p->stop();
-    if (debug)
-        debug->stop();
-    mouth.shutdown();
-    eye.shutdown();
+    for (auto &k : sinks)
+        k.sink->stop();
+    for (auto &s : sources)
+        s.src->shutdown();
+    sources.clear();
     pipelines.clear();
     LOG_INFO("stopped");
     return 0;

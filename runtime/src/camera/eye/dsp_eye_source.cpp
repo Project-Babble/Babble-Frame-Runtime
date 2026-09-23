@@ -13,10 +13,9 @@ constexpr uint32_t kMaxLayoutFaults = 3;
 
 } // namespace
 
-DspEyeSource::DspEyeSource(const nlohmann::json &eye_cfg, const nlohmann::json &threads_cfg,
-                           LatestSlot<StereoFrame> &out, StatsRegistry &stats)
-    : cfg_(eye_cfg), thread_spec_(thread_spec(threads_cfg, "eye", "bbl-eye")), out_(out), stats_(stats),
-      limiter_(eye_cfg.value("process_fps", 120.0)) {
+DspEyeSource::DspEyeSource(const nlohmann::json &cfg, SourceDeps deps)
+    : cfg_(cfg), name_(deps.name), thread_spec_(thread_spec(deps.threads, "eye", "bbl-eye")), out_(deps.out),
+      stats_(deps.stats), limiter_(cfg.value("process_fps", 120.0)) {
     for (const auto &c : cfg_.value("ctrl_base_candidates", nlohmann::json::array())) {
         if (c.is_string())
             candidates_.push_back(uint32_t(std::stoul(c.get<std::string>(), nullptr, 0)));
@@ -37,22 +36,23 @@ DspEyeSource::DspEyeSource(const nlohmann::json &eye_cfg, const nlohmann::json &
     backoff_max_ns_ = uint64_t(backoff.value("max", 60000)) * 1000000ull;
     state_ = cfg_.value("enabled", true) ? State::Connecting : State::Disabled;
 
-    stats_.add("eye.fps", &frames_);
-    stats_.add("eye.process_fps", &processed_);
-    stats_.add("eye.layout_faults", &layout_faults_);
-    stats_.add("eye.restarts", &restarts_);
-    stats_.add("eye.pool_exhausted", &pool_exhausted_);
-    stats_.add("eye.copy", &copy_time_);
+    stats_.add(name_ + ".fps", &frames_);
+    stats_.add(name_ + ".process_fps", &processed_);
+    stats_.add(name_ + ".layout_faults", &layout_faults_);
+    stats_.add(name_ + ".restarts", &restarts_);
+    stats_.add(name_ + ".pool_exhausted", &pool_exhausted_);
+    stats_.add(name_ + ".copy", &copy_time_);
+    stats_.add(name_ + ".late_detect", &late_detect_);
 }
 
 DspEyeSource::~DspEyeSource() {
     shutdown();
-    stats_.remove_prefix("eye.");
+    stats_.remove_prefix(name_ + ".");
 }
 
 void DspEyeSource::set_process_fps(double fps) {
     limiter_.set_fps(fps);
-    LOG_INFO("eye: process rate %.1f fps", fps);
+    LOG_INFO("%s: process rate %.1f fps", name_.c_str(), fps);
 }
 
 const char *DspEyeSource::state_name() const {
@@ -145,9 +145,46 @@ bool DspEyeSource::copy_view(bool right, uint32_t idx, uint64_t now, uint32_t se
 void DspEyeSource::run() {
     const uint64_t poll_ns = uint64_t(cfg_.value("poll_interval_us", 400)) * 1000ull;
     const uint64_t no_frames_ns = uint64_t(cfg_.value("no_frames_timeout_ms", 2000)) * 1000000ull;
+    const uint64_t margin_min_ns = uint64_t(cfg_.value("predict_margin_us", 1500)) * 1000ull;
     uint32_t last_l = DspClient::kNotReady, last_r = DspClient::kNotReady;
     uint64_t last_frame = mono_ns();
     uint32_t seq = 0;
+
+    // Frame-timed polling state (see class comment).
+    uint64_t interval_ns = 0;          // smoothed frame interval, 0 = unknown
+    uint64_t margin_ns = margin_min_ns;
+    uint64_t last_change_ns = 0;
+    uint32_t on_time = 0;
+    bool after_coarse_sleep = false;
+    auto on_new_frame = [&](uint64_t now) {
+        if (last_change_ns) {
+            uint64_t dt = now - last_change_ns;
+            if (dt < 100000000ull)   // ignore gaps (stalls, restarts)
+                interval_ns = interval_ns ? (interval_ns * 7 + dt) / 8 : dt;
+        }
+        last_change_ns = now;
+        if (after_coarse_sleep) {
+            // The frame landed while we slept: detection was late by up to
+            // the margin. Wake earlier from now on.
+            late_detect_.add();
+            margin_ns = std::min<uint64_t>(margin_ns + 250000ull, interval_ns / 2);
+            on_time = 0;
+        } else if (++on_time >= 200 && margin_ns > margin_min_ns) {
+            margin_ns -= 100000ull;
+            on_time = 0;
+        }
+        after_coarse_sleep = false;
+    };
+    auto idle_sleep = [&](uint64_t now) {
+        uint64_t wake = interval_ns ? last_change_ns + interval_ns - std::min(margin_ns, interval_ns) : 0;
+        if (wake > now + poll_ns) {
+            sleep_ns(wake - now);
+            after_coarse_sleep = true;
+        } else {
+            sleep_ns(poll_ns);
+            after_coarse_sleep = false;
+        }
+    };
 
     if (!logged_gap_) {
         // Research aid: the 64 bytes between frame end and next slot may hold metadata.
@@ -180,10 +217,11 @@ void DspEyeSource::run() {
                 failed_ = true;
                 return;
             }
-            sleep_ns(poll_ns);
+            idle_sleep(now);
             continue;
         }
 
+        on_new_frame(now);
         frames_.tick();
         if (!limiter_.accept(now)) {
             // Subsampled out: skip the copy, but hand the slots back exactly
