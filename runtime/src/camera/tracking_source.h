@@ -13,6 +13,7 @@
 namespace babble {
 
 class CameraArbiterClient;
+class SteamVrClient;
 
 // A tracking camera module: owns its capture threads and hardware, publishes
 // the latest (stereo) frame into its output slot. Each concrete module (the
@@ -46,6 +47,9 @@ struct SourceDeps {
     LatestSlot<StereoFrame> &out;
     StatsRegistry &stats;
     const CameraArbiterClient &arbiter;
+    // Headset-worn state; with pause_when_absent (default) a module stops its
+    // cameras while SteamVR reports the headset not worn. Null = never pause.
+    const SteamVrClient *steamvr = nullptr;
 };
 
 // Builds the module named by cfg["type"]; null (logged) for unknown types.

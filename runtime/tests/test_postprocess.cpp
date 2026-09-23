@@ -39,13 +39,13 @@ void check_opt(const json &want, std::optional<double> got, double tol, const ch
 
 } // namespace
 
-TEST_CASE("mouth post-processing matches mouth_osc_pc.py (manual and auto)") {
+TEST_CASE("mouth post-processing matches mouth_osc_pc.py --no-presence (manual and auto)") {
     const auto &preds = golden()["mouth_preds"];
     for (const char *mode_name : {"manual", "auto"}) {
         CAPTURE(mode_name);
         mouth::CalibMode mode;
         REQUIRE(mouth::parse_mode(mode_name, &mode));
-        mouth::Post post(0.5f, 0.5f, true, mode, shipped_calibration());
+        mouth::Post post(0.5f, mode, shipped_calibration());
         const auto &expected = golden()[std::string("mouth_") + mode_name]["expected"];
         REQUIRE(expected.size() == preds.size());
         float worst = 0;
@@ -55,7 +55,7 @@ TEST_CASE("mouth post-processing matches mouth_osc_pc.py (manual and auto)") {
             for (size_t c = 0; c < mouth::kNumChannels; c++)
                 p[c] = preds[f][c].get<float>();
             mouth::Vec got = post.process(p);
-            for (size_t c = 0; c < mouth::kNumChannels; c++) {
+            for (size_t c = 0; c < mouth::kNumShapes; c++) {
                 float d = std::fabs(got[c] - expected[f][c].get<float>());
                 if (d > worst) {
                     worst = d;
@@ -65,20 +65,6 @@ TEST_CASE("mouth post-processing matches mouth_osc_pc.py (manual and auto)") {
         }
         CHECK_MESSAGE(worst <= 1e-6f, "max |diff| " << worst << " at frame " << worst_frame);
     }
-}
-
-TEST_CASE("presence gate debounce and reset") {
-    mouth::PresenceGate g(0.5f, 6, 20, 60);
-    for (int i = 0; i < 5; i++)
-        CHECK_FALSE(g.update(0.9f).first);
-    CHECK(g.update(0.9f).first);                     // 6th present frame turns it on
-    for (int i = 0; i < 19; i++)
-        CHECK(g.update(0.1f).first);
-    CHECK_FALSE(g.update(0.1f).first);                // 20th absent frame turns it off
-    int resets = 0;
-    for (int i = 0; i < 100; i++)
-        resets += g.update(0.1f).second;
-    CHECK(resets == 1);                               // fires once after 60 absent
 }
 
 TEST_CASE("eye post-processing matches eye_osc_pc.py") {

@@ -29,7 +29,7 @@ namespace babble {
 // pair to the output slot, subsampled to process_fps.
 class FrameMouthSource : public ITrackingSource {
 public:
-    enum class State { Disabled, WaitingForRoute, Streaming, Backoff };
+    enum class State { Disabled, WaitingForRoute, Streaming, Backoff, Paused };
 
     FrameMouthSource(const nlohmann::json &cfg, SourceDeps deps);
     ~FrameMouthSource() override;
@@ -53,6 +53,8 @@ private:
     LatestSlot<StereoFrame> &out_;
     StatsRegistry &stats_;
     const CameraArbiterClient &arbiter_;
+    const SteamVrClient *steamvr_ = nullptr;
+    bool pause_when_absent_ = true;
 
     std::unique_ptr<V4l2Capture> left_, right_;
     V4l2Controls controls_;

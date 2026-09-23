@@ -41,5 +41,8 @@ add_custom_target(babble_package ALL
         $<TARGET_FILE:babble_runtime> ${BABBLE_OUT}/bin/${BABBLE_PLATFORM}/babble-runtime.new
     COMMAND ${CMAKE_COMMAND} -E rename
         ${BABBLE_OUT}/bin/${BABBLE_PLATFORM}/babble-runtime.new ${BABBLE_OUT}/bin/${BABBLE_PLATFORM}/babble-runtime
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/openvr/lib/linuxarm64/libopenvr_api.so
+        ${BABBLE_OUT}/bin/${BABBLE_PLATFORM}/libopenvr_api.so
     DEPENDS driver_babble babble_runtime
     VERBATIM)

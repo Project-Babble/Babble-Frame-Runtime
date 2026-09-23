@@ -31,7 +31,7 @@ namespace babble {
 // widen the margin.
 class DspEyeSource : public ITrackingSource {
 public:
-    enum class State { Disabled, Connecting, Streaming, Backoff, Unavailable };
+    enum class State { Disabled, Connecting, Streaming, Backoff, Unavailable, Paused };
 
     DspEyeSource(const nlohmann::json &cfg, SourceDeps deps);
     ~DspEyeSource() override;
@@ -59,6 +59,8 @@ private:
     ThreadSpec thread_spec_;
     LatestSlot<StereoFrame> &out_;
     StatsRegistry &stats_;
+    const SteamVrClient *steamvr_ = nullptr;
+    bool pause_when_absent_ = true;
 
     DspClient client_;
     DspClient::Layout layout_;

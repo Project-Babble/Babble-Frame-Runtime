@@ -5,6 +5,7 @@
 #include "model/babble_eye.h"
 #include "model/fusionnet_mouth.h"
 #include "model/null_pipeline.h"
+#include "model/steamvr_gaze.h"
 #include "sink/sink.h"
 
 #include <chrono>
@@ -17,6 +18,8 @@ std::unique_ptr<IPipeline> make_pipeline(const nlohmann::json &cfg, PipelineDeps
         return std::make_unique<FusionNetMouth>(cfg, std::move(deps));
     if (type == "babble_eye")
         return std::make_unique<BabbleEye>(cfg, std::move(deps));
+    if (type == "steamvr_gaze")
+        return std::make_unique<SteamVrGaze>(cfg, std::move(deps));
     if (type == "null")
         return std::make_unique<NullPipeline>(cfg, std::move(deps));
     LOG_ERROR("pipeline %s: unknown type '%s'", deps.name.c_str(), type.c_str());

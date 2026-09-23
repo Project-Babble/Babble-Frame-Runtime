@@ -52,14 +52,7 @@ bool BabbleEye::init() {
     pupil_gain_ = cfg_.value("pupil_gain", 2.0);
     pupil_every_ns_ = uint64_t(1e9 / pupil_hz);
 
-    for (int e = 0; e < 2; e++) {
-        calib_.emplace_back(size_t(cfg_.value("calib_window_s", 20.0) * hz), size_t(cfg_.value("calib_warmup_s", 3.0) * hz));
-        trackers_.emplace_back(cfg_.value("pupil_gate", 0.4), cfg_.value("pupil_gate_hys", 0.1),
-                               int(cfg_.value("pupil_hold_s", 0.1) * hz), cfg_.value("pupil_alpha", 0.2),
-                               cfg_.value("pupil_rate", 0.6),
-                               size_t(std::max(10, int(cfg_.value("pupil_base_s", 60.0) * pupil_hz))),
-                               size_t(std::max(5, int(pupil_hz))));
-    }
+    reset_session();
 
     const char *names[3] = {"Lid", "Widen", "Dilation"};
     for (int k = 0; k < 3; k++) {
@@ -77,6 +70,36 @@ bool BabbleEye::init() {
     LOG_INFO("pipeline %s: lid%s on %s at %.0f updates/s%s", name_.c_str(), pupil_ ? " + pupil" : "",
              source_.c_str(), hz, pupil_ ? (", pupil " + std::to_string(int(pupil_hz)) + " Hz").c_str() : "");
     return true;
+}
+
+// Per-person state: lid reference, pupil baseline, smoothing. Rebuilt at init
+// and for every new session (headset put back on).
+void BabbleEye::reset_session() {
+    const double hz = cfg_.value("update_hz", 90.0);
+    const double pupil_hz = std::min(cfg_.value("pupil_hz", 3.0), hz);
+    calib_.clear();
+    trackers_.clear();
+    for (int e = 0; e < 2; e++) {
+        calib_.emplace_back(size_t(cfg_.value("calib_window_s", 20.0) * hz), size_t(cfg_.value("calib_warmup_s", 3.0) * hz));
+        trackers_.emplace_back(cfg_.value("pupil_gate", 0.4), cfg_.value("pupil_gate_hys", 0.1),
+                               int(cfg_.value("pupil_hold_s", 0.1) * hz), cfg_.value("pupil_alpha", 0.2),
+                               cfg_.value("pupil_rate", 0.6),
+                               size_t(std::max(10, int(cfg_.value("pupil_base_s", 60.0) * pupil_hz))),
+                               size_t(std::max(5, int(pupil_hz))));
+    }
+    smoothed_ = {};
+}
+
+void BabbleEye::on_presence(bool worn) {
+    if (worn)
+        return;
+    // Headset off: open, relaxed eyes once (VRCFT's defaults); dilation keeps
+    // its last value. The next session relearns the lid reference and baseline.
+    const uint64_t now = mono_ns();
+    std::pair<SignalId, Signal> u[4] = {{left_ids_[0], {1.0f, 0.0f, now}}, {left_ids_[1], {0.0f, 0.0f, now}},
+                                        {right_ids_[0], {1.0f, 0.0f, now}}, {right_ids_[1], {0.0f, 0.0f, now}}};
+    deps_.state.update(u);
+    reset_pending_ = true;
 }
 
 void BabbleEye::prepare(const StereoFrame &sf, float *x) {
@@ -149,6 +172,8 @@ void BabbleEye::pupil_loop() {
 }
 
 void BabbleEye::process(const StereoFrame &sf) {
+    if (reset_pending_.exchange(false))
+        reset_session();
     uint64_t t0 = mono_ns();
     prepare(sf, x_.data());
     uint64_t t1 = mono_ns();

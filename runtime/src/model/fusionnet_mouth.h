@@ -5,6 +5,7 @@
 #include "model/postprocess/mouth_post.h"
 
 #include <array>
+#include <atomic>
 #include <memory>
 #include <vector>
 
@@ -16,12 +17,13 @@ namespace babble {
 // Views: view 0 = left camera (face_l, /dev/video9), view 1 = right camera
 // mirrored; order swap -> flip -> rotate (rotation after the mirror), then
 // resize to 224 (INTER_LINEAR) -> equalizeHist -> /255. Signals: the 43
-// blendshapes in camelCase (the Baballonia module's addresses) plus
-// "userPresent".
+// blendshapes in camelCase (the Baballonia module's addresses). A model's
+// 44th UserPresent output, if present, is ignored.
 //
 // Config: model, from, thread, swap (bool), flip ("r"|"l"|"lr"|"none"),
 // rotate (0|90|180|270, counter-clockwise), interp ("linear"|"area"),
-// ema (0.5), presence (true), presence_threshold (0.5),
+// ema (0.5). Presence comes from the headset (SteamVR proximity): the
+// cameras pause while it's off and each new session resets the filters.
 // calibration: {mode: "manual"|"raw"|"auto", file: "calibration_mouth.json"},
 // probe_orientation (N > 0: for the first N frames also run all 8 rotate x
 // swap combinations and log them ranked by mean UserPresent, like
@@ -30,6 +32,7 @@ class FusionNetMouth : public PipelineBase {
 public:
     FusionNetMouth(const nlohmann::json &cfg, PipelineDeps deps) : PipelineBase(cfg, std::move(deps), "infM") {}
     bool init() override;
+    void on_presence(bool worn) override;
 
     // Preprocess one stereo pair into the two model inputs (exposed for tests).
     void prepare(const StereoFrame &sf, float *view0, float *view1);
@@ -41,12 +44,12 @@ private:
     int quarter_turns_ = 0;
     std::unique_ptr<ExecuTorchRunner> runner_;
     std::unique_ptr<mouth::Post> post_;
-    std::array<SignalId, mouth::kNumChannels> ids_{};
+    std::array<SignalId, mouth::kNumShapes> ids_{};
 
     std::vector<uint8_t> tmp_a_, tmp_b_, small_, eq_;
     std::vector<float> in0_, in1_;
     std::array<float, mouth::kNumChannels> out_{};
-    Counter gate_active_;
+    std::atomic<bool> reset_pending_{false};
 
     void probe(const StereoFrame &sf);
     int probe_left_ = 0, probe_total_ = 0;

@@ -17,7 +17,8 @@ TEST_CASE("built-in defaults parse and carry the key settings") {
     CHECK((*d)["sources"]["eye"]["type"] == "frame_dsp_eye");
     // Every pipeline input names a configured source.
     for (auto &[name, pc] : (*d)["pipelines"].items())
-        CHECK_MESSAGE((*d)["sources"].contains(pc.value("from", "")), name);
+        if (pc.contains("from"))   // gaze reads SteamVR, not a camera source
+            CHECK_MESSAGE((*d)["sources"].contains(pc.value("from", "")), name);
 }
 
 TEST_CASE("user config merges over defaults") {

@@ -14,7 +14,9 @@
 
 namespace babble::mouth {
 
-// Model output order (mouth_osc_pc.py CHANNELS). Index 43 is the UserPresent detector.
+// Model output order (mouth_osc_pc.py CHANNELS). The prototype model has a
+// 44th output, UserPresent; presence now comes from the headset's proximity
+// sensor, so that output is ignored and new models may omit it.
 inline constexpr std::array<const char *, 44> kChannels = {
     "CheekPuffLeft", "CheekPuffRight", "CheekSuckLeft", "CheekSuckRight",
     "JawOpen", "JawForward", "JawLeft", "JawRight",
@@ -30,7 +32,7 @@ inline constexpr std::array<const char *, 44> kChannels = {
     "UserPresent",
 };
 inline constexpr size_t kNumChannels = kChannels.size();
-inline constexpr size_t kPresenceIdx = 43;
+inline constexpr size_t kNumShapes = 43;   // blendshapes, excluding UserPresent
 
 using Vec = std::array<float, kNumChannels>;
 
@@ -61,42 +63,25 @@ private:
     Vec max_observed_, smoothed_, weight_acc_;
 };
 
-// Debounced UserPresent state machine (class PresenceGate).
-class PresenceGate {
-public:
-    explicit PresenceGate(float threshold = 0.5f, int on_frames = 6, int off_frames = 20, int reset_after = 60);
-    // Returns {active, should_reset}.
-    std::pair<bool, bool> update(float value);
-    bool active() const { return active_; }
-
-private:
-    float threshold_;
-    int on_frames_, off_frames_, reset_after_;
-    bool active_ = false, did_reset_ = false;
-    int present_ = 0, absent_ = 0;
-};
-
 enum class CalibMode { Raw, Manual, Auto };
 bool parse_mode(const std::string &s, CalibMode *out);
 
-// The per-frame chain from mouth_osc_pc.py main loop (lines 539-552):
-// EMA -> presence -> gate -> calibration -> zero when inactive.
+// The per-frame chain from mouth_osc_pc.py (lines 540-550) with presence
+// handled outside the model: frames only arrive while SteamVR reports the
+// headset worn, and reset() starts each new session. Equivalent to the
+// reference's --no-presence path. Output: the 43 blendshapes.
 class Post {
 public:
-    Post(float ema, float presence_threshold, bool use_presence, CalibMode mode, Calibration cal);
-    // pred: model output for one frame. Returns the normalized channels, with
-    // [kPresenceIdx] set to the (EMA'd, clipped) presence value.
-    Vec process(const Vec &pred);
-    bool active() const { return gate_.active(); }
+    Post(float ema, CalibMode mode, Calibration cal);
+    Vec process(const Vec &pred);   // uses channels 0..42; any UserPresent value is ignored
     void set_mode(CalibMode m) { mode_ = m; }
+    void reset();                   // new session: forget EMA state and auto-calibration
 
 private:
     float ema_;
-    bool use_presence_;
     CalibMode mode_;
     Calibration cal_;
     AutoCalibrator auto_;
-    PresenceGate gate_;
     Vec raw_state_{};
     bool have_state_ = false;
 };

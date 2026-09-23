@@ -19,17 +19,22 @@
 namespace babble {
 
 class ISink;
+class SteamVrClient;
 
 // A model pipeline module: takes the latest frames from its source's slot,
 // runs its model(s) with the model-specific pre- and post-processing, and
 // writes named signals into ExpressionState. Registered by config "type" in
-// make_pipeline(): "fusionnet_mouth", "babble_eye", "null".
+// make_pipeline(): "fusionnet_mouth", "babble_eye", "steamvr_gaze", "null".
 class IPipeline {
 public:
     virtual ~IPipeline() = default;
     virtual bool init() = 0;    // load models, validate tensors, register signals; false = drop it
     virtual void start() = 0;
     virtual void stop() = 0;
+    // Main thread, when SteamVR reports the headset put on (true) or taken
+    // off (false): publish neutral values on removal and reset per-session
+    // state (calibration, filters) before the next session's first frame.
+    virtual void on_presence(bool worn) {}
 };
 
 struct PipelineDeps {
@@ -40,6 +45,7 @@ struct PipelineDeps {
     StatsRegistry &stats;
     std::vector<ISink *> frame_taps;          // output modules that asked for camera frames
     std::filesystem::path models_dir;         // relative "model" paths resolve here
+    SteamVrClient *steamvr = nullptr;         // shared SteamVR connection (gaze, presence); may be null
 };
 
 std::unique_ptr<IPipeline> make_pipeline(const nlohmann::json &cfg, PipelineDeps deps);

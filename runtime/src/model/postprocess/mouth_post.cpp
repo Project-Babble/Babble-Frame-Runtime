@@ -75,28 +75,6 @@ Vec AutoCalibrator::process(const Vec &raw, bool present) {
     return smoothed_;
 }
 
-PresenceGate::PresenceGate(float threshold, int on_frames, int off_frames, int reset_after)
-    : threshold_(threshold), on_frames_(on_frames), off_frames_(off_frames), reset_after_(reset_after) {}
-
-std::pair<bool, bool> PresenceGate::update(float value) {
-    if (value >= threshold_) {
-        present_++;
-        absent_ = 0;
-        did_reset_ = false;
-        if (!active_ && present_ >= on_frames_)
-            active_ = true;
-    } else {
-        absent_++;
-        present_ = 0;
-        if (active_ && absent_ >= off_frames_)
-            active_ = false;
-    }
-    bool should_reset = absent_ >= reset_after_ && !did_reset_;
-    if (should_reset)
-        did_reset_ = true;
-    return {active_, should_reset};
-}
-
 bool parse_mode(const std::string &s, CalibMode *out) {
     if (s == "raw") *out = CalibMode::Raw;
     else if (s == "manual") *out = CalibMode::Manual;
@@ -105,8 +83,12 @@ bool parse_mode(const std::string &s, CalibMode *out) {
     return true;
 }
 
-Post::Post(float ema, float presence_threshold, bool use_presence, CalibMode mode, Calibration cal)
-    : ema_(ema), use_presence_(use_presence), mode_(mode), cal_(std::move(cal)), gate_(presence_threshold) {}
+Post::Post(float ema, CalibMode mode, Calibration cal) : ema_(ema), mode_(mode), cal_(std::move(cal)) {}
+
+void Post::reset() {
+    auto_.reset();
+    have_state_ = false;
+}
 
 Vec Post::process(const Vec &pred) {
     // raw_state = pred if first else ema * pred + (1 - ema) * raw_state
@@ -117,13 +99,6 @@ Vec Post::process(const Vec &pred) {
         for (size_t i = 0; i < kNumChannels; i++)
             raw_state_[i] = ema_ * pred[i] + (1.0f - ema_) * raw_state_[i];
     }
-    const float present = std::clamp(raw_state_[kPresenceIdx], 0.0f, 1.0f);
-    auto [active, should_reset] = gate_.update(present);
-    if (!use_presence_)
-        active = true;
-    else if (should_reset)
-        auto_.reset();
-
     Vec norm;
     switch (mode_) {
     case CalibMode::Raw:
@@ -134,12 +109,9 @@ Vec Post::process(const Vec &pred) {
         norm = cal_.normalize(raw_state_);
         break;
     case CalibMode::Auto:
-        norm = auto_.process(pred, active);   // the reference feeds the unsmoothed prediction here
+        norm = auto_.process(pred, true);   // the reference feeds the unsmoothed prediction here
         break;
     }
-    norm[kPresenceIdx] = present;
-    if (!active)
-        std::fill(norm.begin(), norm.begin() + kPresenceIdx, 0.0f);
     return norm;
 }
 

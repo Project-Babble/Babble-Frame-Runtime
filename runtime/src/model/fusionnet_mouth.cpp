@@ -40,10 +40,12 @@ bool FusionNetMouth::init() {
         return false;
     auto in = runner_->inputs();
     auto out = runner_->outputs();
-    const std::vector<int64_t> want_in{1, 1, kSize, kSize}, want_out{1, int64_t(mouth::kNumChannels)};
+    const std::vector<int64_t> want_in{1, 1, kSize, kSize};
+    const size_t n_out = out.size() == 1 ? out[0].elements() : 0;
     if (in.size() != 2 || in[0].shape != want_in || in[1].shape != want_in || in[0].dtype != DType::F32 ||
-        out.size() != 1 || out[0].shape != want_out || out[0].dtype != DType::F32) {
-        LOG_ERROR("pipeline %s: model does not match FusionNet's contract (2x[1,1,224,224] -> [1,44])", name_.c_str());
+        out.size() != 1 || out[0].dtype != DType::F32 || (n_out != mouth::kNumShapes && n_out != mouth::kNumChannels)) {
+        LOG_ERROR("pipeline %s: model does not match FusionNet's contract (2x[1,1,224,224] -> [1,43] or [1,44])",
+                  name_.c_str());
         return false;
     }
 
@@ -64,10 +66,9 @@ bool FusionNetMouth::init() {
     if (!err.empty())
         LOG_WARN("pipeline %s: ignoring calibration %s: %s", name_.c_str(), cal_path.c_str(), err.c_str());
 
-    post_ = std::make_unique<mouth::Post>(cfg_.value("ema", 0.5f), cfg_.value("presence_threshold", 0.5f),
-                                          cfg_.value("presence", true), mode, std::move(cal));
+    post_ = std::make_unique<mouth::Post>(cfg_.value("ema", 0.5f), mode, std::move(cal));
 
-    for (size_t i = 0; i < mouth::kNumChannels; i++)
+    for (size_t i = 0; i < mouth::kNumShapes; i++)
         ids_[i] = deps_.state.add_signal(mouth::camel(mouth::kChannels[i]));
 
     tmp_a_.resize(400 * 400);
@@ -76,7 +77,6 @@ bool FusionNetMouth::init() {
     eq_.resize(kSize * kSize);
     in0_.resize(kSize * kSize);
     in1_.resize(kSize * kSize);
-    deps_.stats.add("pipe." + name_ + ".gate_active", &gate_active_);
     probe_left_ = probe_total_ = cfg_.value("probe_orientation", 0);
     if (probe_total_ > 0)
         LOG_INFO("pipeline %s: probing orientation over %d frames (wear the headset, face neutral)", name_.c_str(),
@@ -120,7 +120,13 @@ void FusionNetMouth::prepare(const StereoFrame &sf, float *view0, float *view1) 
 }
 
 void FusionNetMouth::probe(const StereoFrame &sf) {
-    // Try every rotate x swap combination with the configured flip; rank by presence.
+    // Try every rotate x swap combination with the configured flip; rank by the
+    // model's UserPresent output (only meaningful for models that have it).
+    if (runner_->outputs()[0].elements() != mouth::kNumChannels) {
+        LOG_WARN("pipeline %s: orientation probe needs a model with a UserPresent output", name_.c_str());
+        probe_left_ = 0;
+        return;
+    }
     const bool saved_swap = swap_;
     const int saved_turns = quarter_turns_;
     auto ri = runner_->inputs();
@@ -133,7 +139,7 @@ void FusionNetMouth::probe(const StereoFrame &sf) {
         quarter_turns_ = c % 4;
         prepare(sf, in0_.data(), in1_.data());
         if (runner_->run(iv, ov))
-            probe_sum_[c] += std::clamp(out[mouth::kPresenceIdx], 0.0f, 1.0f);
+            probe_sum_[c] += std::clamp(out[mouth::kNumChannels - 1], 0.0f, 1.0f);
     }
     swap_ = saved_swap;
     quarter_turns_ = saved_turns;
@@ -147,7 +153,22 @@ void FusionNetMouth::probe(const StereoFrame &sf) {
                  probe_sum_[c] / probe_total_, (c >= 4) == swap_ && c % 4 == quarter_turns_ ? "   <- configured" : "");
 }
 
+void FusionNetMouth::on_presence(bool worn) {
+    if (worn)
+        return;
+    // Headset off: neutral face once (the cameras pause, so nothing follows),
+    // and start the next session from fresh filter / gate / calibration state.
+    std::vector<std::pair<SignalId, Signal>> updates;
+    const uint64_t now = mono_ns();
+    for (size_t i = 0; i < mouth::kNumShapes; i++)
+        updates.emplace_back(ids_[i], Signal{0.0f, 0.0f, now});
+    deps_.state.update(updates);
+    reset_pending_ = true;
+}
+
 void FusionNetMouth::process(const StereoFrame &sf) {
+    if (reset_pending_.exchange(false))
+        post_->reset();
     if (probe_left_ > 0)
         probe(sf);
     uint64_t t0 = mono_ns();
@@ -163,12 +184,10 @@ void FusionNetMouth::process(const StereoFrame &sf) {
     uint64_t t2 = mono_ns();
 
     mouth::Vec norm = post_->process(out_);
-    if (post_->active())
-        gate_active_.add();
 
     std::vector<std::pair<SignalId, Signal>> updates;
-    updates.reserve(mouth::kNumChannels);
-    for (size_t i = 0; i < mouth::kNumChannels; i++)
+    updates.reserve(mouth::kNumShapes);
+    for (size_t i = 0; i < mouth::kNumShapes; i++)
         updates.emplace_back(ids_[i], Signal{norm[i], 1.0f, sf.capture_ns});
     deps_.state.update(updates);
 

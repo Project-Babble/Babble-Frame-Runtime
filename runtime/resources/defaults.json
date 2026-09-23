@@ -39,6 +39,14 @@
     "pupil": {
       "cpus": [4],
       "nice": 5
+    },
+    "gaze": {
+      "cpus": [0, 1],
+      "nice": 0
+    },
+    "steamvr": {
+      "cpus": [0, 1],
+      "nice": 0
     }
   },
   "sources": {
@@ -58,7 +66,8 @@
         "off": { "strobe_enable": 0 }
       },
       "auto_exposure": { "mode": "fixed", "target_mean": 110, "interval_frames": 8 },
-      "reopen_backoff_ms": { "min": 500, "max": 5000 }
+      "reopen_backoff_ms": { "min": 500, "max": 5000 },
+      "pause_when_absent": true
     },
     "eye": {
       "type": "frame_dsp_eye",
@@ -74,7 +83,8 @@
         "left": [16, 56, 400, 400],
         "right": [16, 0, 400, 400]
       },
-      "predict_margin_us": 1500
+      "predict_margin_us": 1500,
+      "pause_when_absent": true
     }
   },
   "pipelines": {
@@ -89,8 +99,6 @@
       "rotate": 0,
       "interp": "linear",
       "ema": 0.5,
-      "presence": true,
-      "presence_threshold": 0.5,
       "calibration": { "mode": "manual", "file": "calibration_mouth.json" }
     },
     "eye": {
@@ -115,6 +123,19 @@
       "pupil_rate": 0.6,
       "pupil_base_s": 60,
       "babble_swap": false
+    },
+    "gaze": {
+      "type": "steamvr_gaze",
+      "enabled": true,
+      "thread": "gaze",
+      "rate_hz": 90,
+      "ipd": "auto",
+      "max_deg": 45,
+      "flip_y": false,
+      "yaw_offset": 0,
+      "pitch_offset": 0,
+      "roll_offset": 0,
+      "stale_s": 0.5
     }
   },
   "sinks": {
@@ -128,7 +149,7 @@
       "prefix": "",
       "max_rate_hz": 0,
       "test_pattern": false,
-      "exclude": ["userPresent"]
+      "exclude": []
     }
   },
   "arbiter": {
@@ -140,5 +161,10 @@
     "media_device": "/dev/media0",
     "sensor_entities": ["sf-ov6211-pri", "sf-ov6211-sec"],
     "poll_interval_ms": { "idle": 1000, "streaming": 5000 }
+  },
+  "steamvr": {
+    "controller_type": "frame_hmd",
+    "proximity_path": "/user/head/proximity",
+    "eyetracking_path": "/user/head/eyetracking"
   }
 }

@@ -4,6 +4,7 @@
 #include "core/clock.h"
 #include "core/log.h"
 #include "platform/camera_arbiter_client.h"
+#include "platform/steamvr_client.h"
 
 #include <cstdlib>
 
@@ -21,7 +22,8 @@ uint32_t fourcc_from(const std::string &s) {
 } // namespace
 
 FrameMouthSource::FrameMouthSource(const nlohmann::json &cfg, SourceDeps deps)
-    : cfg_(cfg), name_(deps.name), out_(deps.out), stats_(deps.stats), arbiter_(deps.arbiter),
+    : cfg_(cfg), name_(deps.name), out_(deps.out), stats_(deps.stats), arbiter_(deps.arbiter), steamvr_(deps.steamvr),
+      pause_when_absent_(cfg.value("pause_when_absent", true)),
       pairer_(uint64_t(cfg.value("pair_tolerance_us", 4000)) * 1000ull, FrameOrigin::MouthL, FrameOrigin::MouthR),
       limiter_(cfg.value("process_fps", 120.0)),
       ae_(make_exposure_controller(cfg.value("auto_exposure", nlohmann::json::object()))) {
@@ -71,6 +73,7 @@ const char *FrameMouthSource::state_name() const {
     case State::WaitingForRoute: return "WaitingForRoute";
     case State::Streaming: return "Streaming";
     case State::Backoff: return "Backoff";
+    case State::Paused: return "Paused";
     }
     return "?";
 }
@@ -148,6 +151,8 @@ void FrameMouthSource::stop(const char *why) {
 
 void FrameMouthSource::tick(uint64_t now) {
     const bool routed = arbiter_.state() == ArbiterState::Routed;
+    // Only an explicit "not worn" pauses; unknown presence keeps streaming.
+    const bool absent = pause_when_absent_ && steamvr_ && steamvr_->worn() == Worn::No;
     // Mirror the pairer's totals into the stats counters (main thread only).
     auto counts = pairer_.counts();
     if (counts.unmatched_left > unmatched_l_.get())
@@ -158,8 +163,18 @@ void FrameMouthSource::tick(uint64_t now) {
     switch (state_) {
     case State::Disabled:
         return;
+    case State::Paused:
+        if (!absent) {
+            LOG_INFO("%s: headset worn; resuming", name_.c_str());
+            state_ = State::WaitingForRoute;
+            retry_at_ns_ = 0;
+        }
+        return;
     case State::Streaming:
-        if (!routed) {
+        if (absent) {
+            stop("headset not worn");
+            state_ = State::Paused;
+        } else if (!routed) {
             stop("cameras no longer routed");
             state_ = State::WaitingForRoute;
         } else if (lost_) {
@@ -173,6 +188,10 @@ void FrameMouthSource::tick(uint64_t now) {
         return;
     case State::WaitingForRoute:
     case State::Backoff:
+        if (absent) {
+            state_ = State::Paused;
+            return;
+        }
         if (!routed) {
             state_ = State::WaitingForRoute;
             return;

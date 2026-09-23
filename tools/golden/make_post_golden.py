@@ -3,7 +3,7 @@
 
     <python with numpy> tools/golden/make_post_golden.py <dir with mouth_osc_pc.py/eye_osc_pc.py/calibration_mouth.json>
 
-Mouth: the main-loop chain of mouth_osc_pc.py (lines 540-552) in manual and auto modes.
+Mouth: the main-loop chain of mouth_osc_pc.py with --no-presence (lines 540-550), manual and auto modes.
 Eye:   the per-update chain of eye_osc_pc.py (lines 511-517) with a pupil result every 18th update (5 Hz at 90).
 """
 import json, math, pathlib, sys
@@ -17,25 +17,19 @@ import eye_osc_pc as E     # noqa: E402
 rng = np.random.default_rng(7)
 out = {}
 
-# --- mouth: presence goes absent -> present -> absent (long enough for a reset) -> present
+# --- mouth: the reference's --no-presence path (presence now comes from the headset's
+# proximity sensor, outside the model): EMA -> calibration, no gate, no zeroing.
 N = 260
 preds = rng.random((N, M.NUM_CHANNELS)).astype(np.float32) * 0.8
-presence = np.concatenate([np.full(10, 0.1), np.full(90, 0.95), np.full(70, 0.05), np.full(90, 0.9)]).astype(np.float32)
-preds[:, M.PRESENCE_IDX] = presence
 cal = M.Calibration.load(str(ref / "calibration_mouth.json"))
 for mode in ("manual", "auto"):
-    gate, auto = M.PresenceGate(0.5), M.AutoCalibrator()
+    auto = M.AutoCalibrator()
     raw_state, rows = None, []
     for pred in preds:
         raw_state = pred if raw_state is None else 0.5 * pred + (1 - 0.5) * raw_state
-        present = float(np.clip(raw_state[M.PRESENCE_IDX], 0.0, 1.0))
-        active, should_reset = gate.update(present)
-        if should_reset: auto.reset()
+        active = True                                   # --no-presence
         norm = cal.normalize(raw_state) if mode == "manual" else auto.process(pred, active)
-        norm = np.array(norm, np.float32)
-        norm[M.PRESENCE_IDX] = present
-        if not active: norm[:M.PRESENCE_IDX] = 0.0
-        rows.append(norm.tolist())
+        rows.append(np.array(norm, np.float32)[:M.PRESENCE_IDX].tolist())   # the 43 blendshapes
     out[f"mouth_{mode}"] = {"expected": rows}
 out["mouth_preds"] = preds.tolist()
 

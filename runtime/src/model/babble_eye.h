@@ -5,6 +5,7 @@
 #include "model/postprocess/eye_post.h"
 
 #include <array>
+#include <atomic>
 #include <condition_variable>
 #include <memory>
 #include <mutex>
@@ -37,6 +38,7 @@ public:
     BabbleEye(const nlohmann::json &cfg, PipelineDeps deps) : PipelineBase(cfg, std::move(deps), "infE") {}
     ~BabbleEye() override;
     bool init() override;
+    void on_presence(bool worn) override;
 
     // Preprocess one stereo pair into the [2,1,160,160] input (exposed for tests).
     void prepare(const StereoFrame &sf, float *x);
@@ -56,6 +58,8 @@ private:
     std::vector<eye::LidCalibrator> calib_;
     std::vector<eye::PupilTracker> trackers_;
     std::array<std::optional<double>, 2> smoothed_{};
+    void reset_session();
+    std::atomic<bool> reset_pending_{false};
     bool use_calib_ = true, babble_swap_ = false;
     double lid_alpha_ = 0.6, pupil_gain_ = 2.0;
     uint64_t pupil_every_ns_ = 0, last_pupil_submit_ns_ = 0;

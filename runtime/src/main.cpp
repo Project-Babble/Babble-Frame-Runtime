@@ -15,6 +15,7 @@
 #include "model/executorch_runner.h"
 #include "model/pipeline.h"
 #include "platform/camera_arbiter_client.h"
+#include "platform/steamvr_client.h"
 #include "sink/sink.h"
 #include "state/expression_state.h"
 
@@ -150,6 +151,17 @@ int main(int argc, char **argv) {
     StatsRegistry stats;
     ExpressionState state;
     CameraArbiterClient arbiter(cfg.value("arbiter", json::object()));
+    // The one SteamVR connection: headset presence (proximity sensor), IPD, gaze input.
+    SteamVrClient steamvr;
+    {
+        const json vc = cfg.value("steamvr", json::object());
+        SteamVrClient::Options o;
+        o.manifest_dir = (paths::state_dir() / "steamvr_input").string();
+        o.controller_type = vc.value("controller_type", o.controller_type);
+        o.proximity_path = vc.value("proximity_path", o.proximity_path);
+        o.eyetracking_path = vc.value("eyetracking_path", o.eyetracking_path);
+        steamvr.start(thread_spec(threads, "steamvr", "bbl-steamvr"), o);
+    }
 
     // One output slot per configured source; pipelines find theirs by name.
     const json scfg = cfg.value("sources", json::object());
@@ -194,7 +206,8 @@ int main(int argc, char **argv) {
             LOG_INFO("pipeline %s: disabled", it.key().c_str());
             continue;
         }
-        auto p = make_pipeline(it.value(), PipelineDeps{it.key(), threads, slot_of, state, stats, frame_taps, models_dir});
+        auto p = make_pipeline(it.value(),
+                               PipelineDeps{it.key(), threads, slot_of, state, stats, frame_taps, models_dir, &steamvr});
         if (p && p->init())
             pipelines.push_back(std::move(p));
         else
@@ -211,7 +224,7 @@ int main(int argc, char **argv) {
             LOG_INFO("source %s: disabled", it.key().c_str());
             continue;
         }
-        auto src = make_tracking_source(it.value(), SourceDeps{it.key(), threads, *slots[it.key()], stats, arbiter});
+        auto src = make_tracking_source(it.value(), SourceDeps{it.key(), threads, *slots[it.key()], stats, arbiter, &steamvr});
         if (src)
             sources.push_back({it.key(), std::move(src)});
     }
@@ -235,6 +248,7 @@ int main(int argc, char **argv) {
     uint64_t next_arbiter = 0, next_stats = mono_ns() + stats_ns;
     bool running = true;
     const char *exit_reason = "?";
+    Worn last_worn = Worn::Unknown;
 
     while (running) {
         epoll_event evs[4];
@@ -281,6 +295,14 @@ int main(int argc, char **argv) {
             arbiter.poll();
             next_arbiter = now + (any_streaming ? arbiter_streaming_ns : arbiter_idle_ns);
         }
+        // Headset put on / taken off: pipelines publish neutral values and
+        // reset per-session state; sources pause on their own tick.
+        if (Worn w = steamvr.worn(); w != Worn::Unknown && w != last_worn) {
+            if (last_worn != Worn::Unknown || w == Worn::No)
+                for (auto &p : pipelines)
+                    p->on_presence(w == Worn::Yes);
+            last_worn = w;
+        }
         for (auto &s : sources) {
             bool was = s.src->streaming();
             s.src->tick(now);
@@ -289,7 +311,8 @@ int main(int argc, char **argv) {
         }
 
         if (now >= next_stats) {
-            std::string line = std::string("arbiter=") + to_string(arbiter.state());
+            std::string line = std::string("arbiter=") + to_string(arbiter.state()) +
+                               " headset=" + to_string(steamvr.worn());
             for (auto &s : sources)
                 line += " " + s.name + "=" + s.src->state_name();
             LOG_INFO("status: %s", line.c_str());
@@ -308,6 +331,7 @@ int main(int argc, char **argv) {
         s.src->shutdown();
     sources.clear();
     pipelines.clear();
+    steamvr.stop();
     LOG_INFO("stopped");
     return 0;
 }
