@@ -17,13 +17,22 @@ struct Offsets {
     double roll_deg = 0, yaw_deg = 0, pitch_deg = 0;
 };
 
+// How angles become the values sent to the Baballonia module (which copies
+// them into VRCFT's Eye.Gaze):
+//  Tangent: tan(angle). VRCFT reads Gaze as tangents (Vector2.ToYaw =
+//           atan(x), ToPitch = -atan(y), VRCFaceTracking.Core/Types/Vector2.cs),
+//           so this is the documented meaning. Default.
+//  Angle:   angle / max_deg, as eye_osc_pc.py sends it; VRCFT then over-reads
+//           mid-range angles by up to ~4 deg (30 deg arrives as 33.7).
+enum class Scaling { Tangent, Angle };
+
 // eye_osc_pc.py SteamLinkGaze.convert: head-local look point (+x right, +y
 // up, forward along -z in OpenVR, length = distance in m) -> (left yaw,
-// right yaw, pitch), each normalized by max_deg and clamped to -1..1. Each
-// eye sits ipd/2 from the head centre and gets its own yaw towards the point.
-// nullopt for a degenerate (near-zero) vector.
+// right yaw, pitch); positive = right / up. Each eye sits ipd/2 from the head
+// centre and gets its own yaw towards the point. Angles are limited to
+// +-max_deg, then scaled per `scaling`. nullopt for a degenerate vector.
 std::optional<std::array<double, 3>> convert(double x, double y, double z, double ipd, double max_deg, bool flip_y,
-                                             const Offsets &off);
+                                             const Offsets &off, Scaling scaling = Scaling::Tangent);
 
 } // namespace gaze
 
@@ -41,7 +50,8 @@ std::optional<std::array<double, 3>> convert(double x, double y, double z, doubl
 // SteamVR (the shared client re-reads it on VREvent_IpdChanged).
 //
 // Config: thread, rate_hz (90), ipd ("auto" = from SteamVR, or metres to
-// override; 0.063 is the fallback), max_deg (45), flip_y (false),
+// override; 0.063 is the fallback), scaling ("tangent" | "angle"),
+// max_deg (45), flip_y (false),
 // yaw_offset/pitch_offset/roll_offset (deg), stale_s (0.5). The input
 // binding lives in the SteamVR client (config "steamvr").
 class SteamVrGaze : public IPipeline {

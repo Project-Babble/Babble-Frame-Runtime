@@ -16,7 +16,7 @@ namespace babble {
 namespace gaze {
 
 std::optional<std::array<double, 3>> convert(double x, double y, double z, double ipd, double max_deg, bool flip_y,
-                                             const Offsets &off) {
+                                             const Offsets &off, Scaling scaling) {
     if (std::sqrt(x * x + y * y + z * z) < 0.01)
         return std::nullopt;
     z = std::fabs(z);   // forward is -z in OpenVR; eyes never look backwards
@@ -34,7 +34,10 @@ std::optional<std::array<double, 3>> convert(double x, double y, double z, doubl
     nz = z * cp - y * sp;
     y = ny, z = nz;
     const double max_rad = max_deg * M_PI / 180, half_ipd = ipd / 2;
-    auto norm = [&](double a) { return std::max(-1.0, std::min(1.0, a / max_rad)); };
+    auto norm = [&](double a) {
+        a = std::max(-max_rad, std::min(max_rad, a));
+        return scaling == Scaling::Tangent ? std::tan(a) : a / max_rad;
+    };
     return std::array<double, 3>{norm(std::atan2(x + half_ipd, z)), norm(std::atan2(x - half_ipd, z)),
                                  norm(std::atan2(y, std::hypot(x, z)))};
 }
@@ -68,8 +71,13 @@ bool SteamVrGaze::init() {
     deps_.stats.add(p + "invalid", &invalid_);
     deps_.stats.add(p + "reconnects", &reconnects_);
     stats_registered_ = true;
-    LOG_INFO("pipeline %s: SteamVR eye gaze (background OpenVR client) at %.0f Hz", name_.c_str(),
-             cfg_.value("rate_hz", 90.0));
+    const std::string scaling = cfg_.value("scaling", "tangent");
+    if (scaling != "tangent" && scaling != "angle") {
+        LOG_ERROR("pipeline %s: scaling must be tangent or angle", name_.c_str());
+        return false;
+    }
+    LOG_INFO("pipeline %s: SteamVR eye gaze at %.0f Hz, %s scaling", name_.c_str(), cfg_.value("rate_hz", 90.0),
+             scaling.c_str());
     return true;
 }
 
@@ -89,6 +97,8 @@ void SteamVrGaze::run() {
     const uint64_t stale_ns = uint64_t(cfg_.value("stale_s", 0.5) * 1e9);
     const double max_deg = cfg_.value("max_deg", 45.0);
     const bool flip_y = cfg_.value("flip_y", false);
+    const gaze::Scaling scaling =
+        cfg_.value("scaling", "tangent") == "angle" ? gaze::Scaling::Angle : gaze::Scaling::Tangent;
     const gaze::Offsets off{cfg_.value("roll_offset", 0.0), cfg_.value("yaw_offset", 0.0),
                             cfg_.value("pitch_offset", 0.0)};
     uint64_t last_valid = 0;
@@ -136,7 +146,7 @@ void SteamVrGaze::run() {
             double p[3];
             for (int c = 0; c < 3; c++)
                 p[c] = m[0][c] * t[0] + m[1][c] * t[1] + m[2][c] * t[2];
-            if (auto g = gaze::convert(p[0], p[1], p[2], ipd, max_deg, flip_y, off)) {
+            if (auto g = gaze::convert(p[0], p[1], p[2], ipd, max_deg, flip_y, off, scaling)) {
                 const auto &[lx, rx, y] = *g;
                 std::pair<SignalId, Signal> u[4] = {{ids_[0], {float(lx), 1.0f, now}},
                                                     {ids_[1], {float(y), 1.0f, now}},
