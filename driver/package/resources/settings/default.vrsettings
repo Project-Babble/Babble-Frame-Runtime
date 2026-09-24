@@ -1,5 +1,9 @@
 {
 	"driver_babble" : {
-		"enable" : true
+		"enable" : true,
+		"mouthTracking" : true,
+		"mouthRate" : 120,
+		"eyeTracking" : true,
+		"eyeRate" : 90
 	}
 }

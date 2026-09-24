@@ -175,6 +175,15 @@
     "proximity_path": "/user/head/proximity",
     "eyetracking_path": "/user/head/eyetracking"
   },
+  "steamvr_settings": {
+    "section": "driver_babble",
+    "values": [
+      { "key": "mouthTracking", "id": "/sources/mouth/tracking" },
+      { "key": "mouthRate", "id": "/sources/mouth/process_fps" },
+      { "key": "eyeTracking", "id": "/sources/eye/tracking" },
+      { "key": "eyeRate", "id": "/sources/eye/process_fps" }
+    ]
+  },
   "dashboard": {
     "enabled": true,
     "width_m": 1.6,

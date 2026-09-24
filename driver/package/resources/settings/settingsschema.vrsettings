@@ -1,0 +1,48 @@
+[
+	{
+		"title" : "Expression Tracking",
+		"show_without_hmd" : true,
+		"values" : [
+			{
+				"name" : "/settings/driver_babble/mouthTracking",
+				"control" : "toggle",
+				"label" : "Mouth Tracking",
+				"on_label" : "On",
+				"off_label" : "Off"
+			},
+			{
+				"name" : "/settings/driver_babble/mouthRate",
+				"control" : "select",
+				"type" : "int",
+				"label" : "Mouth Tracking Rate",
+				"options" : [
+					{ "value" : "30", "label" : "30 Hz" },
+					{ "value" : "60", "label" : "60 Hz" },
+					{ "value" : "90", "label" : "90 Hz" },
+					{ "value" : "120", "label" : "120 Hz" }
+				],
+				"requires" : { "/settings/driver_babble/mouthTracking" : true }
+			},
+			{
+				"name" : "/settings/driver_babble/eyeTracking",
+				"control" : "toggle",
+				"label" : "Eye Tracking",
+				"on_label" : "On",
+				"off_label" : "Off"
+			},
+			{
+				"name" : "/settings/driver_babble/eyeRate",
+				"control" : "select",
+				"type" : "int",
+				"label" : "Eye Tracking Rate",
+				"options" : [
+					{ "value" : "30", "label" : "30 Hz" },
+					{ "value" : "45", "label" : "45 Hz" },
+					{ "value" : "60", "label" : "60 Hz" },
+					{ "value" : "90", "label" : "90 Hz" }
+				],
+				"requires" : { "/settings/driver_babble/eyeTracking" : true }
+			}
+		]
+	}
+]

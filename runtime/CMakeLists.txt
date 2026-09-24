@@ -47,6 +47,7 @@ add_library(babble_core STATIC
     src/platform/camera_arbiter_client.cpp
     src/platform/media_graph.cpp
     src/platform/steamvr_client.cpp
+    src/platform/steamvr_settings.cpp
     src/model/null_model_runner.cpp
     src/model/preprocess.cpp
     src/model/image_ops.cpp

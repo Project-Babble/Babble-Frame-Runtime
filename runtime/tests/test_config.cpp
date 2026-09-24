@@ -2,6 +2,7 @@
 
 #include "core/config.h"
 #include "defaults_json.h"
+#include "platform/steamvr_settings.h"
 
 #include <filesystem>
 #include <fstream>
@@ -69,4 +70,23 @@ TEST_CASE("settings.json layers over config.json and save_setting keeps other va
     std::string text((std::istreambuf_iterator<char>(in)), {});
     CHECK(text.find("hand-edited") != std::string::npos);
     fs::remove_all(dir);
+}
+
+TEST_CASE("the SteamVR Settings section maps to live runtime settings") {
+    std::string err;
+    auto d = parse_json(kDefaultsJson, &err);
+    REQUIRE(d);
+    auto entries = SteamVrSettingsBridge::entries_from_config(*d);
+    REQUIRE(entries.size() == 4);
+    CHECK((*d)["steamvr_settings"]["section"] == "driver_babble");
+    for (const auto &e : entries) {
+        // Toggles are bools and the rate selects are numbers, like the config values they mirror.
+        const bool is_tracking = e.id.ends_with("/tracking");
+        CHECK_MESSAGE(e.is_bool == is_tracking, e.key);
+        CHECK_MESSAGE((e.id.ends_with("/tracking") || e.id.ends_with("/process_fps")), e.id);
+    }
+    // An id that isn't a bool/number setting is dropped rather than mirrored.
+    json cfg = *d;
+    cfg["steamvr_settings"]["values"].push_back({{"key", "bogus"}, {"id", "/sources/mouth/nodes"}});
+    CHECK(SteamVrSettingsBridge::entries_from_config(cfg).size() == 4);
 }

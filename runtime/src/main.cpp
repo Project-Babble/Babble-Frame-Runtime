@@ -16,6 +16,7 @@
 #include "model/pipeline.h"
 #include "platform/camera_arbiter_client.h"
 #include "platform/steamvr_client.h"
+#include "platform/steamvr_settings.h"
 #include "sink/sink.h"
 #include "state/expression_state.h"
 #include "ui/dashboard.h"
@@ -296,6 +297,48 @@ int main(int argc, char **argv) {
     }
     const std::filesystem::path settings_file = default_settings_file();
 
+    // The driver's "Expression Tracking" section in SteamVR Settings.
+    SteamVrSettingsBridge steamvr_settings(steamvr, cfg["steamvr_settings"].value("section", "driver_babble"),
+                                           SteamVrSettingsBridge::entries_from_config(cfg));
+
+    // One path for every live setting change: the Babble tab, SteamVR
+    // Settings, or a config reload (SIGHUP; not saved, the files already
+    // have it). Applies it, keeps cfg current, saves panel/SteamVR changes to
+    // settings.json, and shows the new value in the other places.
+    enum class Origin { Dashboard, SteamVr, Reload };
+    auto apply_setting = [&](const std::string &id, const json &value, Origin origin) {
+        const json::json_pointer ptr(id);
+        if (cfg.contains(ptr) && cfg[ptr] == value)
+            return;
+        bool applied = false;
+        for (auto &s : sources) {
+            if (id == "/sources/" + s.name + "/process_fps" && value.is_number() && value.get<double>() > 0) {
+                s.src->set_process_fps(value.get<double>());
+                applied = true;
+            } else if (id == "/sources/" + s.name + "/tracking" && value.is_boolean()) {
+                set_feed_tracking(s.name, value.get<bool>());
+                applied = true;
+            }
+        }
+        if (!applied) {
+            LOG_WARN("settings: ignoring %s = %s", id.c_str(), value.dump().c_str());
+            return;
+        }
+        cfg[ptr] = value;
+        if (origin != Origin::Reload) {
+            std::string err;
+            if (save_setting(settings_file, ptr, value, &err))
+                LOG_INFO("settings: %s = %s from %s (saved to %s)", id.c_str(), value.dump().c_str(),
+                         origin == Origin::Dashboard ? "the Babble tab" : "SteamVR Settings", settings_file.c_str());
+            else
+                LOG_ERROR("settings: saving %s failed: %s", id.c_str(), err.c_str());
+        }
+        if (dashboard && value.is_number())
+            dashboard->set_choice(id, value.get<double>());   // feed switches follow the source's state
+        if (origin != Origin::SteamVr)
+            steamvr_settings.push(id, value);
+    };
+
     // Tracking rate per source: frames its pipelines processed per second.
     std::vector<uint64_t> processed_last(pipelines.size(), 0);
     for (size_t i = 0; i < pipelines.size(); i++)
@@ -350,18 +393,14 @@ int main(int argc, char **argv) {
                 signalfd_siginfo si{};
                 while (read(sfd, &si, sizeof(si)) == sizeof(si)) {
                     if (si.ssi_signo == SIGHUP) {
-                        // Live settings: each source's tracking rate for now.
                         json fresh = load(opt);
                         apply_log_level(fresh);
-                        for (auto &s : sources) {
-                            s.src->set_process_fps(fresh["sources"][s.name].value("process_fps", 120.0));
-                            const bool on = fresh["sources"][s.name].value("tracking", true);
-                            if (on != s.src->tracking())
-                                set_feed_tracking(s.name, on);
-                        }
-                        if (dashboard)
-                            for (const ui::Choice &c : dashboard_choices(fresh))
-                                dashboard->set_choice(c.id, c.value);
+                        for (auto &s : sources)
+                            for (const char *key : {"process_fps", "tracking"}) {
+                                const json::json_pointer ptr("/sources/" + s.name + "/" + key);
+                                if (fresh.contains(ptr))
+                                    apply_setting(ptr.to_string(), fresh[ptr], Origin::Reload);
+                            }
                     } else {
                         exit_reason = si.ssi_signo == SIGTERM ? "SIGTERM" : "SIGINT";
                         running = false;
@@ -416,22 +455,11 @@ int main(int argc, char **argv) {
             source_hz = std::move(hz);
             rates_at = now;
         }
+        for (auto &[id, value] : steamvr_settings.poll(cfg, now))
+            apply_setting(id, value, Origin::SteamVr);
         if (dashboard) {
-            // Settings changed on the panel: apply now, keep in settings.json.
-            for (auto &[id, value] : dashboard->take_changes()) {
-                std::string err;
-                if (save_setting(settings_file, json::json_pointer(id), value, &err))
-                    LOG_INFO("settings: %s = %s (saved to %s)", id.c_str(), value.dump().c_str(),
-                             settings_file.c_str());
-                else
-                    LOG_ERROR("settings: saving %s failed: %s", id.c_str(), err.c_str());
-                for (auto &s : sources) {
-                    if (id == "/sources/" + s.name + "/process_fps" && value.is_number())
-                        s.src->set_process_fps(value.get<double>());
-                    else if (id == "/sources/" + s.name + "/tracking" && value.is_boolean())
-                        set_feed_tracking(s.name, value.get<bool>());
-                }
-            }
+            for (auto &[id, value] : dashboard->take_changes())
+                apply_setting(id, value, Origin::Dashboard);
             ui::Status st;
             st.steamvr = steamvr.connected();
             st.worn = steamvr.worn();

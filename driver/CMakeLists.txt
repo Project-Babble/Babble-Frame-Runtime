@@ -22,6 +22,7 @@ set_target_properties(driver_babble PROPERTIES PREFIX "")
 # Assemble the SteamVR driver folder:
 #   babble/driver.vrdrivermanifest
 #   babble/resources/settings/default.vrsettings
+#   babble/resources/settings/settingsschema.vrsettings  (the "Expression Tracking" section in SteamVR Settings)
 #   babble/resources/runtime/defaults.json
 #   babble/bin/<platform>/driver_babble.so
 #   babble/bin/<platform>/babble-runtime
