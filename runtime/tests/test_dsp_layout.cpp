@@ -82,3 +82,21 @@ TEST_CASE("rejects layouts that would run past the mapping") {
     std::string why;
     CHECK_FALSE(DspClient::validate(m.data(), m.size(), l, &why));
 }
+
+TEST_CASE("a blank control block (service just booted) is 'not set up yet', not an unknown layout") {
+    const uint32_t bases[] = {0x234000u, 0x124000u};
+    std::vector<uint8_t> blank(DspClient::kRegionBytes, 0);
+    CHECK(DspClient::fps_unset(blank.data(), blank.size(), bases));
+
+    // Streaming block: the fps word is set, so a failed probe would be a real layout problem.
+    DspClient::Layout l;
+    l.ctrl_base = 0x234000;
+    auto m = good_block(l);
+    CHECK_FALSE(DspClient::fps_unset(m.data(), m.size(), bases));
+
+    // Garbage where the fps word should be: unknown layout, not "not ready".
+    std::vector<uint8_t> junk(DspClient::kRegionBytes, 0);
+    for (uint32_t base : bases)
+        put32(junk, base + DspClient::Layout{}.fps, 0x41424344);
+    CHECK_FALSE(DspClient::fps_unset(junk.data(), junk.size(), bases));
+}

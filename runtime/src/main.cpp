@@ -18,12 +18,14 @@
 #include "platform/steamvr_client.h"
 #include "sink/sink.h"
 #include "state/expression_state.h"
+#include "ui/dashboard.h"
 
 #include <cerrno>
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <algorithm>
 #include <map>
 #include <memory>
 #include <optional>
@@ -106,6 +108,33 @@ void apply_log_level(const json &c) {
     std::string name = c.value("log_level", "info");
     if (log::parse_level(name.c_str(), &lvl))
         log::set_level(lvl);
+}
+
+// The settings panel's rows (config["dashboard"]["settings"]), with the
+// current values from the config. Rows whose setting doesn't exist (e.g. a
+// source that isn't configured) are left out.
+std::vector<ui::Choice> dashboard_choices(const json &cfg) {
+    std::vector<ui::Choice> out;
+    for (const json &row : cfg["dashboard"].value("settings", json::array())) {
+        ui::Choice c;
+        c.id = row.value("id", "");
+        json::json_pointer ptr;
+        try {
+            ptr = json::json_pointer(c.id);
+        } catch (const json::exception &) {
+            LOG_WARN("dashboard: ignoring setting with a bad id '%s'", c.id.c_str());
+            continue;
+        }
+        if (!cfg.contains(ptr) || !cfg[ptr].is_number())
+            continue;
+        c.label = row.value("label", c.id);
+        c.hint = row.value("hint", "");
+        c.unit = row.value("unit", "");
+        c.options = row.value("options", std::vector<double>{});
+        c.value = cfg[ptr].get<double>();
+        out.push_back(std::move(c));
+    }
+    return out;
 }
 
 int add_epoll(int ep, int fd) {
@@ -241,6 +270,64 @@ int main(int argc, char **argv) {
     for (auto &p : pipelines)
         p->start();
 
+    // A feed's user on/off: the source stops its cameras, and every pipeline
+    // of that feed (incl. SteamVR gaze for the eyes) goes neutral.
+    auto set_feed_tracking = [&](const std::string &feed, bool on) {
+        for (auto &s : sources)
+            if (s.name == feed)
+                s.src->set_tracking(on);
+        for (auto &p : pipelines)
+            if (p->feed() == feed)
+                p->set_tracking(on);
+    };
+    for (auto &s : sources)
+        if (!s.src->tracking())
+            set_feed_tracking(s.name, false);
+
+    // The "Babble" tab in the SteamVR dashboard.
+    std::unique_ptr<ui::Dashboard> dashboard;
+    const json dcfg = cfg.value("dashboard", json::object());
+    if (dcfg.value("enabled", true)) {
+        ui::Dashboard::Options o;
+        o.fonts_dir = paths::resource_dir() / "fonts";
+        o.width_m = dcfg.value("width_m", o.width_m);
+        dashboard = std::make_unique<ui::Dashboard>();
+        dashboard->start(steamvr, thread_spec(threads, "ui", "bbl-ui"), o, dashboard_choices(cfg));
+    }
+    const std::filesystem::path settings_file = default_settings_file();
+
+    // Tracking rate per source: frames its pipelines processed per second.
+    std::vector<uint64_t> processed_last(pipelines.size(), 0);
+    for (size_t i = 0; i < pipelines.size(); i++)
+        processed_last[i] = pipelines[i]->processed();
+    std::map<std::string, double> source_hz;
+    uint64_t rates_at = mono_ns();
+    auto feed_status = [&](const std::string &name) {
+        ui::FeedStatus f;
+        auto it = std::find_if(sources.begin(), sources.end(), [&](const SourceEntry &e) { return e.name == name; });
+        if (it == sources.end())
+            return f;   // not configured or disabled: Off, no switch
+        f.available = true;
+        f.tracking = it->src->tracking();
+        switch (it->src->activity()) {
+        case SourceActivity::Off: f.health = ui::Health::Off; break;
+        case SourceActivity::Starting: f.health = ui::Health::Starting; break;
+        case SourceActivity::Paused: f.health = ui::Health::Paused; break;
+        case SourceActivity::Fault:
+            f.health = ui::Health::Fault;
+            f.detail = it->src->last_error();
+            break;
+        case SourceActivity::Streaming: {
+            // Streaming but nothing processed yet (or no pipeline reads it): still starting.
+            auto hz = source_hz.find(name);
+            f.hz = hz == source_hz.end() ? 0 : hz->second;
+            f.health = f.hz > 0.5 ? ui::Health::Working : ui::Health::Starting;
+            break;
+        }
+        }
+        return f;
+    };
+
     const auto poll_cfg = cfg["arbiter"].value("poll_interval_ms", json::object());
     const uint64_t arbiter_idle_ns = uint64_t(poll_cfg.value("idle", 1000)) * 1000000ull;
     const uint64_t arbiter_streaming_ns = uint64_t(poll_cfg.value("streaming", 5000)) * 1000000ull;
@@ -266,8 +353,15 @@ int main(int argc, char **argv) {
                         // Live settings: each source's tracking rate for now.
                         json fresh = load(opt);
                         apply_log_level(fresh);
-                        for (auto &s : sources)
+                        for (auto &s : sources) {
                             s.src->set_process_fps(fresh["sources"][s.name].value("process_fps", 120.0));
+                            const bool on = fresh["sources"][s.name].value("tracking", true);
+                            if (on != s.src->tracking())
+                                set_feed_tracking(s.name, on);
+                        }
+                        if (dashboard)
+                            for (const ui::Choice &c : dashboard_choices(fresh))
+                                dashboard->set_choice(c.id, c.value);
                     } else {
                         exit_reason = si.ssi_signo == SIGTERM ? "SIGTERM" : "SIGINT";
                         running = false;
@@ -310,6 +404,42 @@ int main(int argc, char **argv) {
                 next_arbiter = now;   // capture trouble: re-check the platform right away
         }
 
+        if (now - rates_at >= 1000000000ull) {
+            std::map<std::string, double> hz;
+            for (size_t i = 0; i < pipelines.size(); i++) {
+                const uint64_t n = pipelines[i]->processed();
+                const double r = double(n - processed_last[i]) * 1e9 / double(now - rates_at);
+                processed_last[i] = n;
+                if (const std::string &src = pipelines[i]->source(); !src.empty())
+                    hz[src] = std::max(hz[src], r);
+            }
+            source_hz = std::move(hz);
+            rates_at = now;
+        }
+        if (dashboard) {
+            // Settings changed on the panel: apply now, keep in settings.json.
+            for (auto &[id, value] : dashboard->take_changes()) {
+                std::string err;
+                if (save_setting(settings_file, json::json_pointer(id), value, &err))
+                    LOG_INFO("settings: %s = %s (saved to %s)", id.c_str(), value.dump().c_str(),
+                             settings_file.c_str());
+                else
+                    LOG_ERROR("settings: saving %s failed: %s", id.c_str(), err.c_str());
+                for (auto &s : sources) {
+                    if (id == "/sources/" + s.name + "/process_fps" && value.is_number())
+                        s.src->set_process_fps(value.get<double>());
+                    else if (id == "/sources/" + s.name + "/tracking" && value.is_boolean())
+                        set_feed_tracking(s.name, value.get<bool>());
+                }
+            }
+            ui::Status st;
+            st.steamvr = steamvr.connected();
+            st.worn = steamvr.worn();
+            st.mouth = feed_status(ui::kFeedSources[0]);
+            st.eye = feed_status(ui::kFeedSources[1]);
+            dashboard->set_status(st);
+        }
+
         if (now >= next_stats) {
             std::string line = std::string("arbiter=") + to_string(arbiter.state()) +
                                " headset=" + to_string(steamvr.worn());
@@ -322,6 +452,8 @@ int main(int argc, char **argv) {
     }
 
     LOG_INFO("shutting down: %s", exit_reason);
+    if (dashboard)
+        dashboard->stop();
     // Order: consumers first so nothing holds frames when sources stop.
     for (auto &p : pipelines)
         p->stop();
@@ -332,6 +464,8 @@ int main(int argc, char **argv) {
     sources.clear();
     pipelines.clear();
     steamvr.stop();
+    if (dashboard)
+        dashboard->release_gpu();   // OpenVR wants its Vulkan objects to outlive the connection
     LOG_INFO("stopped");
     return 0;
 }

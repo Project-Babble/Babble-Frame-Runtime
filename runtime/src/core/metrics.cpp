@@ -9,8 +9,9 @@ namespace babble {
 
 double RateStat::snapshot_hz() {
     uint64_t now = mono_ns();
-    uint64_t n = count_.exchange(0, std::memory_order_relaxed);
-    total_.fetch_add(n, std::memory_order_relaxed);
+    uint64_t total = total_.load(std::memory_order_relaxed);
+    uint64_t n = total - last_total_;
+    last_total_ = total;
     double hz = 0;
     if (last_ns_ != 0 && now > last_ns_)
         hz = double(n) * 1e9 / double(now - last_ns_);

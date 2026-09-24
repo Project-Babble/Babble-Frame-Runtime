@@ -12,6 +12,11 @@
 
 namespace babble {
 
+const std::string &IPipeline::source() const {
+    static const std::string none;
+    return none;
+}
+
 std::unique_ptr<IPipeline> make_pipeline(const nlohmann::json &cfg, PipelineDeps deps) {
     const std::string type = cfg.value("type", "null");
     if (type == "fusionnet_mouth")
@@ -27,7 +32,7 @@ std::unique_ptr<IPipeline> make_pipeline(const nlohmann::json &cfg, PipelineDeps
 }
 
 PipelineBase::PipelineBase(const nlohmann::json &cfg, PipelineDeps deps, const char *default_thread_key)
-    : name_(deps.name), cfg_(cfg), deps_(std::move(deps)) {
+    : name_(deps.name), cfg_(cfg), deps_(std::move(deps)), feed_(cfg.value("feed", "")) {
     std::string key = cfg_.value("thread", default_thread_key);
     thread_spec_ = thread_spec(deps_.threads, key, ("bbl-" + key).c_str());
 }

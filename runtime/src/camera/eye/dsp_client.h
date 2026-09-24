@@ -43,6 +43,11 @@ public:
     // Finds the first candidate base whose control words look sane. Reads only.
     std::optional<Layout> probe(std::span<const uint32_t> candidates, std::string *why);
 
+    // True if the frame-rate word is 0 at every candidate: the control block
+    // hasn't been set up yet (the service just started and no one has asked
+    // for the eye cameras), as opposed to a layout we don't recognise.
+    static bool fps_unset(const uint8_t *ctrl, size_t ctrl_size, std::span<const uint32_t> candidates);
+
     // Pure validator over a control-block image, shared with the unit tests.
     static bool validate(const uint8_t *ctrl, size_t ctrl_size, const Layout &layout, std::string *why);
 

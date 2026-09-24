@@ -45,7 +45,7 @@ std::optional<std::array<double, 3>> convert(double x, double y, double z, doubl
 } // namespace gaze
 
 SteamVrGaze::SteamVrGaze(const nlohmann::json &cfg, PipelineDeps deps)
-    : name_(deps.name), cfg_(cfg), deps_(std::move(deps)) {
+    : name_(deps.name), cfg_(cfg), deps_(std::move(deps)), feed_(cfg.value("feed", "eye")) {
     std::string key = cfg_.value("thread", "gaze");
     thread_spec_ = thread_spec(deps_.threads, key, ("bbl-" + key).c_str());
 }
@@ -105,8 +105,21 @@ void SteamVrGaze::run() {
     bool centred = true;
     SteamVrClient &vrc = *deps_.steamvr;
 
+    auto centre = [&](uint64_t now) {
+        std::pair<SignalId, Signal> u[4] = {{ids_[0], {0.f, 0.f, now}}, {ids_[1], {0.f, 0.f, now}},
+                                            {ids_[2], {0.f, 0.f, now}}, {ids_[3], {0.f, 0.f, now}}};
+        deps_.state.update(u);
+        centred = true;
+    };
+
     while (!stop_) {
         const uint64_t now = mono_ns();
+        if (!tracking_) {   // eye feed turned off by the user
+            if (!centred)
+                centre(now);
+            sleep_ns(100000000);
+            continue;
+        }
         if (!vrc.connected()) {
             sleep_ns(100000000);
             continue;
@@ -159,12 +172,8 @@ void SteamVrGaze::run() {
             }
         } else {
             invalid_.add();
-            if (!centred && now - last_valid > stale_ns) {   // back to centre once, like the reference
-                std::pair<SignalId, Signal> u[4] = {{ids_[0], {0.f, 0.f, now}}, {ids_[1], {0.f, 0.f, now}},
-                                                    {ids_[2], {0.f, 0.f, now}}, {ids_[3], {0.f, 0.f, now}}};
-                deps_.state.update(u);
-                centred = true;
-            }
+            if (!centred && now - last_valid > stale_ns)   // back to centre once, like the reference
+                centre(now);
         }
         sleep_ns(period);
     }

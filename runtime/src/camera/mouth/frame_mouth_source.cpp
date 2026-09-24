@@ -24,6 +24,7 @@ uint32_t fourcc_from(const std::string &s) {
 FrameMouthSource::FrameMouthSource(const nlohmann::json &cfg, SourceDeps deps)
     : cfg_(cfg), name_(deps.name), out_(deps.out), stats_(deps.stats), arbiter_(deps.arbiter), steamvr_(deps.steamvr),
       pause_when_absent_(cfg.value("pause_when_absent", true)),
+      tracking_(cfg.value("tracking", true)),
       pairer_(uint64_t(cfg.value("pair_tolerance_us", 4000)) * 1000ull, FrameOrigin::MouthL, FrameOrigin::MouthR),
       limiter_(cfg.value("process_fps", 120.0)),
       ae_(make_exposure_controller(cfg.value("auto_exposure", nlohmann::json::object()))) {
@@ -65,6 +66,23 @@ FrameMouthSource::FrameMouthSource(const nlohmann::json &cfg, SourceDeps deps)
 FrameMouthSource::~FrameMouthSource() {
     shutdown();
     stats_.remove_prefix(name_ + ".");
+}
+
+void FrameMouthSource::set_tracking(bool on) {
+    if (on != tracking_)
+        LOG_INFO("%s: tracking turned %s", name_.c_str(), on ? "on" : "off");
+    tracking_ = on;
+}
+
+SourceActivity FrameMouthSource::activity() const {
+    switch (state_) {
+    case State::Disabled: return SourceActivity::Off;
+    case State::WaitingForRoute: return route_fault_ ? SourceActivity::Fault : SourceActivity::Starting;
+    case State::Streaming: return SourceActivity::Streaming;
+    case State::Backoff: return SourceActivity::Fault;
+    case State::Paused: return tracking_ ? SourceActivity::Paused : SourceActivity::Off;
+    }
+    return SourceActivity::Fault;
 }
 
 const char *FrameMouthSource::state_name() const {
@@ -153,6 +171,18 @@ void FrameMouthSource::tick(uint64_t now) {
     const bool routed = arbiter_.state() == ArbiterState::Routed;
     // Only an explicit "not worn" pauses; unknown presence keeps streaming.
     const bool absent = pause_when_absent_ && steamvr_ && steamvr_->worn() == Worn::No;
+    const bool hold = !tracking_ || absent;
+    const char *why = !tracking_ ? "tracking turned off" : "headset not worn";
+    // Unrouted cameras usually need user action (a reboot): report it as a
+    // fault once it lasts past a startup grace period.
+    constexpr uint64_t kRouteGraceNs = 5000000000ull;
+    if (routed)
+        unrouted_since_ns_ = 0;
+    else if (!unrouted_since_ns_)
+        unrouted_since_ns_ = now;
+    route_fault_ = state_ == State::WaitingForRoute && unrouted_since_ns_ && now - unrouted_since_ns_ > kRouteGraceNs;
+    if (route_fault_)
+        route_error_ = arbiter_.describe();
     // Mirror the pairer's totals into the stats counters (main thread only).
     auto counts = pairer_.counts();
     if (counts.unmatched_left > unmatched_l_.get())
@@ -164,15 +194,15 @@ void FrameMouthSource::tick(uint64_t now) {
     case State::Disabled:
         return;
     case State::Paused:
-        if (!absent) {
-            LOG_INFO("%s: headset worn; resuming", name_.c_str());
+        if (!hold) {
+            LOG_INFO("%s: resuming", name_.c_str());
             state_ = State::WaitingForRoute;
             retry_at_ns_ = 0;
         }
         return;
     case State::Streaming:
-        if (absent) {
-            stop("headset not worn");
+        if (hold) {
+            stop(why);
             state_ = State::Paused;
         } else if (!routed) {
             stop("cameras no longer routed");
@@ -188,7 +218,7 @@ void FrameMouthSource::tick(uint64_t now) {
         return;
     case State::WaitingForRoute:
     case State::Backoff:
-        if (absent) {
+        if (hold) {
             state_ = State::Paused;
             return;
         }

@@ -3,6 +3,12 @@
 #include "core/config.h"
 #include "defaults_json.h"
 
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+
+#include <unistd.h>
+
 using namespace babble;
 
 TEST_CASE("built-in defaults parse and carry the key settings") {
@@ -37,4 +43,30 @@ TEST_CASE("comments are allowed and broken JSON is reported") {
     CHECK(parse_json("{ // tracking rate\n \"a\": 1 }", &err).has_value());
     CHECK_FALSE(parse_json("{ \"a\": }", &err).has_value());
     CHECK_FALSE(err.empty());
+}
+
+TEST_CASE("settings.json layers over config.json and save_setting keeps other values") {
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / ("babble_cfg_test_" + std::to_string(getpid()));
+    fs::create_directories(dir);
+    const fs::path user = dir / "config.json", settings = dir / "settings.json";
+    std::ofstream(user) << R"({ // hand-edited
+        "sources": {"mouth": {"process_fps": 90}, "eye": {"process_fps": 60}}})";
+
+    std::string err;
+    REQUIRE(save_setting(settings, json::json_pointer("/sources/mouth/process_fps"), 30, &err));
+    REQUIRE(save_setting(settings, json::json_pointer("/sources/eye/process_fps"), 45, &err));
+    REQUIRE(save_setting(settings, json::json_pointer("/sources/mouth/process_fps"), 60, &err));
+
+    ConfigLoad cl = load_config(user, settings);
+    CHECK(cl.user_loaded);
+    CHECK(cl.settings_loaded);
+    CHECK(cl.config["sources"]["mouth"]["process_fps"] == 60);   // settings win over config.json
+    CHECK(cl.config["sources"]["eye"]["process_fps"] == 45);
+    CHECK(cl.config["sources"]["mouth"]["type"] == "frame_ov6211_stereo");   // defaults survive
+    // config.json is never rewritten.
+    std::ifstream in(user);
+    std::string text((std::istreambuf_iterator<char>(in)), {});
+    CHECK(text.find("hand-edited") != std::string::npos);
+    fs::remove_all(dir);
 }

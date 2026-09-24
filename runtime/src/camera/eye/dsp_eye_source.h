@@ -39,8 +39,11 @@ public:
     void tick(uint64_t now_ns) override;
     void shutdown() override;
     void set_process_fps(double fps) override;
+    void set_tracking(bool on) override;
+    bool tracking() const override { return tracking_; }
 
     bool streaming() const override { return state_ == State::Streaming; }
+    SourceActivity activity() const override;
     const char *state_name() const override;
     const std::string &last_error() const override { return last_error_; }
 
@@ -61,6 +64,7 @@ private:
     StatsRegistry &stats_;
     const SteamVrClient *steamvr_ = nullptr;
     bool pause_when_absent_ = true;
+    bool tracking_ = true;   // main thread only
 
     DspClient client_;
     DspClient::Layout layout_;
@@ -76,6 +80,8 @@ private:
     State state_ = State::Disabled;
     uint64_t retry_at_ns_ = 0, backoff_ns_ = 0, backoff_min_ns_, backoff_max_ns_;
     std::string last_error_;
+    std::string reported_layout_error_;
+    bool not_ready_ = false;   // last start found the control block not set up yet
     bool logged_gap_ = false;
 
     RateStat frames_, processed_;

@@ -24,7 +24,66 @@ json merge_config(json defaults, const json &user) {
     return defaults;
 }
 
-ConfigLoad load_config(const std::optional<std::filesystem::path> &user_file_override) {
+namespace {
+
+enum class Layer { Missing, Loaded, Broken };
+
+// Reads one user layer and merges it into config.
+Layer merge_layer(const std::filesystem::path &file, json &config, std::string *error) {
+    std::ifstream in(file);
+    if (!in)
+        return Layer::Missing;
+    std::stringstream ss;
+    ss << in.rdbuf();
+    auto user = parse_json(ss.str(), error);
+    if (!user)
+        return Layer::Broken;
+    if (!user->is_object()) {
+        *error = "top level is not an object";
+        return Layer::Broken;
+    }
+    config = merge_config(std::move(config), *user);
+    return Layer::Loaded;
+}
+
+} // namespace
+
+std::filesystem::path default_settings_file() { return paths::config_dir() / "settings.json"; }
+
+bool save_setting(const std::filesystem::path &settings_file, const json::json_pointer &where, const json &value,
+                  std::string *error) {
+    json doc = json::object();
+    {
+        std::ifstream in(settings_file);
+        if (in) {
+            std::stringstream ss;
+            ss << in.rdbuf();
+            auto parsed = parse_json(ss.str(), error);
+            if (parsed && parsed->is_object())
+                doc = std::move(*parsed);   // a broken file is replaced rather than kept
+        }
+    }
+    doc[where] = value;
+    std::filesystem::path tmp = settings_file;
+    tmp += ".tmp";
+    {
+        std::ofstream out(tmp, std::ios::trunc);
+        out << doc.dump(2) << "\n";
+        if (!out) {
+            if (error)
+                *error = "cannot write " + tmp.string();
+            return false;
+        }
+    }
+    std::error_code ec;
+    std::filesystem::rename(tmp, settings_file, ec);
+    if (ec && error)
+        *error = ec.message();
+    return !ec;
+}
+
+ConfigLoad load_config(const std::optional<std::filesystem::path> &user_file_override,
+                       const std::optional<std::filesystem::path> &settings_file_override) {
     ConfigLoad out;
     std::string err;
     auto defaults = parse_json(kDefaultsJson, &err);
@@ -37,23 +96,9 @@ ConfigLoad load_config(const std::optional<std::filesystem::path> &user_file_ove
     }
 
     out.user_file = user_file_override ? *user_file_override : paths::config_dir() / "config.json";
-    std::ifstream in(out.user_file);
-    if (!in)
-        return out;
-
-    std::stringstream ss;
-    ss << in.rdbuf();
-    auto user = parse_json(ss.str(), &err);
-    if (!user) {
-        out.error = err;
-        return out;
-    }
-    if (!user->is_object()) {
-        out.error = "top level is not an object";
-        return out;
-    }
-    out.config = merge_config(std::move(out.config), *user);
-    out.user_loaded = true;
+    out.user_loaded = merge_layer(out.user_file, out.config, &out.error) == Layer::Loaded;
+    out.settings_file = settings_file_override ? *settings_file_override : default_settings_file();
+    out.settings_loaded = merge_layer(out.settings_file, out.config, &out.settings_error) == Layer::Loaded;
     return out;
 }
 

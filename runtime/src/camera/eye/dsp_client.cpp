@@ -161,6 +161,17 @@ bool DspClient::validate(const uint8_t *ctrl, size_t ctrl_size, const Layout &l,
     return true;
 }
 
+bool DspClient::fps_unset(const uint8_t *ctrl, size_t ctrl_size, std::span<const uint32_t> candidates) {
+    if (!ctrl || candidates.empty())
+        return false;
+    for (uint32_t base : candidates) {
+        const uint64_t off = uint64_t(base) + Layout{}.fps;
+        if (off + 4 > ctrl_size || read_u32(ctrl, uint32_t(off)) != 0)
+            return false;
+    }
+    return true;
+}
+
 std::optional<DspClient::Layout> DspClient::probe(std::span<const uint32_t> candidates, std::string *why) {
     if (!ctrl_) {
         if (why)

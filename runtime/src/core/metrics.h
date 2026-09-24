@@ -20,13 +20,13 @@ private:
 // Events per second between snapshots.
 class RateStat {
 public:
-    void tick(uint64_t n = 1) { count_.fetch_add(n, std::memory_order_relaxed); }
+    void tick(uint64_t n = 1) { total_.fetch_add(n, std::memory_order_relaxed); }
     double snapshot_hz();   // resets the window
-    uint64_t total() const { return total_.load(std::memory_order_relaxed); }
+    uint64_t total() const { return total_.load(std::memory_order_relaxed); }   // live, never reset
 
 private:
-    std::atomic<uint64_t> count_{0};
     std::atomic<uint64_t> total_{0};
+    uint64_t last_total_ = 0;
     uint64_t last_ns_ = 0;
 };
 

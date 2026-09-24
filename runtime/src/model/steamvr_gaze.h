@@ -52,7 +52,8 @@ std::optional<std::array<double, 3>> convert(double x, double y, double z, doubl
 // Config: thread, rate_hz (90), ipd ("auto" = from SteamVR, or metres to
 // override; 0.063 is the fallback), scaling ("tangent" | "angle"),
 // max_deg (45), flip_y (false),
-// yaw_offset/pitch_offset/roll_offset (deg), stale_s (0.5). The input
+// yaw_offset/pitch_offset/roll_offset (deg), stale_s (0.5), feed ("eye":
+// the eye feed's on/off also switches gaze). The input
 // binding lives in the SteamVR client (config "steamvr").
 class SteamVrGaze : public IPipeline {
 public:
@@ -62,6 +63,8 @@ public:
     bool init() override;
     void start() override;
     void stop() override;
+    const std::string &feed() const override { return feed_; }
+    void set_tracking(bool on) override { tracking_ = on; }
 
 private:
     void run();
@@ -72,6 +75,8 @@ private:
     ThreadSpec thread_spec_;
     std::thread thread_;
     std::atomic<bool> stop_{false};
+    std::string feed_;
+    std::atomic<bool> tracking_{true};   // off: centre once, then stop reading gaze
 
     std::optional<double> ipd_override_;
     uint64_t setup_connection_ = 0;

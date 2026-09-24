@@ -37,10 +37,14 @@ public:
     void tick(uint64_t now_ns) override;
     void shutdown() override;
     void set_process_fps(double fps) override;
+    void set_tracking(bool on) override;
+    bool tracking() const override { return tracking_; }
 
     bool streaming() const override { return state_ == State::Streaming; }
+    SourceActivity activity() const override;
     const char *state_name() const override;
-    const std::string &last_error() const override { return last_error_; }
+    // While unrouted for a while, the arbiter's explanation (for the UI).
+    const std::string &last_error() const override { return route_fault_ ? route_error_ : last_error_; }
 
 private:
     bool start();
@@ -55,6 +59,10 @@ private:
     const CameraArbiterClient &arbiter_;
     const SteamVrClient *steamvr_ = nullptr;
     bool pause_when_absent_ = true;
+    bool tracking_ = true;   // main thread only
+    uint64_t unrouted_since_ns_ = 0;
+    bool route_fault_ = false;   // waiting for the route longer than the grace period
+    std::string route_error_;
 
     std::unique_ptr<V4l2Capture> left_, right_;
     V4l2Controls controls_;

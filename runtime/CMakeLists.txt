@@ -63,15 +63,21 @@ add_library(babble_core STATIC
     src/sink/sink.cpp
     src/sink/osc.cpp
     src/sink/osc_sink.cpp
+    src/ui/canvas.cpp
+    src/ui/font.cpp
+    src/ui/dashboard_view.cpp
+    src/ui/dashboard.cpp
+    src/ui/vk_uploader.cpp
 )
 target_include_directories(babble_core
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_BINARY_DIR}/generated
-    SYSTEM PUBLIC ${THIRD_PARTY}/nlohmann_json/single_include ${THIRD_PARTY}/openvr)
+    SYSTEM PUBLIC ${THIRD_PARTY}/nlohmann_json/single_include ${THIRD_PARTY}/openvr ${THIRD_PARTY}/stb)
 target_compile_options(babble_core PUBLIC -Wall -Wextra -Wno-unused-parameter)
 target_link_libraries(babble_core PUBLIC pthread
     executorch extension_module_static extension_tensor extension_threadpool
     xnnpack_backend executorch_selected_kernels portable_kernels
-    ${THIRD_PARTY}/openvr/lib/linuxarm64/libopenvr_api.so)
+    ${THIRD_PARTY}/openvr/lib/linuxarm64/libopenvr_api.so
+    vulkan)
 
 if(BABBLE_ASAN)
     target_compile_options(babble_core PUBLIC -fsanitize=address -fno-omit-frame-pointer)
@@ -89,6 +95,12 @@ if(NOT BABBLE_ASAN)
     target_link_options(babble_runtime PRIVATE -static-libstdc++ -static-libgcc)
 endif()
 
+# Development tool: renders the dashboard pages to PNG without SteamVR.
+add_executable(dashboard_preview tools/dashboard_preview.cpp)
+target_link_libraries(dashboard_preview PRIVATE babble_core)
+set_target_properties(dashboard_preview PROPERTIES BUILD_RPATH "${THIRD_PARTY}/openvr/lib/linuxarm64")
+target_compile_definitions(dashboard_preview PRIVATE BABBLE_RESOURCES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/resources")
+
 if(BABBLE_TESTS)
     enable_testing()
     add_executable(babble_tests
@@ -104,11 +116,13 @@ if(BABBLE_TESTS)
         tests/test_executorch_runner.cpp
         tests/test_postprocess.cpp
         tests/test_gaze.cpp
+        tests/test_dashboard.cpp
     )
     target_link_libraries(babble_tests PRIVATE babble_core)
     set_target_properties(babble_tests PROPERTIES BUILD_RPATH "${THIRD_PARTY}/openvr/lib/linuxarm64")
     target_include_directories(babble_tests SYSTEM PRIVATE ${THIRD_PARTY}/doctest)
     target_compile_definitions(babble_tests PRIVATE BABBLE_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/data"
-        BABBLE_MODELS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/resources/models")
+        BABBLE_MODELS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/resources/models"
+        BABBLE_RESOURCES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/resources")
     add_test(NAME babble_tests COMMAND babble_tests)
 endif()

@@ -17,6 +17,7 @@ constexpr uint32_t kMaxLayoutFaults = 3;
 DspEyeSource::DspEyeSource(const nlohmann::json &cfg, SourceDeps deps)
     : cfg_(cfg), name_(deps.name), thread_spec_(thread_spec(deps.threads, "eye", "bbl-eye")), out_(deps.out),
       stats_(deps.stats), steamvr_(deps.steamvr), pause_when_absent_(cfg.value("pause_when_absent", true)),
+      tracking_(cfg.value("tracking", true)),
       limiter_(cfg.value("process_fps", 120.0)) {
     for (const auto &c : cfg_.value("ctrl_base_candidates", nlohmann::json::array())) {
         if (c.is_string())
@@ -57,6 +58,24 @@ void DspEyeSource::set_process_fps(double fps) {
     LOG_INFO("%s: process rate %.1f fps", name_.c_str(), fps);
 }
 
+void DspEyeSource::set_tracking(bool on) {
+    if (on != tracking_)
+        LOG_INFO("%s: tracking turned %s", name_.c_str(), on ? "on" : "off");
+    tracking_ = on;
+}
+
+SourceActivity DspEyeSource::activity() const {
+    switch (state_) {
+    case State::Disabled: return SourceActivity::Off;
+    case State::Connecting: return SourceActivity::Starting;
+    case State::Streaming: return SourceActivity::Streaming;
+    case State::Backoff: return not_ready_ ? SourceActivity::Starting : SourceActivity::Fault;
+    case State::Unavailable: return SourceActivity::Fault;
+    case State::Paused: return tracking_ ? SourceActivity::Paused : SourceActivity::Off;
+    }
+    return SourceActivity::Fault;
+}
+
 const char *DspEyeSource::state_name() const {
     switch (state_) {
     case State::Disabled: return "Disabled";
@@ -77,13 +96,24 @@ bool DspEyeSource::start() {
     std::string why;
     auto layout = client_.probe(candidates_, &why);
     if (!layout) {
-        // Unknown layout: never write to it. Needs a runtime update, not a retry.
-        last_error_ = "unrecognized dsp_service layout (" + why + ")";
-        LOG_ERROR("eye: %s", last_error_.c_str());
+        // Never write to a control block we can't validate; look again later
+        // (read-only, with backoff). Right after boot the block is still blank
+        // until the service sets up the eye cameras: that's "not ready", not
+        // an unknown layout.
+        not_ready_ = DspClient::fps_unset(client_.ctrl(), DspClient::kRegionBytes, candidates_);
+        if (not_ready_) {
+            last_error_ = "waiting for dsp_service to set up the eye cameras";
+        } else {
+            last_error_ = "unrecognized dsp_service layout (" + why + ")";
+            if (last_error_ != reported_layout_error_)   // once per distinct reason
+                LOG_ERROR("eye: %s", last_error_.c_str());
+            reported_layout_error_ = last_error_;
+        }
         client_.disconnect();
-        state_ = State::Unavailable;
         return false;
     }
+    reported_layout_error_.clear();
+    not_ready_ = false;
     layout_ = *layout;
     for (const Crop *c : {&crop_l_, &crop_r_}) {
         if (c->w == 0 || c->h == 0 || c->x + c->w > layout_.width || c->y + c->h > layout_.height) {
@@ -259,10 +289,12 @@ void DspEyeSource::run() {
 void DspEyeSource::tick(uint64_t now) {
     // Only an explicit "not worn" pauses; unknown presence keeps streaming.
     const bool absent = pause_when_absent_ && steamvr_ && steamvr_->worn() == Worn::No;
+    const bool hold = !tracking_ || absent;
+    const char *why = !tracking_ ? "tracking turned off" : "headset not worn";
     switch (state_) {
     case State::Paused:
-        if (!absent) {
-            LOG_INFO("%s: headset worn; resuming", name_.c_str());
+        if (!hold) {
+            LOG_INFO("%s: resuming", name_.c_str());
             state_ = State::Connecting;
             retry_at_ns_ = 0;
             backoff_ns_ = 0;
@@ -272,8 +304,8 @@ void DspEyeSource::tick(uint64_t now) {
     case State::Unavailable:
         return;
     case State::Streaming:
-        if (absent) {
-            stop("headset not worn");
+        if (hold) {
+            stop(why);
             state_ = State::Paused;
             return;
         }
@@ -294,7 +326,7 @@ void DspEyeSource::tick(uint64_t now) {
         return;
     case State::Connecting:
     case State::Backoff:
-        if (absent) {
+        if (hold) {
             state_ = State::Paused;
             return;
         }

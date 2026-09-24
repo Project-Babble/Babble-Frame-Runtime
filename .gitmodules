@@ -10,3 +10,7 @@
 	path = third_party/executorch
 	url = https://github.com/pytorch/executorch.git
 	shallow = true
+[submodule "third_party/stb"]
+	path = third_party/stb
+	url = https://github.com/nothings/stb.git
+	shallow = true

@@ -15,6 +15,15 @@ namespace babble {
 class CameraArbiterClient;
 class SteamVrClient;
 
+// What a source is doing, for user-facing status (the dashboard).
+enum class SourceActivity {
+    Off,         // disabled in config, or tracking turned off by the user
+    Starting,    // waiting for the platform (camera route, DSP service) or opening
+    Paused,      // headset not worn; cameras stopped on purpose
+    Streaming,
+    Fault,       // backing off after an error, or unavailable; see last_error()
+};
+
 // A tracking camera module: owns its capture threads and hardware, publishes
 // the latest (stereo) frame into its output slot. Each concrete module (the
 // Frame's OV6211 mouth pair, the Frame's DSP eye cameras, a future UVC
@@ -33,8 +42,13 @@ public:
 
     // User-facing subsample of the tracking rate; takes effect immediately.
     virtual void set_process_fps(double fps) = 0;
+    // User-facing on/off (config "tracking"): off stops the cameras on the
+    // next tick, like the headset-off pause; the module stays loaded.
+    virtual void set_tracking(bool on) = 0;
+    virtual bool tracking() const = 0;
 
     virtual bool streaming() const = 0;
+    virtual SourceActivity activity() const = 0;
     virtual const char *state_name() const = 0;
     virtual const std::string &last_error() const = 0;
 };
