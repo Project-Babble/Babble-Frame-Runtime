@@ -1,6 +1,7 @@
 [
 	{
 		"title" : "Expression Tracking",
+		"controller" : "babble_expression_tracking",
 		"show_without_hmd" : true,
 		"values" : [
 			{
@@ -12,14 +13,13 @@
 			},
 			{
 				"name" : "/settings/driver_babble/mouthRate",
-				"control" : "select",
-				"type" : "int",
-				"label" : "Mouth Tracking Rate",
+				"control" : "segment",
+				"label" : "Tracking Rate (Hz)",
 				"options" : [
-					{ "value" : "30", "label" : "30 Hz" },
-					{ "value" : "60", "label" : "60 Hz" },
-					{ "value" : "90", "label" : "90 Hz" },
-					{ "value" : "120", "label" : "120 Hz" }
+					{ "value" : 30, "label" : "30" },
+					{ "value" : 60, "label" : "60" },
+					{ "value" : 90, "label" : "90" },
+					{ "value" : 120, "label" : "120" }
 				],
 				"requires" : { "/settings/driver_babble/mouthTracking" : true }
 			},
@@ -32,14 +32,13 @@
 			},
 			{
 				"name" : "/settings/driver_babble/eyeRate",
-				"control" : "select",
-				"type" : "int",
-				"label" : "Eye Tracking Rate",
+				"control" : "segment",
+				"label" : "Tracking Rate (Hz)",
 				"options" : [
-					{ "value" : "30", "label" : "30 Hz" },
-					{ "value" : "45", "label" : "45 Hz" },
-					{ "value" : "60", "label" : "60 Hz" },
-					{ "value" : "90", "label" : "90 Hz" }
+					{ "value" : 30, "label" : "30" },
+					{ "value" : 45, "label" : "45" },
+					{ "value" : 60, "label" : "60" },
+					{ "value" : 90, "label" : "90" }
 				],
 				"requires" : { "/settings/driver_babble/eyeTracking" : true }
 			}

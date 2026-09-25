@@ -91,15 +91,10 @@ void DashboardView::render(Canvas &c, const Status &status, const std::vector<Ch
     render_cog(c);
 }
 
-void DashboardView::render_home(Canvas &c, const Status &s) {
-    const float W = float(c.width());
-    medium_.draw(c, kMargin, 92, "Babble", 40, kText);
-
-    // Headline: the overall tracking state and the live rates.
+Headline headline(const Status &s) {
     const FeedStatus *feeds[2] = {&s.mouth, &s.eye};
     const char *names[2] = {"Mouth", "Eyes"};
-    std::string word, sub;
-    Color dot;
+    Headline h;
     bool any_working = false, any_starting = false, all_off = true;   // Off = turned off or not configured
     for (const FeedStatus *f : feeds) {
         any_working |= f->health == Health::Working;
@@ -107,31 +102,35 @@ void DashboardView::render_home(Canvas &c, const Status &s) {
         all_off &= f->health == Health::Off;
     }
     if (!s.steamvr) {
-        word = "Waiting for SteamVR";
-        dot = kAmber;
+        h = {"Waiting for SteamVR", "", Health::Starting};
     } else if (all_off) {
-        word = "Tracking off";
-        sub = s.mouth.available || s.eye.available ? "Turn a feed on below" : "No camera feeds are configured";
-        dot = kGrey;
+        h = {"Tracking off", s.mouth.available || s.eye.available ? "Turn a feed on below" : "No camera feeds are configured",
+             Health::Off};
     } else if (s.worn == Worn::No) {
-        word = "Paused";
-        sub = "The headset isn't being worn";
-        dot = kGrey;
+        h = {"Paused", "The headset isn't being worn", Health::Paused};
     } else if (any_working) {
-        word = "Tracking";
-        dot = kGreen;
+        h = {"Tracking", "", Health::Working};
         for (int i = 0; i < 2; i++)
             if (feeds[i]->health == Health::Working && feeds[i]->hz > 0)
-                sub += (sub.empty() ? "" : "   ·   ") + std::string(names[i]) + "  " + format_hz(feeds[i]->hz);
+                h.sub += (h.sub.empty() ? "" : "   ·   ") + std::string(names[i]) + "  " + format_hz(feeds[i]->hz);
     } else if (any_starting) {
-        word = "Starting";
-        sub = "Waiting for the cameras";
-        dot = kAmber;
+        h = {"Starting", "Waiting for the cameras", Health::Starting};
     } else {
-        word = "Not tracking";
-        sub = "A camera feed has a problem";
-        dot = kRed;
+        h = {"Not tracking", "A camera feed has a problem", Health::Fault};
     }
+    return h;
+}
+
+void DashboardView::render_home(Canvas &c, const Status &s) {
+    const float W = float(c.width());
+    medium_.draw(c, kMargin, 92, "Babble", 40, kText);
+
+    // Headline: the overall tracking state and the live rates.
+    const FeedStatus *feeds[2] = {&s.mouth, &s.eye};
+    const char *names[2] = {"Mouth", "Eyes"};
+    const Headline h = headline(s);
+    const std::string &word = h.word, &sub = h.sub;
+    const Color dot = health_color(h.tone);
     const float head_px = 76, dot_r = 15, gap = 28;
     const float tw = medium_.measure(word, head_px);
     const float x0 = (W - (2 * dot_r + gap + tw)) / 2, base = 318;

@@ -33,6 +33,14 @@ struct Status {
     FeedStatus mouth, eye;
 };
 
+// The overall tracking state in words (the Babble tab's headline); tone
+// picks the dot colour.
+struct Headline {
+    std::string word, sub;
+    Health tone = Health::Off;
+};
+Headline headline(const Status &s);
+
 // A user-facing setting shown as a row of choices. id is the setting's JSON
 // pointer in the config ("/sources/mouth/process_fps").
 struct Choice {

@@ -112,3 +112,26 @@ TEST_CASE("each feed card has an on/off switch; unconfigured feeds have none") {
     CHECK_FALSE(view.click({540, 536}).toggle);
     CHECK(view.page() == DashboardView::Page::Home);   // switches never change the page
 }
+
+TEST_CASE("the headline summarises tracking, pauses and feeds that are off") {
+    Status s{true, Worn::Yes, on(Health::Working, 120), on(Health::Working, 90)};
+    Headline h = headline(s);
+    CHECK(h.word == "Tracking");
+    CHECK(h.tone == Health::Working);
+    CHECK(h.sub == "Mouth  120 Hz   ·   Eyes  90 Hz");
+
+    s.eye.health = Health::Off;
+    s.eye.tracking = false;
+    CHECK(headline(s).sub == "Mouth  120 Hz");
+
+    s.worn = Worn::No;
+    CHECK(headline(s).word == "Paused");
+
+    s.mouth.health = Health::Off;
+    s.mouth.tracking = false;
+    CHECK(headline(s).word == "Tracking off");
+    CHECK(headline(s).sub == "Turn a feed on below");
+
+    s.steamvr = false;
+    CHECK(headline(s).word == "Waiting for SteamVR");
+}
