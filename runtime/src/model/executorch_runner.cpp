@@ -31,11 +31,19 @@ bool to_dtype(ScalarType t, DType *out) {
     switch (t) {
     case ScalarType::Float: *out = DType::F32; return true;
     case ScalarType::Byte: *out = DType::U8; return true;
+    case ScalarType::Half: *out = DType::F16; return true;
     default: return false;
     }
 }
 
-ScalarType to_scalar(DType d) { return d == DType::F32 ? ScalarType::Float : ScalarType::Byte; }
+ScalarType to_scalar(DType d) {
+    switch (d) {
+    case DType::F32: return ScalarType::Float;
+    case DType::F16: return ScalarType::Half;
+    case DType::U8: return ScalarType::Byte;
+    }
+    return ScalarType::Float;
+}
 
 } // namespace
 

@@ -2,6 +2,7 @@
 
 #include "core/clock.h"
 #include "core/log.h"
+#include "model/half.h"
 #include "model/image_ops.h"
 
 #include <algorithm>
@@ -11,14 +12,20 @@ namespace babble {
 
 namespace {
 
-constexpr uint32_t kRes = 160;
-constexpr size_t kPlane = size_t(kRes) * kRes;
-
-bool eye_contract(const ExecuTorchRunner &r) {
+// One [2,1,R,R] float input (fp32 or fp16), one output of `outputs` elements.
+bool eye_contract(const ExecuTorchRunner &r, size_t outputs, uint32_t *res) {
     auto in = r.inputs();
     auto out = r.outputs();
-    return in.size() == 1 && in[0].shape == std::vector<int64_t>{2, 1, kRes, kRes} && in[0].dtype == DType::F32 &&
-           out.size() == 1 && out[0].elements() == 2 && out[0].dtype == DType::F32;
+    if (in.size() != 1 || out.size() != 1 || out[0].elements() != outputs)
+        return false;
+    const auto &sh = in[0].shape;
+    if (sh.size() != 4 || sh[0] != 2 || sh[1] != 1 || sh[2] != sh[3] || sh[2] < 16 || sh[2] > 400)
+        return false;
+    auto is_float = [](DType d) { return d == DType::F32 || d == DType::F16; };
+    if (!is_float(in[0].dtype) || !is_float(out[0].dtype))
+        return false;
+    *res = uint32_t(sh[2]);
+    return true;
 }
 
 } // namespace
@@ -29,23 +36,30 @@ bool BabbleEye::init() {
     if (!bind_input())
         return false;
 
+    combined_ = !cfg_.value("model", "").empty();
     lid_ = std::make_unique<ExecuTorchRunner>();
-    if (!lid_->load(model_path("lid_model")))
+    if (!lid_->load(model_path(combined_ ? "model" : "lid_model")))
         return false;
-    if (!eye_contract(*lid_)) {
-        LOG_ERROR("pipeline %s: lid model does not match [2,1,160,160] -> [2]", name_.c_str());
+    if (!eye_contract(*lid_, combined_ ? 4 : 2, &res_)) {
+        LOG_ERROR("pipeline %s: %s model does not match [2,1,R,R] -> %s", name_.c_str(), combined_ ? "eye" : "lid",
+                  combined_ ? "[2,2]" : "[2]");
         return false;
     }
-    if (!cfg_.value("pupil_model", "").empty()) {
+    if (!combined_ && !cfg_.value("pupil_model", "").empty()) {
         pupil_ = std::make_unique<ExecuTorchRunner>();
-        if (!pupil_->load(model_path("pupil_model")) || !eye_contract(*pupil_)) {
+        uint32_t pupil_res = 0;
+        if (!pupil_->load(model_path("pupil_model")) || !eye_contract(*pupil_, 2, &pupil_res) ||
+            pupil_res != res_) {
             LOG_WARN("pipeline %s: pupil model unusable; running without dilation", name_.c_str());
             pupil_.reset();
         }
     }
+    plane_ = size_t(res_) * res_;
 
     const double hz = cfg_.value("update_hz", 90.0);
     const double pupil_hz = std::min(cfg_.value("pupil_hz", 3.0), hz);
+    tuned_ = eye::RateScale{hz, hz};
+    update_rate_ = eye::UpdateRate(hz);
     use_calib_ = cfg_.value("calib", true);
     babble_swap_ = cfg_.value("babble_swap", false);
     lid_alpha_ = cfg_.value("lid_alpha", 0.6);
@@ -60,34 +74,68 @@ bool BabbleEye::init() {
         right_ids_[k] = deps_.state.add_signal(std::string("RightEye") + names[k]);
     }
 
-    x_.resize(2 * kPlane);
-    pupil_in_.resize(2 * kPlane);
+    x_.resize(2 * plane_);
+    pupil_in_.resize(2 * plane_);
     flip_.resize(400 * 400);
-    small_.resize(kPlane);
+    small_.resize(plane_);
     pupil_thread_spec_ = thread_spec(deps_.threads, cfg_.value("pupil_thread", "pupil"), "bbl-pupil");
     deps_.stats.add("pipe." + name_ + ".pupil_fps", &pupil_rate_);
     deps_.stats.add("pipe." + name_ + ".pupil_inference", &pupil_time_);
-    LOG_INFO("pipeline %s: lid%s on %s at %.0f updates/s%s", name_.c_str(), pupil_ ? " + pupil" : "",
-             source_.c_str(), hz, pupil_ ? (", pupil " + std::to_string(int(pupil_hz)) + " Hz").c_str() : "");
+    if (combined_)
+        LOG_INFO("pipeline %s: combined lid + pupil model (%u px, %s) on %s, filters tuned at %.0f updates/s",
+                 name_.c_str(), res_, lid_->inputs()[0].dtype == DType::F16 ? "fp16" : "fp32", source_.c_str(), hz);
+    else
+        LOG_INFO("pipeline %s: lid%s on %s at %.0f updates/s%s", name_.c_str(), pupil_ ? " + pupil" : "",
+                 source_.c_str(), hz, pupil_ ? (", pupil " + std::to_string(int(pupil_hz)) + " Hz").c_str() : "");
     return true;
 }
 
 // Per-person state: lid reference, pupil baseline, smoothing. Rebuilt at init
 // and for every new session (headset put back on).
 void BabbleEye::reset_session() {
-    const double hz = cfg_.value("update_hz", 90.0);
-    const double pupil_hz = std::min(cfg_.value("pupil_hz", 3.0), hz);
     calib_.clear();
     trackers_.clear();
     for (int e = 0; e < 2; e++) {
-        calib_.emplace_back(size_t(cfg_.value("calib_window_s", 20.0) * hz), size_t(cfg_.value("calib_warmup_s", 3.0) * hz));
+        calib_.emplace_back(tuned_.count(cfg_.value("calib_window_s", 20.0) * tuned_.ref_hz),
+                            tuned_.count(cfg_.value("calib_warmup_s", 3.0) * tuned_.ref_hz), 0.5, 50, tuned_.count(30));
         trackers_.emplace_back(cfg_.value("pupil_gate", 0.4), cfg_.value("pupil_gate_hys", 0.1),
-                               int(cfg_.value("pupil_hold_s", 0.1) * hz), cfg_.value("pupil_alpha", 0.2),
-                               cfg_.value("pupil_rate", 0.6),
-                               size_t(std::max(10, int(cfg_.value("pupil_base_s", 60.0) * pupil_hz))),
-                               size_t(std::max(5, int(pupil_hz))));
+                               int(tuned_.count(cfg_.value("pupil_hold_s", 0.1) * tuned_.ref_hz)),
+                               cfg_.value("pupil_alpha", 0.2), cfg_.value("pupil_rate", 0.6), 1, 1);
     }
+    set_pupil_windows();
     smoothed_ = {};
+    update_rate_.restart();   // the gap before this session isn't an update interval
+}
+
+// The pupil baseline window (pupil_base_s) and the samples needed before the
+// first baseline (1 s worth), in pupil samples: a sample per pupil_hz tick in
+// the split layout, a sample per update with the combined model.
+void BabbleEye::set_pupil_windows() {
+    const double base_s = cfg_.value("pupil_base_s", 60.0);
+    size_t window, min;
+    if (combined_) {
+        window = tuned_.count(base_s * tuned_.ref_hz);
+        min = tuned_.count(tuned_.ref_hz);
+    } else {
+        const double pupil_hz = std::min(cfg_.value("pupil_hz", 3.0), tuned_.ref_hz);
+        window = size_t(std::max(10, int(base_s * pupil_hz)));
+        min = size_t(std::max(5, int(pupil_hz)));
+    }
+    for (auto &t : trackers_)
+        t.set_base_window(window, min);
+}
+
+// Converts the frame-count constants for a new update rate, keeping the
+// learned state (lid reference samples, pupil baseline).
+void BabbleEye::retune(double hz) {
+    tuned_.hz = hz;
+    for (auto &c : calib_)
+        c.set_timing(tuned_.count(cfg_.value("calib_window_s", 20.0) * tuned_.ref_hz),
+                     tuned_.count(cfg_.value("calib_warmup_s", 3.0) * tuned_.ref_hz), tuned_.count(30));
+    for (auto &t : trackers_)
+        t.set_hold(int(tuned_.count(cfg_.value("pupil_hold_s", 0.1) * tuned_.ref_hz)));
+    set_pupil_windows();
+    LOG_INFO("pipeline %s: eye filters tuned for %.0f updates/s", name_.c_str(), hz);
 }
 
 void BabbleEye::on_presence(bool worn) {
@@ -111,11 +159,34 @@ void BabbleEye::prepare(const StereoFrame &sf, float *x) {
             img::flip_vertical(cur, {flip_.data(), f.width, f.height, f.width});
             cur = {flip_.data(), f.width, f.height, f.width};
         }
-        img::resize_area(cur, {small_.data(), kRes, kRes, kRes});
-        float *dst = x + v * kPlane;
-        for (size_t i = 0; i < kPlane; i++)
+        img::resize_area(cur, {small_.data(), res_, res_, res_});
+        float *dst = x + v * plane_;
+        for (size_t i = 0; i < plane_; i++)
             dst[i] = (float(small_[i]) / 255.0f - 0.5f) / 0.25f;
     }
+}
+
+bool BabbleEye::run_model(ExecuTorchRunner &m, const float *x, float *y, std::vector<uint16_t> &half_in,
+                          std::vector<uint16_t> &half_out) {
+    const TensorSpec &is = m.inputs()[0], &os = m.outputs()[0];
+    const void *in = x;
+    if (is.dtype == DType::F16) {
+        half_in.resize(is.elements());
+        to_half(x, half_in.data(), is.elements());
+        in = half_in.data();
+    }
+    void *out = y;
+    if (os.dtype == DType::F16) {
+        half_out.resize(os.elements());
+        out = half_out.data();
+    }
+    std::vector<TensorView> iv{{const_cast<void *>(in), &is}};
+    std::vector<TensorView> ov{{out, &os}};
+    if (!m.run(iv, ov))
+        return false;
+    if (os.dtype == DType::F16)
+        from_half(half_out.data(), y, os.elements());
+    return true;
 }
 
 void BabbleEye::on_start() {
@@ -139,12 +210,9 @@ void BabbleEye::on_stop() {
 }
 
 void BabbleEye::pupil_loop() {
-    std::vector<float> in(2 * kPlane);
+    std::vector<float> in(2 * plane_);
     std::array<float, 2> out{};
-    auto ri = pupil_->inputs();
-    auto ro = pupil_->outputs();
-    std::vector<TensorView> iv{{in.data(), &ri[0]}};
-    std::vector<TensorView> ov{{out.data(), &ro[0]}};
+    std::vector<uint16_t> half_in, half_out;
     uint64_t done_seq = 0;
     while (true) {
         uint64_t seq;
@@ -158,7 +226,7 @@ void BabbleEye::pupil_loop() {
             pupil_busy_ = true;
         }
         uint64_t t0 = mono_ns();
-        bool ok = pupil_->run(iv, ov);
+        bool ok = run_model(*pupil_, in.data(), out.data(), half_in, half_out);
         pupil_time_.add(mono_ns() - t0);
         std::lock_guard<std::mutex> lock(pupil_mutex_);
         if (ok) {
@@ -174,22 +242,41 @@ void BabbleEye::pupil_loop() {
 void BabbleEye::process(const StereoFrame &sf) {
     if (reset_pending_.exchange(false))
         reset_session();
+    // Follow the real update rate (the user's eye rate, or less if the
+    // cameras deliver less). Within 3% of the reference counts as the
+    // reference; otherwise retune after a 10% move, at most once a second.
+    update_rate_.tick(sf.capture_ns);
+    {
+        const double measured = update_rate_.hz();
+        const double hz = std::fabs(measured - tuned_.ref_hz) < 0.03 * tuned_.ref_hz ? tuned_.ref_hz : measured;
+        const uint64_t now = mono_ns();
+        if (hz != tuned_.hz && (hz == tuned_.ref_hz || std::fabs(hz - tuned_.hz) > 0.1 * tuned_.hz) &&
+            now - last_retune_ns_ > 1000000000ull) {
+            retune(hz);
+            last_retune_ns_ = now;
+        }
+    }
     uint64_t t0 = mono_ns();
     prepare(sf, x_.data());
     uint64_t t1 = mono_ns();
 
-    auto ri = lid_->inputs();
-    auto ro = lid_->outputs();
-    std::vector<TensorView> iv{{x_.data(), &ri[0]}};
-    std::vector<TensorView> ov{{lid_out_.data(), &ro[0]}};
-    if (!lid_->run(iv, ov))
+    if (!run_model(*lid_, x_.data(), out_.data(), half_in_, half_out_))
         return;
     uint64_t t2 = mono_ns();
     preprocess_.add(t1 - t0);
     inference_.add(t2 - t1);
 
-    // Pupil: submit while an eye is open, the worker is idle and the rate allows; take each result once.
+    // Lid openness per eye; the pupil comes with it (combined model) or from
+    // the pupil worker: submit while an eye is open, the worker is idle and
+    // the rate allows; take each result once.
+    std::array<double, 2> lid;
     std::optional<std::array<float, 2>> py;
+    if (combined_) {
+        lid = {out_[0], out_[2]};
+        py = std::array<float, 2>{out_[1], out_[3]};
+    } else {
+        lid = {out_[0], out_[1]};
+    }
     if (pupil_) {
         std::lock_guard<std::mutex> lock(pupil_mutex_);
         const uint64_t now = mono_ns();
@@ -210,13 +297,13 @@ void BabbleEye::process(const StereoFrame &sf) {
     double o[2];
     std::optional<double> dil[2];
     for (int e = 0; e < 2; e++) {
-        double raw = lid_out_[e];
+        double raw = lid[e];
         double v = use_calib_ ? calib_[e].update(raw) : raw;
-        smoothed_[e] = smoothed_[e] ? *smoothed_[e] + lid_alpha_ * (v - *smoothed_[e]) : v;
+        smoothed_[e] = smoothed_[e] ? *smoothed_[e] + tuned_.alpha(lid_alpha_) * (v - *smoothed_[e]) : v;
         o[e] = std::max(*smoothed_[e], 0.0);
     }
     for (int e = 0; e < 2; e++) {
-        auto r = trackers_[e].update(o[e], py ? std::optional<double>((*py)[e]) : std::nullopt);
+        auto r = trackers_[e].update(o[e], py ? std::optional<double>((*py)[e]) : std::nullopt, tuned_.k());
         dil[e] = eye::dilation(r, pupil_gain_);
     }
 

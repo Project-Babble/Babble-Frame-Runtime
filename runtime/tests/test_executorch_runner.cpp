@@ -1,6 +1,7 @@
 #include <doctest/doctest.h>
 
 #include "model/executorch_runner.h"
+#include "model/half.h"
 
 #include <nlohmann/json.hpp>
 
@@ -48,4 +49,36 @@ TEST_CASE("ExecuTorchRunner runs FusionNet and matches the Python ExecuTorch run
     std::vector<TensorView> ov2{{again.data(), &r.outputs()[0]}};
     REQUIRE(r.run(iv, ov2));
     CHECK(again == out);
+}
+
+TEST_CASE("ExecuTorchRunner runs the fp16 combined eye model and matches the Python ExecuTorch runtime") {
+    ExecuTorchRunner::set_threads(1);
+    ExecuTorchRunner r;
+    REQUIRE(r.load(std::string(BABBLE_MODELS_DIR) + "/eye_split96_fp16.pte"));
+
+    // Contract from its README: fp16 [2,1,96,96] in, fp16 [2,2] (lid, pupil per eye) out.
+    REQUIRE(r.inputs().size() == 1);
+    CHECK(r.inputs()[0].dtype == DType::F16);
+    CHECK(r.inputs()[0].shape == std::vector<int64_t>{2, 1, 96, 96});
+    REQUIRE(r.outputs().size() == 1);
+    CHECK(r.outputs()[0].dtype == DType::F16);
+    CHECK(r.outputs()[0].shape == std::vector<int64_t>{2, 2});
+
+    const size_t n = 2 * 96 * 96;
+    std::vector<float> x(n);
+    for (size_t k = 0; k < n; k++)
+        x[k] = float((k * 37 + 13) % 256) / 255.0f;
+    std::vector<uint16_t> xh(n), yh(4);
+    to_half(x.data(), xh.data(), n);
+    std::vector<TensorView> iv{{xh.data(), &r.inputs()[0]}};
+    std::vector<TensorView> ov{{yh.data(), &r.outputs()[0]}};
+    REQUIRE(r.run(iv, ov));
+    std::vector<float> y(4);
+    from_half(yh.data(), y.data(), 4);
+
+    std::ifstream f(std::string(BABBLE_TEST_DATA_DIR) + "/eye_split96_golden.json");
+    auto golden = nlohmann::json::parse(f)["outputs"][0].get<std::vector<float>>();
+    REQUIRE(golden.size() == 4);
+    for (size_t k = 0; k < 4; k++)
+        CHECK_MESSAGE(std::fabs(y[k] - golden[k]) <= 0.002f, "output " << k << ": " << y[k] << " vs " << golden[k]);
 }

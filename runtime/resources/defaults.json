@@ -113,6 +113,7 @@
       "from": "eye",
       "thread": "infE",
       "pupil_thread": "pupil",
+      "model": "eye_split96_fp16.pte",
       "lid_model": "lid_mnv4_160_int8.pte",
       "pupil_model": "pupil_cnx_160_fp32.pte",
       "update_hz": 90,

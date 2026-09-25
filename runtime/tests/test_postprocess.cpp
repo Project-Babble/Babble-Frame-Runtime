@@ -107,3 +107,74 @@ TEST_CASE("percentile matches numpy linear interpolation") {
     CHECK(eye::percentile({1, 2, 3, 4, 5}, 25) == doctest::Approx(2.0));
     CHECK(eye::percentile({10, 20}, 90) == doctest::Approx(19.0));
 }
+
+TEST_CASE("rate scaling is the identity at the reference rate") {
+    eye::RateScale s{90, 90};
+    CHECK(s.k() == 1.0);
+    CHECK(s.alpha(0.6) == 0.6);
+    CHECK(s.alpha(0.2) == 0.2);
+    CHECK(s.limit(0.6) == 0.6);
+    CHECK(s.count(20 * 90.0) == 1800);
+    CHECK(s.count(3 * 90.0) == 270);
+    CHECK(s.count(0.1 * 90.0) == 9);   // int(0.1 * 90) like the reference
+    CHECK(s.count(30) == 30);
+}
+
+TEST_CASE("at 30 Hz the eye filters behave like 90 Hz over the same time") {
+    eye::RateScale s{90, 30};
+    CHECK(s.k() == doctest::Approx(3.0));
+    CHECK(s.count(20 * 90.0) == 600);   // 20 s window
+    CHECK(s.count(3 * 90.0) == 90);     // 3 s warm-up
+    CHECK(s.count(0.1 * 90.0) == 3);    // 0.1 s blink hold
+    CHECK(s.count(30) == 10);           // lid reference recomputed every 1/3 s
+
+    // Lid smoothing: one 30 Hz step equals three 90 Hz steps.
+    double at90 = 0, at30 = 0;
+    for (int i = 0; i < 3; i++)
+        at90 += 0.6 * (1.0 - at90);
+    at30 += s.alpha(0.6) * (1.0 - at30);
+    CHECK(at30 == doctest::Approx(at90).epsilon(1e-12));
+
+    // Pupil display: a step in the pupil size is followed at the same speed
+    // (per second) at both rates, rate limit included.
+    auto follow = [](double hz, double seconds) {
+        eye::RateScale r{90, hz};
+        eye::PupilTracker t(0.4, 0.1, int(r.count(9)), 0.2, 0.6, 10, 5);
+        const double small = 0.5, large = 2.0;   // model outputs (area / 3000)
+        auto res = t.update(1.0, small, r.k());
+        for (int i = 0; i < int(1.0 * hz); i++)   // settle at the small size, eye open
+            res = t.update(1.0, small, r.k());
+        res = t.update(1.0, large, r.k());
+        for (int i = 1; i < int(seconds * hz); i++)
+            res = t.update(1.0, std::nullopt, r.k());
+        return *res.px;
+    };
+    const double target = eye::PupilTracker::px_of(2.0), start = eye::PupilTracker::px_of(0.5);
+    for (double sec : {0.1, 0.3, 1.0}) {
+        const double p90 = follow(90, sec), p30 = follow(30, sec);
+        CAPTURE(sec);
+        // Same progress towards the new size within a couple of percent of the step.
+        CHECK(std::fabs(p90 - p30) < 0.03 * (target - start));
+    }
+}
+
+TEST_CASE("lid calibrator keeps its samples when retimed") {
+    eye::LidCalibrator c(1800, 270);
+    for (int i = 0; i < 400; i++)
+        c.update(0.9);
+    CHECK(c.ready());
+    c.set_timing(600, 90, 10);   // switched to 30 Hz
+    CHECK(c.ready());
+    CHECK(c.ref() == doctest::Approx(0.9));
+    CHECK(c.update(0.9) == doctest::Approx(1.0));
+}
+
+TEST_CASE("update rate follows frame intervals and skips pauses") {
+    eye::UpdateRate r(90);
+    uint64_t t = 1'000'000'000;
+    for (int i = 0; i < 300; i++, t += 33'333'333)
+        r.tick(t);
+    CHECK(r.hz() == doctest::Approx(30).epsilon(0.01));
+    r.tick(t + 5'000'000'000ull);   // a 5 s pause is not an interval
+    CHECK(r.hz() == doctest::Approx(30).epsilon(0.01));
+}

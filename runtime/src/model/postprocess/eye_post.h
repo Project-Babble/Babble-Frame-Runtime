@@ -6,6 +6,7 @@
 // the reference runs at 90 updates/s, so the runtime runs the eye stream at 90.
 
 #include <cstddef>
+#include <cstdint>
 #include <deque>
 #include <optional>
 #include <vector>
@@ -17,11 +18,43 @@ double median(std::vector<double> v);
 // numpy.percentile with linear interpolation, pct in 0..100.
 double percentile(std::vector<double> v, double pct);
 
+// The reference's filter constants are per update at 90 Hz. RateScale
+// converts them for the rate the pipeline actually runs at, so filters behave
+// the same over time: counts scale with the rate, per-update smoothing
+// factors compound (1 - (1-a)^k), and per-update limits scale linearly. At
+// the reference rate every conversion is the identity, bit for bit.
+struct RateScale {
+    double ref_hz = 90.0, hz = 90.0;
+    double k() const { return ref_hz / hz; }   // reference updates per actual update
+    size_t count(double ref_updates) const;    // >= 1
+    double alpha(double a) const;
+    double limit(double v) const { return hz == ref_hz ? v : v * k(); }
+};
+
+// Compounds a per-update smoothing factor over k reference updates.
+double alpha_for(double a, double k);
+
+// Estimates the update rate from frame capture times (EMA of intervals).
+// Gaps over 0.5 s (a pause, a stall) are skipped rather than averaged in.
+class UpdateRate {
+public:
+    explicit UpdateRate(double initial_hz) : dt_(1.0 / initial_hz) {}
+    void tick(uint64_t capture_ns);
+    void restart() { last_ns_ = 0; }   // next interval starts fresh (after a pause)
+    double hz() const { return 1.0 / dt_; }
+
+private:
+    double dt_;
+    uint64_t last_ns_ = 0;
+};
+
 // Per-eye neutral-open reference (class LidCalibrator).
 class LidCalibrator {
 public:
-    LidCalibrator(size_t window, size_t warmup, double floor = 0.5, double pct = 50);
+    LidCalibrator(size_t window, size_t warmup, double floor = 0.5, double pct = 50, size_t every = 30);
     double update(double p);
+    // New update rate: window/warmup/recompute interval in updates. Keeps the samples (trimmed to the window).
+    void set_timing(size_t window, size_t warmup, size_t every);
     bool ready() const { return n_ >= warmup_; }
     double ref() const { return ref_; }
 
@@ -29,6 +62,7 @@ private:
     std::deque<double> buf_;
     size_t window_, warmup_;
     double floor_, pct_;
+    size_t every_;
     double ref_ = 1.0;
     size_t n_ = 0;
 };
@@ -46,7 +80,11 @@ public:
     static double px_of(double y);
 
     // openness: calibrated lid value; y: a NEW pupil output, or nullopt if none arrived since the last update.
-    Result update(double openness, std::optional<double> y);
+    // k: reference (90 Hz) updates this update stands for (RateScale::k); 1 = the reference rate.
+    Result update(double openness, std::optional<double> y, double k = 1.0);
+    void set_hold(int hold) { hold_ = hold; }   // blink hold in updates (new update rate)
+    // Baseline window and samples needed for the first baseline, in pupil samples. Keeps the samples.
+    void set_base_window(size_t window, size_t min);
     bool open() const { return open_; }
     std::optional<double> base() const { return base_; }
 

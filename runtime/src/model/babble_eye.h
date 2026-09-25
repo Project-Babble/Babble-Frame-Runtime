@@ -15,21 +15,29 @@
 
 namespace babble {
 
-// Config type "babble_eye": eyelid openness every eye frame plus pupil
-// dilation at a low rate, with the exact processing of eye_osc_pc.py.
+// Config type "babble_eye": eyelid openness and pupil dilation per eye, with
+// the processing of eye_osc_pc.py. Two model layouts:
+//   - combined ("model"): one network, [2,1,R,R] -> [2,2] = per eye
+//     (lid openness, pupil size), every frame. fp16 or fp32.
+//   - split ("lid_model" + optional "pupil_model"): [2,1,R,R] -> [2] each;
+//     lid every frame, pupil at pupil_hz on its own thread (it's slow).
+// Pupil size is area / 3000 px of the 400 px crop in both layouts.
 //
 // Input: the eye source's stereo pair; left = view 2 (eye_l = the wearer's
 // RIGHT eye), right = view 3. View 3 is flipped vertically (the reference's
-// rot90(2) + mirror), both resized to 160 (INTER_AREA) and normalized to
-// (x/255 - 0.5)/0.25, batched as [2,1,160,160] for both models.
+// rot90(2) + mirror), both resized to the model's R (INTER_AREA) and
+// normalized to (x/255 - 0.5)/0.25, batched as [2,1,R,R].
 //
 // Signals follow the Baballonia module: LeftEyeLid, LeftEyeWiden,
 // LeftEyeDilation and the Right twins, with the module's sides swapped
 // relative to the cameras like the reference (babble_swap flips that).
 //
-// Config: from, thread, lid_model, pupil_model (empty = no dilation),
-// pupil_thread, update_hz (90: the rate every frame-count constant assumes),
-// pupil_hz (3), pupil_gain (2), lid_alpha (0.6), calib_window_s (20),
+// Config: from, thread, model (combined; wins over the split keys),
+// lid_model, pupil_model (empty = no dilation),
+// pupil_thread, update_hz (90: the rate the per-update constants below are
+// tuned at, as in the reference; the pipeline measures its real update rate
+// and converts them, see eye::RateScale),
+// pupil_hz (3; split layout only), pupil_gain (2), lid_alpha (0.6), calib_window_s (20),
 // calib_warmup_s (3), calib (true), pupil_gate (0.4), pupil_gate_hys (0.1),
 // pupil_hold_s (0.1), pupil_alpha (0.2), pupil_rate (0.6), pupil_base_s (60),
 // babble_swap (false).
@@ -40,7 +48,7 @@ public:
     bool init() override;
     void on_presence(bool worn) override;
 
-    // Preprocess one stereo pair into the [2,1,160,160] input (exposed for tests).
+    // Preprocess one stereo pair into the [2,1,R,R] float input.
     void prepare(const StereoFrame &sf, float *x);
 
 private:
@@ -48,10 +56,18 @@ private:
     void on_start() override;
     void on_stop() override;
     void pupil_loop();
+    // Runs a one-input, one-output eye model on float data, converting to and
+    // from fp16 when the model uses it.
+    bool run_model(ExecuTorchRunner &m, const float *x, float *y, std::vector<uint16_t> &half_in,
+                   std::vector<uint16_t> &half_out);
 
-    std::unique_ptr<ExecuTorchRunner> lid_, pupil_;
+    std::unique_ptr<ExecuTorchRunner> lid_, pupil_;   // lid_ is the combined model in that layout
+    bool combined_ = false;
+    uint32_t res_ = 160;
+    size_t plane_ = 160 * 160;
     std::vector<float> x_;
-    std::array<float, 2> lid_out_{};
+    std::array<float, 4> out_{};   // lid: [2] (split) or [2,2] (combined)
+    std::vector<uint16_t> half_in_, half_out_;
     std::vector<uint8_t> flip_, small_;
 
     // Post-processing state, index 0 = view 2 ("L"), 1 = view 3 ("R").
@@ -59,6 +75,12 @@ private:
     std::vector<eye::PupilTracker> trackers_;
     std::array<std::optional<double>, 2> smoothed_{};
     void reset_session();
+    // Update rate: measured from frame times; the filters are tuned for tuned_.hz.
+    void retune(double hz);
+    void set_pupil_windows();
+    eye::UpdateRate update_rate_{90.0};
+    eye::RateScale tuned_;
+    uint64_t last_retune_ns_ = 0;
     std::atomic<bool> reset_pending_{false};
     bool use_calib_ = true, babble_swap_ = false;
     double lid_alpha_ = 0.6, pupil_gain_ = 2.0;

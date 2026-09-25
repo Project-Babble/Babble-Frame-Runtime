@@ -8,7 +8,7 @@
 
 namespace babble {
 
-enum class DType { U8, F32 };
+enum class DType { U8, F16, F32 };
 
 struct TensorSpec {
     std::string name;
@@ -21,7 +21,7 @@ struct TensorSpec {
             n *= size_t(d);
         return n;
     }
-    size_t bytes() const { return elements() * (dtype == DType::U8 ? 1 : 4); }
+    size_t bytes() const { return elements() * (dtype == DType::U8 ? 1 : dtype == DType::F16 ? 2 : 4); }
 };
 
 struct TensorView {

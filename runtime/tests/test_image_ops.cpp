@@ -87,6 +87,13 @@ TEST_CASE("image ops match OpenCV 5.0.0 bit for bit") {
         img::resize_area(in.view(), {area.data(), 160, 160, 160});
         auto [n3, w3] = diff(area, want_area.px);
         CHECK_MESSAGE(n3 == 0, "INTER_AREA: " << n3 << " px differ, max " << w3);
+
+        // 400 -> 96 (the combined eye model): a non-integer 4.1667 ratio.
+        Pgm want_area96 = read_pgm(std::string(name) + "_area96.pgm");
+        std::vector<uint8_t> area96(96 * 96);
+        img::resize_area(in.view(), {area96.data(), 96, 96, 96});
+        auto [n4, w4] = diff(area96, want_area96.px);
+        CHECK_MESSAGE(n4 == 0, "INTER_AREA 96: " << n4 << " px differ, max " << w4);
     }
 }
 

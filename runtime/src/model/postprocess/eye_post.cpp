@@ -19,8 +19,27 @@ double percentile(std::vector<double> v, double pct) {
 
 double median(std::vector<double> v) { return percentile(std::move(v), 50.0); }
 
-LidCalibrator::LidCalibrator(size_t window, size_t warmup, double floor, double pct)
-    : window_(window), warmup_(warmup), floor_(floor), pct_(pct) {}
+double alpha_for(double a, double k) { return k == 1.0 ? a : 1.0 - std::pow(1.0 - a, k); }
+
+size_t RateScale::count(double ref_updates) const {
+    if (hz == ref_hz)
+        return std::max<size_t>(1, size_t(ref_updates));
+    return std::max<size_t>(1, size_t(std::lround(ref_updates / k())));
+}
+
+double RateScale::alpha(double a) const { return hz == ref_hz ? a : alpha_for(a, k()); }
+
+void UpdateRate::tick(uint64_t capture_ns) {
+    if (last_ns_ && capture_ns > last_ns_) {
+        const double dt = double(capture_ns - last_ns_) * 1e-9;
+        if (dt < 0.5)
+            dt_ += 0.05 * (dt - dt_);
+    }
+    last_ns_ = capture_ns;
+}
+
+LidCalibrator::LidCalibrator(size_t window, size_t warmup, double floor, double pct, size_t every)
+    : window_(window), warmup_(warmup), floor_(floor), pct_(pct), every_(std::max<size_t>(1, every)) {}
 
 double LidCalibrator::update(double p) {
     if (p > 0.6) {
@@ -28,19 +47,34 @@ double LidCalibrator::update(double p) {
         if (buf_.size() > window_)
             buf_.pop_front();
         n_++;
-        if (n_ <= warmup_ || n_ % 30 == 0)
+        if (n_ <= warmup_ || n_ % every_ == 0)
             ref_ = std::max(floor_, percentile(std::vector<double>(buf_.begin(), buf_.end()), pct_));
     }
     return n_ >= warmup_ ? p / ref_ : std::min(p, 1.0);
+}
+
+void LidCalibrator::set_timing(size_t window, size_t warmup, size_t every) {
+    window_ = std::max<size_t>(1, window);
+    warmup_ = warmup;
+    every_ = std::max<size_t>(1, every);
+    while (buf_.size() > window_)
+        buf_.pop_front();
 }
 
 PupilTracker::PupilTracker(double gate, double hys, int hold, double alpha, double rate, size_t base_window,
                            size_t base_min)
     : gate_(gate), hys_(hys), alpha_(alpha), rate_(rate), hold_(hold), base_window_(base_window), base_min_(base_min) {}
 
+void PupilTracker::set_base_window(size_t window, size_t min) {
+    base_window_ = std::max<size_t>(1, window);
+    base_min_ = std::max<size_t>(1, min);
+    while (base_buf_.size() > base_window_)
+        base_buf_.pop_front();
+}
+
 double PupilTracker::px_of(double y) { return 2.0 * std::sqrt(std::max(y, 0.0) * kPupilScale / M_PI); }
 
-PupilTracker::Result PupilTracker::update(double openness, std::optional<double> y) {
+PupilTracker::Result PupilTracker::update(double openness, std::optional<double> y, double k) {
     if (open_ && openness < gate_)
         open_ = false;
     else if (!open_ && openness >= gate_ + hys_)
@@ -70,8 +104,9 @@ PupilTracker::Result PupilTracker::update(double openness, std::optional<double>
         return {};
     if (!disp_)
         disp_ = target_;
-    double step = alpha_ * (*target_ - *disp_);
-    *disp_ += std::max(-rate_, std::min(rate_, step));
+    const double alpha = alpha_for(alpha_, k), rate = k == 1.0 ? rate_ : rate_ * k;
+    double step = alpha * (*target_ - *disp_);
+    *disp_ += std::max(-rate, std::min(rate, step));
     Result r;
     r.px = disp_;
     // Python "if self.base" is falsy for a 0.0 baseline as well as None.

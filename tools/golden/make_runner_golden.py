@@ -5,6 +5,7 @@ Run on the headset with its ExecuTorch Python runtime (same ARM XNNPACK kernels)
     ~/edge-inference/.venv/bin/python tools/golden/make_runner_golden.py <model.pte> <out.json>
 
 Input element k of input i (flattened) is ((k * 37 + i * 91 + 13) % 256) / 255, matching the C++ test.
+fp16 inputs get that value rounded to half precision (like the C++ side's conversion).
 """
 import json, sys, torch
 from executorch.runtime import Runtime
@@ -18,7 +19,10 @@ for i in range(meta.num_inputs()):
     for d in shape:
         n *= d
     k = torch.arange(n, dtype=torch.int64)
-    xs.append((((k * 37 + i * 91 + 13) % 256).float() / 255.0).reshape(shape))
+    x = (((k * 37 + i * 91 + 13) % 256).float() / 255.0).reshape(shape)
+    half = int(meta.input_tensor_meta(i).dtype()) == 5   # ScalarType::Half
+    xs.append(x.half() if half else x)
 out = m.execute(tuple(xs))
-json.dump({"model": sys.argv[1].split("/")[-1], "outputs": [o.flatten().tolist() for o in out]}, open(sys.argv[2], "w"))
+json.dump({"model": sys.argv[1].split("/")[-1], "outputs": [o.float().flatten().tolist() for o in out]},
+          open(sys.argv[2], "w"))
 print(f"wrote {sys.argv[2]}: {[tuple(o.shape) for o in out]}")
