@@ -69,6 +69,9 @@ fs::path state_dir() {
     return dir;
 }
 
+// The runtime's user settings (settings.json).
+fs::path config_dir() { return xdg_dir("XDG_CONFIG_HOME", ".config") / "babble-frame-runtime"; }
+
 // <install dir>/bin/linuxarm64/babble-setup -> <install dir>
 fs::path install_dir() {
     char buf[4096];
@@ -143,9 +146,11 @@ bool update_registration(const fs::path &dir, bool remove, bool *ok) {
             kept.push_back(dir.string());
             continue;
         }
-        // Another copy of this driver, or a path that no longer exists, is
-        // stale; SteamVR would otherwise try to load both.
-        if (!fs::exists(p, ec) || driver_name_of(p) == kDriverName) {
+        // Another copy of this driver is stale (SteamVR would try to load
+        // both): a folder whose manifest names it, or a vanished folder with
+        // this app's install folder name. Other vendors' entries are theirs.
+        const bool same_app = p.filename() == dir.filename();
+        if ((fs::exists(p, ec) && driver_name_of(p) == kDriverName) || (!fs::exists(p, ec) && same_app)) {
             Log("dropping stale external driver entry %s", p.c_str());
             changed = true;
             continue;
@@ -290,15 +295,21 @@ void log_environment(const fs::path &dir) {
     }
 }
 
-void usage() { fprintf(stderr, "usage: babble-setup [--unregister] [--status] [--no-restart]\n"); }
+void usage() {
+    fprintf(stderr,
+            "usage: babble-setup [--status] [--no-restart] [--unregister]\n"
+            "       babble-setup --uninstall   (Steam's uninstall hook: unregister, keep SteamVR\n"
+            "                                   running, remove the state and settings dirs)\n");
+}
 
 } // namespace
 
 int main(int argc, char **argv) {
-    bool unregister = false, status_only = false, no_restart = false;
+    bool unregister = false, status_only = false, no_restart = false, purge = false;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         if (a == "--unregister") unregister = true;
+        else if (a == "--uninstall") { unregister = true; no_restart = true; purge = true; }
         else if (a == "--status") status_only = true;
         else if (a == "--no-restart") no_restart = true;
         else if (a == "-h" || a == "--help") { usage(); return 0; }
@@ -336,6 +347,21 @@ int main(int argc, char **argv) {
         Log(changed ? "unregistered the Babble driver from SteamVR" : "the Babble driver was not registered");
     else
         Log(changed ? "registered %s as a SteamVR driver" : "%s is already registered as a SteamVR driver", dir.c_str());
+
+    if (purge) {
+        // Steam deletes the install folder next; the running driver shim
+        // notices that and stops the runtime, so nothing else is needed for
+        // tracking to end. What Steam does not know about is ours to remove.
+        if (g_log) {
+            fclose(g_log);
+            g_log = nullptr;
+        }
+        std::error_code ec;
+        for (const fs::path &d : {state_dir(), config_dir()}) {
+            fs::remove_all(d, ec);
+            Log("removed %s%s", d.c_str(), ec ? " (failed)" : "");
+        }
+    }
 
     // SteamVR reads the list when it starts, so with no vrserver there is
     // nothing more to do; likewise when the driver is already in the state

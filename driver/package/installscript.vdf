@@ -1,0 +1,12 @@
+"InstallScript"
+{
+	"Run Process On Uninstall"
+	{
+		"babble-uninstall"
+		{
+			"process 1"		"%INSTALLDIR%/bin/linuxarm64/babble-setup"
+			"command 1"		"--uninstall"
+			"NoCleanUp"		"1"
+		}
+	}
+}

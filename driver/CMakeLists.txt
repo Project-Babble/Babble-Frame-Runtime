@@ -13,7 +13,9 @@ else()
 endif()
 
 add_library(driver_babble SHARED src/driver_babble.cpp)
-target_include_directories(driver_babble SYSTEM PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/openvr)
+target_include_directories(driver_babble SYSTEM PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/openvr
+    ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/nlohmann_json/single_include)
 target_compile_options(driver_babble PRIVATE -Wall -Wextra)
 target_link_options(driver_babble PRIVATE -Wl,--no-undefined -static-libstdc++ -static-libgcc)
 target_link_libraries(driver_babble PRIVATE dl pthread)
@@ -33,6 +35,7 @@ set_target_properties(babble_setup PROPERTIES OUTPUT_NAME babble-setup)
 #   babble/resources/settings/default.vrsettings
 #   babble/resources/settings/settingsschema.vrsettings  (the "Expression Tracking" section in SteamVR Settings)
 #   babble/resources/runtime/defaults.json
+#   babble/installscript.vdf   (Steam runs babble-setup --uninstall before deleting the folder)
 #   babble/bin/<platform>/driver_babble.so
 #   babble/bin/<platform>/babble-runtime
 #   babble/bin/<platform>/babble-setup
