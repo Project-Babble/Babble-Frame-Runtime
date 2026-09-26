@@ -111,7 +111,8 @@ void OscSink::run() {
             // Signals are registered before streaming starts; rebuild the address table if that changes.
             addresses.clear();
             for (const auto &nm : snap.names) {
-                if (std::find(exclude_.begin(), exclude_.end(), nm) != exclude_.end()) {
+                // A leading '_' marks an internal (debug) signal, never sent.
+                if (nm.starts_with('_') || std::find(exclude_.begin(), exclude_.end(), nm) != exclude_.end()) {
                     addresses.emplace_back();
                     continue;
                 }

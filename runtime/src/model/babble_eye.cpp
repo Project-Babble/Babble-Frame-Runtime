@@ -94,6 +94,10 @@ bool BabbleEye::init() {
     // The lid value before calibration (model or native), for the debug overlay.
     left_raw_id_ = deps_.state.add_signal("_LeftEyeLidRaw");
     right_raw_id_ = deps_.state.add_signal("_RightEyeLidRaw");
+    // The baseline calibrator's neutral and wide ceiling, as raw values.
+    const char *cal_names[4] = {"_LeftEyeNeutral", "_LeftEyeWideRaw", "_RightEyeNeutral", "_RightEyeWideRaw"};
+    for (int i = 0; i < 4; i++)
+        cal_ids_[i] = deps_.state.add_signal(cal_names[i]);
 
     x_.resize(2 * plane_);
     pupil_in_.resize(2 * plane_);
@@ -158,6 +162,7 @@ eye::OpennessCalibrator::Params BabbleEye::openness_params() const {
     p.tol = cfg_.value("calib_tol", p.tol);
     p.widen_seed = std::max(0.01, cfg_.value("widen_seed", p.widen_seed));
     p.ceiling_max = std::max(1.0 + p.widen_seed, cfg_.value("widen_ceiling_max", p.ceiling_max));
+    p.saturation = cfg_.value("lid_saturation", p.saturation);
     return p;
 }
 
@@ -402,6 +407,15 @@ void BabbleEye::process(const StereoFrame &sf) {
     emit(right_ids_, right);
     updates.emplace_back(left_raw_id_, Signal{float(lid[left]), 1.0f, sf.capture_ns});
     updates.emplace_back(right_raw_id_, Signal{float(lid[right]), 1.0f, sf.capture_ns});
+    if (use_calib_ && baseline_calib_) {
+        for (int k = 0; k < 2; k++) {
+            const auto &c = openness_[k == 0 ? left : right];
+            if (!c.ready())
+                continue;
+            updates.emplace_back(cal_ids_[2 * k], Signal{float(c.baseline()), 1.0f, sf.capture_ns});
+            updates.emplace_back(cal_ids_[2 * k + 1], Signal{float(c.baseline() * c.ceiling()), 1.0f, sf.capture_ns});
+        }
+    }
     deps_.state.update(updates);
 }
 

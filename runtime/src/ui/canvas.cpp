@@ -1,5 +1,7 @@
 #include "ui/canvas.h"
 
+#include "ui/image.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -78,6 +80,20 @@ void Canvas::line(float x0, float y0, float x1, float y1, float width, Color c) 
                  float t = std::clamp(((x - x0) * dx + (y - y0) * dy) / len2, 0.f, 1.f);
                  return std::hypot(x - (x0 + t * dx), y - (y0 + t * dy)) - hw;
              });
+}
+
+void Canvas::image(const Image &img, int x, int y, float radius) {
+    const Rect r{float(x), float(y), float(img.width), float(img.height)};
+    const float rad = std::min({radius, r.w / 2, r.h / 2});
+    for (int iy = 0; iy < img.height; iy++)
+        for (int ix = 0; ix < img.width; ix++) {
+            const uint8_t *s = &img.rgba[(size_t(iy) * img.width + ix) * 4];
+            // Rounded-corner coverage (1 inside, AA at the edge), times the image's own alpha.
+            float cov = 1.0f;
+            if (rad > 0)
+                cov = std::clamp(0.5f - round_box_sdf(x + ix + 0.5f, y + iy + 0.5f, r, rad), 0.f, 1.f);
+            blend(x + ix, y + iy, Color{s[0], s[1], s[2], s[3]}, cov);
+        }
 }
 
 void Canvas::cog(float cx, float cy, float r, Color c) {

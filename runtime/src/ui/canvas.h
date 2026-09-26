@@ -7,6 +7,8 @@
 
 namespace babble::ui {
 
+struct Image;
+
 struct Color {
     uint8_t r = 0, g = 0, b = 0, a = 255;
     static constexpr Color hex(uint32_t rgb, uint8_t a = 255) {
@@ -36,6 +38,8 @@ public:
     void line(float x0, float y0, float x1, float y1, float width, Color c);   // round caps
     // Settings cog centred on (cx, cy), outer radius r.
     void cog(float cx, float cy, float r, Color c);
+    // Blends an RGBA image 1:1 with its top-left at (x, y), corners rounded to radius.
+    void image(const Image &img, int x, int y, float radius = 0);
 
     // Blends c over one pixel with coverage 0..1.
     void blend(int x, int y, Color c, float coverage);

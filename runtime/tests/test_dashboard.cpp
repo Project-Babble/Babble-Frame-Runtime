@@ -168,8 +168,8 @@ TEST_CASE("the eye panel places the gaze dot and fills the openness bar") {
         return Color{p[0], p[1], p[2]};
     };
     auto is = [](Color a, uint32_t rgb) { return a.r == uint8_t(rgb >> 16) && a.g == uint8_t(rgb >> 8) && a.b == uint8_t(rgb); };
-    // Left eye group: 318 px wide, groups 110 apart, so it starts at (1200 - 746) / 2 = 227; plot 230 px at y 190.
-    const float gx = 227, cx = gx + 115, cy = 190 + 115, half = 115 - 14, bar_x = gx + 230 + 24 + 18;
+    // Left eye group: 326 px wide, groups 110 apart, so it starts at (1200 - 762) / 2 = 219; plot 210 px at y 212.
+    const float gx = 219, top = 212, cx = gx + 105, cy = top + 105, half = 105 - 14, bar_x = gx + 210 + 24 + 18;
 
     view.render(c, s, rates(), std::nullopt);   // no data: no dot
     CHECK_FALSE(is(px(cx + half, cy), 0x4d8dff));
@@ -177,18 +177,32 @@ TEST_CASE("the eye panel places the gaze dot and fills the openness bar") {
     s.eyes[0] = {true, true, 45, 0, 1.0};   // full right, eye open
     view.render(c, s, rates(), std::nullopt);
     CHECK(is(px(cx + half, cy), 0x4d8dff));            // dot at the right edge
-    CHECK(is(px(bar_x, 200), 0x3fcf73));   // bar filled to the top
+    CHECK(is(px(bar_x, top + 10), 0x3fcf73));   // bar filled to the top
 
     s.eyes[0].openness = 0.2;                          // mostly closed: top of the bar empty
     view.render(c, s, rates(), std::nullopt);
-    CHECK_FALSE(is(px(bar_x, 200), 0x3fcf73));
-    CHECK(is(px(bar_x, 190 + 225), 0x3fcf73));
+    CHECK_FALSE(is(px(bar_x, top + 10), 0x3fcf73));
+    CHECK(is(px(bar_x, top + 205), 0x3fcf73));
 
-    const float widen_x = gx + 230 + 24 + 36 + 10 + 9;   // the slim widen bar
-    CHECK_FALSE(is(px(widen_x, 190 + 200), 0xf2b33d));
+    const float widen_x = gx + 210 + 24 + 36 + 10 + 9;   // the slim widen bar
+    CHECK_FALSE(is(px(widen_x, top + 190), 0xf2b33d));
     s.eyes[0].openness = 1.0;
     s.eyes[0].widen = 0.5;                             // half wide: lower half amber
     view.render(c, s, rates(), std::nullopt);
-    CHECK(is(px(widen_x, 190 + 200), 0xf2b33d));
-    CHECK_FALSE(is(px(widen_x, 190 + 30), 0xf2b33d));
+    CHECK(is(px(widen_x, top + 190), 0xf2b33d));
+    CHECK_FALSE(is(px(widen_x, top + 30), 0xf2b33d));
+}
+
+TEST_CASE("the logo becomes the tab thumbnail, with a badge fallback") {
+    DashboardView view;
+    REQUIRE(view.load_fonts(kFonts));
+    Canvas thumb(DashboardView::kThumb, DashboardView::kThumb);
+    view.render_thumbnail(thumb);
+    const uint8_t *centre = thumb.data() + (size_t(64) * DashboardView::kThumb + 20) * 4;
+    CHECK((centre[0] == 0x4d && centre[1] == 0x8d && centre[2] == 0xff));   // no icons: the blue "B" badge
+
+    REQUIRE(view.load_icons(std::filesystem::path(BABBLE_RESOURCES_DIR) / "icons"));
+    view.render_thumbnail(thumb);
+    CHECK(centre[1] > centre[0]);   // the logo's green background
+    CHECK(centre[1] > centre[2]);
 }

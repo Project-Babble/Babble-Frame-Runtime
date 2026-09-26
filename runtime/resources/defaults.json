@@ -127,6 +127,7 @@
       "lid_calibration": "baseline",
       "widen_seed": 0.15,
       "widen_ceiling_max": 1.6,
+      "lid_saturation": 1.0,
       "calib_tol": 0.15,
       "lid_alpha": 0.6,
       "calib": true,

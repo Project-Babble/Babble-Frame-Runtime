@@ -310,6 +310,7 @@ int main(int argc, char **argv) {
         if (on) {
             ui::Dashboard::Options o;
             o.fonts_dir = paths::resource_dir() / "fonts";
+            o.icons_dir = paths::resource_dir() / "icons";
             o.width_m = dcfg.value("width_m", o.width_m);
             o.state = &state;
             dashboard->start(steamvr, thread_spec(threads, "ui", "bbl-ui"), o, dashboard_choices(cfg));

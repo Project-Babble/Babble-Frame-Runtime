@@ -63,6 +63,13 @@ void LidCalibrator::set_timing(size_t window, size_t warmup, size_t every) {
 
 OpennessCalibrator::OpennessCalibrator(Params p) : p_(p), c_(1.0 + p.widen_seed) {}
 
+// At the model's saturation the ratio can't exceed saturation / baseline: a
+// ceiling above that would make Widen unreachable. Never below a small
+// span, so an eye whose neutral sits at saturation doesn't divide by ~0.
+double OpennessCalibrator::cap() const {
+    return std::min(p_.ceiling_max, std::max(1.02, p_.saturation / b_));
+}
+
 void OpennessCalibrator::set_timing(size_t skip, size_t warmup, size_t every, size_t peak_window) {
     p_.skip = skip;
     p_.warmup = std::max<size_t>(1, warmup);
@@ -87,6 +94,7 @@ OpennessCalibrator::Out OpennessCalibrator::update(double x, double alpha) {
         if (n_ >= p_.skip + p_.warmup && seed_.size() >= std::max<size_t>(1, p_.warmup / 4)) {
             b_ = std::max(p_.floor, median(std::vector<double>(seed_.begin(), seed_.end())));
             acc_ = p_.acc0;
+            c_ = std::min(1.0 + p_.widen_seed, cap());
             ready_ = true;
             seed_.clear();
             sm_.reset();   // the ratio starts clean rather than blending with the pass-through
@@ -118,7 +126,8 @@ OpennessCalibrator::Out OpennessCalibrator::update(double x, double alpha) {
         if (recent_.size() > p_.peak_window)
             recent_.pop_front();
         if (recent_.size() == p_.peak_window)
-            c_ = std::min(p_.ceiling_max, std::max(c_, median(std::vector<double>(recent_.begin(), recent_.end()))));
+            c_ = std::max(c_, median(std::vector<double>(recent_.begin(), recent_.end())));
+        c_ = std::min(c_, cap());   // also as the baseline drifts
         out.widen = std::clamp((out.openness - 1.0) / (c_ - 1.0), 0.0, 1.0);
     }
     return out;

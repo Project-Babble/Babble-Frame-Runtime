@@ -87,18 +87,24 @@ TEST_CASE("the osc module sends changed signals to its UDP target") {
     StatsRegistry stats;
     SignalId jaw = state.add_signal("jawOpen");
     state.add_signal("tongueOut");   // never updated: must not be sent
+    SignalId internal = state.add_signal("_LeftEyeLidRaw");   // internal: never sent
     auto sink = make_sink(json{{"type", "osc"}, {"port", ntohs(addr.sin_port)}, {"prefix", "/babble"}},
                           SinkDeps{"osc", threads, state, stats});
     REQUIRE(sink);
     REQUIRE(sink->start());
 
-    std::pair<SignalId, Signal> v{jaw, Signal{0.25f, 1.0f, 42}};
-    state.update(std::span(&v, 1));
+    std::pair<SignalId, Signal> v[2] = {{internal, Signal{0.5f, 1.0f, 42}}, {jaw, Signal{0.25f, 1.0f, 42}}};
+    state.update(v);
 
     uint8_t buf[256];
     ssize_t n = recv(rx, buf, sizeof(buf), 0);
+    timeval short_tv{0, 300000};
+    setsockopt(rx, SOL_SOCKET, SO_RCVTIMEO, &short_tv, sizeof(short_tv));
+    uint8_t extra[256];
+    const ssize_t more = recv(rx, extra, sizeof(extra), 0);   // the internal signal must not follow
     sink->stop();
     close(rx);
+    CHECK(more < 0);
     REQUIRE(n > 0);
     uint8_t expect[64];
     size_t en = osc::encode_float("/babble/jawOpen", 0.25f, expect, sizeof(expect));
