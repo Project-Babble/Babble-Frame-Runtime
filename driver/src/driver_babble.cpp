@@ -11,6 +11,8 @@
 
 #include <openvr_driver.h>
 
+#include "babble_version.h"
+
 #include <nlohmann/json.hpp>
 
 #include <atomic>
@@ -344,7 +346,7 @@ public:
         VR_INIT_SERVER_DRIVER_CONTEXT(context);
         std::string exe = ModuleDir() + "/babble-runtime";
         std::string log = StateDir() + "/runtime.log";
-        Log("Babble: driver shim loaded\n");
+        Log("Babble: driver shim " BABBLE_VERSION_DISPLAY " loaded\n");
         // Failing to start the runtime is not fatal to SteamVR; stay loaded
         // and report it rather than returning an init error.
         supervisor_.Start(exe, log);

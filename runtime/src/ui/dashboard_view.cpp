@@ -1,5 +1,7 @@
 #include "ui/dashboard_view.h"
 
+#include "babble_version.h"
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -142,6 +144,7 @@ void DashboardView::render_home(Canvas &c, const Status &s) {
         title_x += logo_small_->width + 18;
     }
     medium_.draw(c, title_x, 92, "Babble", 40, kText);
+    regular_.draw(c, title_x, 124, BABBLE_VERSION_DISPLAY, 22, kMuted);
 
     // Headline, compact at the top right: the overall state and the live rates.
     const FeedStatus *feeds[2] = {&s.mouth, &s.eye};

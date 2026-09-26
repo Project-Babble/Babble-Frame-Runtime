@@ -4,6 +4,7 @@
 // with a pipe on fd 3; EOF there or SIGTERM means shut down. --standalone
 // runs without the shim for development over SSH.
 
+#include "babble_version.h"
 #include "camera/tracking_source.h"
 #include "core/clock.h"
 #include "core/config.h"
@@ -161,7 +162,7 @@ int main(int argc, char **argv) {
     apply_thread_spec(thread_spec(threads, "main", "babble-runtime"));
 
     const bool shim = ShimLink::present();
-    LOG_INFO("babble-runtime starting (pid %d, %s, state dir %s)", getpid(),
+    LOG_INFO("babble-runtime %s starting (pid %d, %s, state dir %s)", BABBLE_VERSION_DISPLAY, getpid(),
              shim ? "supervised by driver shim" : "standalone", paths::state_dir().c_str());
     if (!shim && !opt.standalone)
         LOG_WARN("no shim link on fd 3; running unsupervised (use --standalone to silence this)");

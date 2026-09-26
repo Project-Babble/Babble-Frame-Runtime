@@ -75,10 +75,11 @@ add_library(babble_core STATIC
     src/ui/vk_uploader.cpp
 )
 target_include_directories(babble_core
-    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_BINARY_DIR}/generated
+    PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_BINARY_DIR}/generated ${BABBLE_GENERATED_DIR}
            ${CMAKE_CURRENT_SOURCE_DIR}/../sdk/include
     SYSTEM PUBLIC ${THIRD_PARTY}/nlohmann_json/single_include ${THIRD_PARTY}/openvr ${THIRD_PARTY}/stb)
 target_compile_options(babble_core PUBLIC -Wall -Wextra -Wno-unused-parameter)
+add_dependencies(babble_core babble_version)   # generated/babble_version.h
 target_link_libraries(babble_core PUBLIC pthread ${CMAKE_DL_LIBS}
     executorch extension_module_static extension_tensor extension_threadpool
     xnnpack_backend executorch_selected_kernels portable_kernels
