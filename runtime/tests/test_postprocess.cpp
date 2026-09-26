@@ -284,3 +284,23 @@ TEST_CASE("openness calibration behaves the same over time at 30 Hz") {
     CHECK(c.baseline() == doctest::Approx(b).epsilon(0.01));
     CHECK(out.widen > 0.95);
 }
+
+TEST_CASE("openness ceiling never exceeds the model's saturation, per eye") {
+    // Two eyes with different neutrals: at raw 1.0 (saturation) both reach Widen 1.
+    for (double neutral : {0.72, 0.9}) {
+        CAPTURE(neutral);
+        auto c = seeded(neutral);
+        hold(c, neutral, 5);
+        CHECK(c.ceiling() <= 1.0 / neutral + 1e-9);
+        hold(c, 1.0, 2);
+        CHECK(hold(c, 1.0, 1).widen > 0.95);
+        // Glitches above saturation can't raise the ceiling past it.
+        hold(c, 1.4, 1);
+        hold(c, neutral, 2);
+        CHECK(c.ceiling() * c.baseline() <= 1.0 + 1e-9);
+        CHECK(hold(c, 1.0, 1).widen > 0.95);
+    }
+    // A neutral at saturation still gets a small span, never a division by ~0.
+    auto c = seeded(0.99);
+    CHECK(c.ceiling() >= 1.02);
+}

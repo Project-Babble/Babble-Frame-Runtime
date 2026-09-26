@@ -45,7 +45,8 @@ namespace babble {
 //             only nearby values move (blinks and held wide eyes don't), Lid =
 //             the ratio to it, Widen = (ratio - 1) scaled to the person's
 //             widest sustained ratio: widen_seed (0.15) until one is seen,
-//             capped at widen_ceiling_max (1.6); calib_warmup_s (3) seeds it
+//             capped at widen_ceiling_max (1.6) and at lid_saturation (1.0,
+//             the raw output's practical max) / neutral; calib_warmup_s (3) seeds it
 //             after the first second, calib_tol (0.15) is the band around it.
 //             Needs a model whose lid output isn't capped at 1 for Widen.
 //   "median": the reference's rolling-median neutral (calib_window_s,
@@ -123,6 +124,7 @@ private:
 
     std::array<SignalId, 3> left_ids_{}, right_ids_{};   // Lid, Widen, Dilation
     SignalId left_raw_id_ = 0, right_raw_id_ = 0;        // _LeftEyeLidRaw / _RightEyeLidRaw (debug, not sent)
+    std::array<SignalId, 4> cal_ids_{};                  // _Left/_RightEyeNeutral, _Left/_RightEyeWideRaw (debug)
     LatencyStat pupil_time_;
     RateStat pupil_rate_;
 };

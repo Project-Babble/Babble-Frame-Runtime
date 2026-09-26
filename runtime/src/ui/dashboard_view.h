@@ -3,6 +3,7 @@
 #include "platform/steamvr_client.h"
 #include "ui/canvas.h"
 #include "ui/font.h"
+#include "ui/image.h"
 
 #include <array>
 #include <cstddef>
@@ -39,6 +40,10 @@ struct EyeReading {
     double widen = 0;                    // the Widen output, 0..1
     bool raw = false;                    // raw_lid is recent
     double raw_lid = 0;                  // the lid value before calibration (model or native)
+    bool cal = false;                    // neutral/wide_raw are recent (baseline calibration running)
+    double neutral = 0, wide_raw = 0;    // the calibration's neutral and wide ceiling, raw units
+    bool dilation_ok = false;            // no Dilation until the pupil baseline exists
+    double dilation = 0;                 // the Dilation output, 0..1 (0.5 = the person's baseline)
 };
 
 struct Status {
@@ -78,6 +83,7 @@ public:
     enum class Page { Home, Settings };
 
     bool load_fonts(const std::filesystem::path &dir);   // NotoSans-Regular.ttf, NotoSans-Medium.ttf
+    bool load_icons(const std::filesystem::path &dir);   // bfr_logo_48.png, bfr_logo_128.png (optional)
 
     // Draws the current page; pointer (canvas pixels, top-left origin) drives hover.
     void render(Canvas &c, const Status &status, const std::vector<Choice> &choices, std::optional<Point> pointer);
@@ -117,6 +123,7 @@ private:
 
     Page page_ = Page::Home;
     Font regular_, medium_;
+    std::optional<Image> logo_small_, logo_thumb_;
     std::vector<Hit> hits_;
     std::optional<Point> pointer_;
 };

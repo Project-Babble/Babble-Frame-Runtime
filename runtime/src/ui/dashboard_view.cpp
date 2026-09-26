@@ -24,8 +24,9 @@ constexpr Color kGrey = Color::hex(0x6b7280);
 constexpr float kMargin = 56;
 
 // Eye panel geometry: gaze plot, openness bar, widen bar.
-constexpr float kPlot = 230, kBarGap = 24, kBarW = 36, kWidenGap = 10, kWidenW = 18;
-constexpr float kEyeGroupW = kPlot + kBarGap + kBarW + kWidenGap + kWidenW;
+constexpr float kPlot = 210, kBarGap = 24, kBarW = 36, kWidenGap = 10, kWidenW = 18;
+constexpr float kEyeGroupW = kPlot + kBarGap + kBarW + 2 * (kWidenGap + kWidenW);   // openness, W, D
+constexpr Color kViolet = Color::hex(0xa78bfa);
 
 Color health_color(Health h) {
     switch (h) {
@@ -65,6 +66,12 @@ std::string format_hz(double hz) {
 
 bool DashboardView::load_fonts(const std::filesystem::path &dir) {
     return regular_.load(dir / "NotoSans-Regular.ttf") && medium_.load(dir / "NotoSans-Medium.ttf");
+}
+
+bool DashboardView::load_icons(const std::filesystem::path &dir) {
+    logo_small_ = load_png(dir / "bfr_logo_48.png");
+    logo_thumb_ = load_png(dir / "bfr_logo_128.png");
+    return logo_small_ && logo_thumb_;
 }
 
 bool DashboardView::hovered(const Rect &r) const { return pointer_ && r.contains(pointer_->x, pointer_->y); }
@@ -129,7 +136,12 @@ Headline headline(const Status &s) {
 
 void DashboardView::render_home(Canvas &c, const Status &s) {
     const float W = float(c.width());
-    medium_.draw(c, kMargin, 92, "Babble", 40, kText);
+    float title_x = kMargin;
+    if (logo_small_) {
+        c.image(*logo_small_, int(kMargin), 52, 12);
+        title_x += logo_small_->width + 18;
+    }
+    medium_.draw(c, title_x, 92, "Babble", 40, kText);
 
     // Headline, compact at the top right: the overall state and the live rates.
     const FeedStatus *feeds[2] = {&s.mouth, &s.eye};
@@ -183,12 +195,17 @@ void DashboardView::render_home(Canvas &c, const Status &s) {
 void DashboardView::render_eye(Canvas &c, float x, float y, const char *name, const EyeReading &e) {
     constexpr float kRange = 45;
     medium_.draw(c, x, y + 22, name, 28, kText);
-    if (e.raw) {   // the value going into calibration, right-aligned on the heading row
-        char buf[32];
-        snprintf(buf, sizeof(buf), "raw %.3f", e.raw_lid);
-        regular_.draw(c, x + kEyeGroupW - regular_.measure(buf, 22), y + 22, buf, 22, kMuted);
+    // The value going into calibration, and the calibration's neutral (n) and
+    // wide ceiling (w), all raw units.
+    if (e.raw) {
+        char buf[64];
+        if (e.cal)
+            snprintf(buf, sizeof(buf), "raw %.3f   n %.3f   w %.3f", e.raw_lid, e.neutral, e.wide_raw);
+        else
+            snprintf(buf, sizeof(buf), "raw %.3f   calibrating", e.raw_lid);
+        regular_.draw(c, x, y + 50, buf, 20, kMuted);
     }
-    const Rect plot{x, y + 40, kPlot, kPlot};
+    const Rect plot{x, y + 62, kPlot, kPlot};
     c.fill_rect(plot, kCard, 18);
     const float cx = plot.x + kPlot / 2, cy = plot.y + kPlot / 2, half = kPlot / 2 - 14;
     c.line(plot.x + 14, cy, plot.x + kPlot - 14, cy, 2, kLine);
@@ -224,6 +241,16 @@ void DashboardView::render_eye(Canvas &c, float x, float y, const char *name, co
         c.fill_rect({wbar.x, wbar.y + wbar.h * (1 - frac), wbar.w, wbar.h * frac}, kAmber, kWidenW / 2);
     }
     regular_.draw(c, wbar.x + (kWidenW - regular_.measure("W", 20)) / 2, plot.y + kPlot + 30, "W", 20, kMuted);
+
+    // Dilation: 0.5 is the person's baseline, marked with a tick.
+    const Rect dbar{wbar.x + kWidenW + kWidenGap, plot.y, kWidenW, kPlot};
+    c.fill_rect(dbar, kCard, kWidenW / 2);
+    if (e.dilation_ok && e.dilation > 0.01) {
+        const float frac = float(std::min(1.0, e.dilation));
+        c.fill_rect({dbar.x, dbar.y + dbar.h * (1 - frac), dbar.w, dbar.h * frac}, kViolet, kWidenW / 2);
+    }
+    c.fill_rect({dbar.x - 3, dbar.y + dbar.h / 2 - 1, dbar.w + 6, 2}, kText);
+    regular_.draw(c, dbar.x + (kWidenW - regular_.measure("D", 20)) / 2, plot.y + kPlot + 30, "D", 20, kMuted);
 }
 
 void DashboardView::render_visualizer_button(Canvas &c, AppState state) {
@@ -302,11 +329,16 @@ void DashboardView::render_cog(Canvas &c) {
 }
 
 void DashboardView::render_thumbnail(Canvas &c) {
-    const float s = float(c.width());
+    const float sz = float(c.width());
     c.clear(kBg);
-    c.fill_rect({s * 0.08f, s * 0.08f, s * 0.84f, s * 0.84f}, kAccent, s * 0.22f);
-    const float px = s * 0.62f;
-    medium_.draw(c, (s - medium_.measure("B", px)) / 2, (s + medium_.cap_height(px)) / 2 + s * 0.02f, "B", px, kText);
+    if (logo_thumb_ && logo_thumb_->width == c.width() && logo_thumb_->height == c.height()) {
+        c.image(*logo_thumb_, 0, 0, sz * 0.22f);
+        return;
+    }
+    // Fallback without the icon files: a "B" badge.
+    c.fill_rect({sz * 0.08f, sz * 0.08f, sz * 0.84f, sz * 0.84f}, kAccent, sz * 0.22f);
+    const float px = sz * 0.62f;
+    medium_.draw(c, (sz - medium_.measure("B", px)) / 2, (sz + medium_.cap_height(px)) / 2 + sz * 0.02f, "B", px, kText);
 }
 
 int DashboardView::hit_at(std::optional<Point> p) const {

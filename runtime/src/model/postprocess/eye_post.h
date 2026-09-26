@@ -76,7 +76,9 @@ private:
 //  - one axis split into two outputs around it: the ratio x / baseline
 //    (Lid, 1 = neutral) and Widen = (ratio - 1) / (ceiling - 1);
 //  - the wide ceiling normalised by the largest sustained ratio seen, seeded
-//    at 1 + widen_seed and capped (SRanipal's max-observed normalisation).
+//    at 1 + widen_seed (SRanipal's max-observed normalisation), and never
+//    above what the model can output: saturation / baseline (the lid output
+//    saturates near 1.0 even uncapped), nor ceiling_max.
 // All state resets per session. Counts are in updates (convert with RateScale).
 class OpennessCalibrator {
 public:
@@ -87,6 +89,7 @@ public:
         double tol = 0.15;                     // relative band around the baseline that may move it
         double gain = 0.001, decay = 20.5, acc0 = 0.5;   // SRanipal's calibration smoother
         double widen_seed = 0.15, ceiling_max = 1.6;
+        double saturation = 1.0;               // the raw output's practical maximum
     };
     struct Out {
         double openness = 0;   // smoothed ratio to the neutral (>= 0; Lid = min(openness, 1))
@@ -101,9 +104,10 @@ public:
     void set_timing(size_t skip, size_t warmup, size_t every, size_t peak_window);
     bool ready() const { return ready_; }
     double baseline() const { return b_; }
-    double ceiling() const { return c_; }
+    double ceiling() const { return c_; }   // as a ratio to the baseline (raw: ceiling() * baseline())
 
 private:
+    double cap() const;   // the ceiling's upper limit for the current baseline
     Params p_;
     size_t n_ = 0;
     bool ready_ = false;

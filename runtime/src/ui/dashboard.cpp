@@ -21,13 +21,18 @@ void Dashboard::start(SteamVrClient &vr, ThreadSpec thread, Options options, std
     options_ = std::move(options);
     choices_ = std::move(choices);
     if (options_.state) {
-        const char *names[10] = {"LeftEyeX",  "LeftEyeY",  "LeftEyeLid",  "LeftEyeWiden",  "_LeftEyeLidRaw",
-                                 "RightEyeX", "RightEyeY", "RightEyeLid", "RightEyeWiden", "_RightEyeLidRaw"};
-        for (int i = 0; i < 10; i++)   // add_signal is idempotent: these are the pipelines' own signals
+        const char *names[2 * kPerEye] = {
+            "LeftEyeX",  "LeftEyeY",  "LeftEyeLid",  "LeftEyeWiden",  "_LeftEyeLidRaw",
+            "_LeftEyeNeutral",  "_LeftEyeWideRaw",  "LeftEyeDilation",
+            "RightEyeX", "RightEyeY", "RightEyeLid", "RightEyeWiden", "_RightEyeLidRaw",
+            "_RightEyeNeutral", "_RightEyeWideRaw", "RightEyeDilation"};
+        for (int i = 0; i < 2 * kPerEye; i++)   // add_signal is idempotent: these are the pipelines' own signals
             eye_ids_[i] = options_.state->add_signal(names[i]);
     }
     if (!view_.load_fonts(options_.fonts_dir))
         LOG_WARN("dashboard: fonts not found in %s; text won't be drawn", options_.fonts_dir.c_str());
+    if (!options_.icons_dir.empty() && !view_.load_icons(options_.icons_dir))
+        LOG_WARN("dashboard: logo not found in %s; using the plain badge", options_.icons_dir.c_str());
     stop_ = false;
     thread_ = start_thread(thread_spec_, [this] { run(); });
 }
@@ -135,13 +140,14 @@ std::array<EyeReading, 2> Dashboard::read_eyes() const {
     std::array<EyeReading, 2> out{};
     if (!options_.state)
         return out;
-    Signal v[10];
+    Signal v[2 * kPerEye];
     options_.state->read(eye_ids_, v);
     const uint64_t now = mono_ns(), fresh = 1000000000ull;   // older than 1 s: no data
     auto recent = [&](const Signal &s) { return s.t_ns != 0 && now - s.t_ns < fresh; };
     for (int e = 0; e < 2; e++) {
-        const Signal &x = v[5 * e], &y = v[5 * e + 1], &lid = v[5 * e + 2], &widen = v[5 * e + 3],
-                     &raw = v[5 * e + 4];
+        const Signal *s = v + kPerEye * e;
+        const Signal &x = s[0], &y = s[1], &lid = s[2], &widen = s[3], &raw = s[4], &neutral = s[5], &wide = s[6],
+                     &dil = s[7];
         EyeReading &r = out[e];
         r.gaze = recent(x) || recent(y);
         r.yaw_deg = std::atan(x.value) * 180 / M_PI;   // the gaze outputs are tan(angle)
@@ -151,6 +157,11 @@ std::array<EyeReading, 2> Dashboard::read_eyes() const {
         r.widen = widen.value;
         r.raw = recent(raw);
         r.raw_lid = raw.value;
+        r.cal = recent(neutral) && recent(wide);
+        r.neutral = neutral.value;
+        r.wide_raw = wide.value;
+        r.dilation_ok = recent(dil);
+        r.dilation = dil.value;
     }
     return out;
 }
@@ -273,7 +284,9 @@ void Dashboard::run() {
                     redraw |= a.gaze != b.gaze || a.lid != b.lid || std::fabs(a.yaw_deg - b.yaw_deg) > 0.3 ||
                               std::fabs(a.pitch_deg - b.pitch_deg) > 0.3 || std::fabs(a.openness - b.openness) > 0.005 ||
                               std::fabs(a.widen - b.widen) > 0.005 || a.raw != b.raw ||
-                              std::fabs(a.raw_lid - b.raw_lid) > 0.002;
+                              std::fabs(a.raw_lid - b.raw_lid) > 0.002 || a.cal != b.cal ||
+                              std::fabs(a.neutral - b.neutral) > 0.002 || std::fabs(a.wide_raw - b.wide_raw) > 0.002 ||
+                              a.dilation_ok != b.dilation_ok || std::fabs(a.dilation - b.dilation) > 0.005;
                 }
             }
             {

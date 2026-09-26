@@ -29,6 +29,7 @@ class Dashboard {
 public:
     struct Options {
         std::filesystem::path fonts_dir;
+        std::filesystem::path icons_dir;   // the logo (tab thumbnail and header); optional
         std::string key = "babble.dashboard";
         std::string name = "Babble";
         float width_m = 1.6f;
@@ -59,8 +60,9 @@ private:
     void present();
     // The eye panel's values from ExpressionState (tangent gaze -> degrees).
     std::array<EyeReading, 2> read_eyes() const;
-    // Per eye (left, right): X, Y, Lid, Widen, raw lid.
-    std::array<SignalId, 10> eye_ids_{};
+    // Per eye (left, right): X, Y, Lid, Widen, raw lid, neutral, wide ceiling, dilation.
+    static constexpr int kPerEye = 8;
+    std::array<SignalId, 2 * kPerEye> eye_ids_{};
     std::array<EyeReading, 2> drawn_eyes_{};
     uint64_t last_present_ns_ = 0;
 

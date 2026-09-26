@@ -30,7 +30,8 @@ class ExpressionState;
 //   host, port        target (default 127.0.0.1:8888)
 //   prefix            prepended to every address (default "")
 //   rename            {"signalName": "oscName"} for receivers with other names
-//   exclude           ["signalName", ...] never sent
+//   exclude           ["signalName", ...] never sent (nor are internal
+//                     signals, whose names start with '_')
 //   max_rate_hz       cap on send batches per second (0 = every update)
 //   test_pattern      true: send slowly moving values for every signal
 //                     instead of tracking data (to test the receiving end)

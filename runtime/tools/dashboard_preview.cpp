@@ -32,6 +32,7 @@ int main(int argc, char **argv) {
         argc > 2 ? std::filesystem::path(argv[2]) : std::filesystem::path(BABBLE_RESOURCES_DIR) / "fonts";
     std::filesystem::create_directories(out);
     DashboardView view;
+    view.load_icons(fonts.parent_path() / "icons");
     if (!view.load_fonts(fonts)) {
         fprintf(stderr, "fonts not found in %s\n", fonts.c_str());
         return 1;
@@ -60,8 +61,8 @@ int main(int argc, char **argv) {
     };
     Status tracking{true, Worn::Yes, feed(Health::Working, 119.8), feed(Health::Working, 90.1)};
     tracking.visualizer = AppState::Stopped;
-    tracking.eyes[0] = {true, true, -18, 6, 1.0, 0.6, true, 0.843};   // looking left and up, eyes wide
-    tracking.eyes[1] = {true, true, -21, 5, 0.35, 0, true, 0.251};   // right eye half closed
+    tracking.eyes[0] = {true, true, -18, 6, 1.0, 0.6, true, 0.843, true, 0.742, 0.941, true, 0.62};   // looking left and up, wide
+    tracking.eyes[1] = {true, true, -21, 5, 0.35, 0, true, 0.251, false, 0, 0, false, 0};   // half closed, calibrating
     Status paused{true, Worn::No, feed(Health::Paused), feed(Health::Paused)};
     Status fault{true, Worn::Yes, feed(Health::Working, 120),
                  feed(Health::Fault, 0, "cannot connect to dsp_service (is the eye tracking service running?)")};

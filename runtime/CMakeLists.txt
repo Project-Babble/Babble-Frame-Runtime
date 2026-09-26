@@ -68,6 +68,7 @@ add_library(babble_core STATIC
     src/sink/osc_sink.cpp
     src/ui/canvas.cpp
     src/ui/font.cpp
+    src/ui/image.cpp
     src/ui/dashboard_view.cpp
     src/ui/dashboard.cpp
     src/ui/vk_uploader.cpp
