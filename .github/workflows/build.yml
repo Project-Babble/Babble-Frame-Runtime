@@ -30,10 +30,13 @@ on:
         type: boolean
         default: false
       steam-branch:
-        description: 'Steam branch to set the build live on (must already exist; leave blank to only upload)'
+        description: 'Steam branch to set the build live on (must already exist)'
         type: string
-        required: false
         default: prerelease
+      set-live:
+        description: 'Set the build live on that branch (untick to only upload)'
+        type: boolean
+        default: true
 
 env:
   ARTIFACT: babble-frame-runtime.linuxarm64.tar.xz
@@ -157,7 +160,7 @@ jobs:
       # Repository variables: STEAM_APP_ID (required) and STEAM_DEPOT_ID
       # (optional; defaults to STEAM_APP_ID + 1, the first depot of a standard app).
       # Steam only shows branch controls once a build exists, so the very first
-      # upload has to run with steam-branch blank; create the branch on the
+      # upload has to run with set-live unticked; create the branch on the
       # Builds page afterwards and later uploads can set live on it.
       - name: Validate version number and Steam configuration
         run: |
@@ -191,4 +194,4 @@ jobs:
           firstDepotIdOverride: ${{ vars.STEAM_DEPOT_ID }}
           buildDescription: ${{ github.event.inputs.version-number }}
           depot1Path: builds/babble
-          releaseBranch: ${{ github.event.inputs.steam-branch }}
+          releaseBranch: ${{ github.event.inputs.set-live == 'true' && github.event.inputs.steam-branch || '' }}
