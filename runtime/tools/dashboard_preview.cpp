@@ -59,6 +59,9 @@ int main(int argc, char **argv) {
         return f;
     };
     Status tracking{true, Worn::Yes, feed(Health::Working, 119.8), feed(Health::Working, 90.1)};
+    tracking.visualizer = AppState::Stopped;
+    tracking.eyes[0] = {true, true, -18, 6, 1.0, 0.6, true, 0.843};   // looking left and up, eyes wide
+    tracking.eyes[1] = {true, true, -21, 5, 0.35, 0, true, 0.251};   // right eye half closed
     Status paused{true, Worn::No, feed(Health::Paused), feed(Health::Paused)};
     Status fault{true, Worn::Yes, feed(Health::Working, 120),
                  feed(Health::Fault, 0, "cannot connect to dsp_service (is the eye tracking service running?)")};

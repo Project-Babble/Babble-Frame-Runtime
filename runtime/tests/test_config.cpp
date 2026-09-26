@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <map>
 
 #include <unistd.h>
 
@@ -76,17 +77,32 @@ TEST_CASE("the SteamVR Settings section maps to live runtime settings") {
     std::string err;
     auto d = parse_json(kDefaultsJson, &err);
     REQUIRE(d);
-    auto entries = SteamVrSettingsBridge::entries_from_config(*d);
-    REQUIRE(entries.size() == 4);
     CHECK((*d)["steamvr_settings"]["section"] == "driver_babble");
+    using Type = SteamVrSettingsBridge::Entry::Type;
+    std::map<std::string, std::pair<std::string, Type>> want = {
+        {"mouthTracking", {"/sources/mouth/tracking", Type::Bool}},
+        {"mouthRate", {"/sources/mouth/process_fps", Type::Int}},
+        {"eyeTracking", {"/sources/eye/tracking", Type::Bool}},
+        {"eyeRate", {"/sources/eye/process_fps", Type::Int}},
+        {"opennessSource", {"/pipelines/eye/openness_source", Type::String}},
+        {"gazeSource", {"/pipelines/gaze/gaze_source", Type::String}},
+        {"debugOverlay", {"/dashboard/enabled", Type::Bool}},
+    };
+    auto entries = SteamVrSettingsBridge::entries_from_config(*d);
+    REQUIRE(entries.size() == want.size());
     for (const auto &e : entries) {
-        // Toggles are bools and the rate selects are numbers, like the config values they mirror.
-        const bool is_tracking = e.id.ends_with("/tracking");
-        CHECK_MESSAGE(e.is_bool == is_tracking, e.key);
-        CHECK_MESSAGE((e.id.ends_with("/tracking") || e.id.ends_with("/process_fps")), e.id);
+        CAPTURE(e.key);
+        REQUIRE(want.count(e.key));
+        CHECK(e.id == want[e.key].first);
+        CHECK(e.type == want[e.key].second);
     }
-    // An id that isn't a bool/number setting is dropped rather than mirrored.
+    // The advanced options default to model openness and independent gaze.
+    CHECK((*d)["pipelines"]["eye"]["openness_source"] == "model");
+    CHECK((*d)["pipelines"]["gaze"]["gaze_source"] == "independent");
+    CHECK((*d)["dashboard"]["enabled"] == false);   // the debug overlay is opt-in
+
+    // An id that isn't a bool/number/string setting is dropped rather than mirrored.
     json cfg = *d;
     cfg["steamvr_settings"]["values"].push_back({{"key", "bogus"}, {"id", "/sources/mouth/nodes"}});
-    CHECK(SteamVrSettingsBridge::entries_from_config(cfg).size() == 4);
+    CHECK(SteamVrSettingsBridge::entries_from_config(cfg).size() == want.size());
 }

@@ -51,6 +51,10 @@
     "ui": {
       "cpus": [0, 1],
       "nice": 5
+    },
+    "eyesrv": {
+      "cpus": [0, 1],
+      "nice": 0
     }
   },
   "sources": {
@@ -113,12 +117,17 @@
       "from": "eye",
       "thread": "infE",
       "pupil_thread": "pupil",
-      "model": "eye_split96_fp16.pte",
+      "model": "eye_split96_uncapped_fp16.pte",
+      "openness_source": "model",
       "lid_model": "lid_mnv4_160_int8.pte",
       "pupil_model": "pupil_cnx_160_fp32.pte",
       "update_hz": 90,
       "pupil_hz": 3,
       "pupil_gain": 2.0,
+      "lid_calibration": "baseline",
+      "widen_seed": 0.15,
+      "widen_ceiling_max": 1.6,
+      "calib_tol": 0.15,
       "lid_alpha": 0.6,
       "calib": true,
       "calib_window_s": 20,
@@ -135,6 +144,7 @@
       "type": "steamvr_gaze",
       "enabled": true,
       "feed": "eye",
+      "gaze_source": "independent",
       "thread": "gaze",
       "rate_hz": 90,
       "ipd": "auto",
@@ -176,17 +186,28 @@
     "proximity_path": "/user/head/proximity",
     "eyetracking_path": "/user/head/eyetracking"
   },
+  "visualizer": {
+    "command": ["~/aura_vis/run.sh"]
+  },
+  "eye_server": {
+    "path": "/dev/shm/eye-server.mmap",
+    "version": 4,
+    "thread": "eyesrv"
+  },
   "steamvr_settings": {
     "section": "driver_babble",
     "values": [
       { "key": "mouthTracking", "id": "/sources/mouth/tracking" },
       { "key": "mouthRate", "id": "/sources/mouth/process_fps" },
       { "key": "eyeTracking", "id": "/sources/eye/tracking" },
-      { "key": "eyeRate", "id": "/sources/eye/process_fps" }
+      { "key": "eyeRate", "id": "/sources/eye/process_fps" },
+      { "key": "opennessSource", "id": "/pipelines/eye/openness_source" },
+      { "key": "gazeSource", "id": "/pipelines/gaze/gaze_source" },
+      { "key": "debugOverlay", "id": "/dashboard/enabled" }
     ]
   },
   "dashboard": {
-    "enabled": true,
+    "enabled": false,
     "width_m": 1.6,
     "settings": [
       {

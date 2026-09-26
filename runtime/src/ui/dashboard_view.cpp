@@ -1,5 +1,6 @@
 #include "ui/dashboard_view.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 
@@ -21,6 +22,10 @@ constexpr Color kRed = Color::hex(0xf0544f);
 constexpr Color kGrey = Color::hex(0x6b7280);
 
 constexpr float kMargin = 56;
+
+// Eye panel geometry: gaze plot, openness bar, widen bar.
+constexpr float kPlot = 230, kBarGap = 24, kBarW = 36, kWidenGap = 10, kWidenW = 18;
+constexpr float kEyeGroupW = kPlot + kBarGap + kBarW + kWidenGap + kWidenW;
 
 Color health_color(Health h) {
     switch (h) {
@@ -84,9 +89,10 @@ void DashboardView::render(Canvas &c, const Status &status, const std::vector<Ch
     pointer_ = pointer;
     hits_.clear();
     c.clear(kBg);
-    if (page_ == Page::Home)
+    if (page_ == Page::Home) {
         render_home(c, status);
-    else
+        render_visualizer_button(c, status.visualizer);
+    } else
         render_settings(c, choices);
     render_cog(c);
 }
@@ -125,19 +131,23 @@ void DashboardView::render_home(Canvas &c, const Status &s) {
     const float W = float(c.width());
     medium_.draw(c, kMargin, 92, "Babble", 40, kText);
 
-    // Headline: the overall tracking state and the live rates.
+    // Headline, compact at the top right: the overall state and the live rates.
     const FeedStatus *feeds[2] = {&s.mouth, &s.eye};
     const char *names[2] = {"Mouth", "Eyes"};
     const Headline h = headline(s);
-    const std::string &word = h.word, &sub = h.sub;
-    const Color dot = health_color(h.tone);
-    const float head_px = 76, dot_r = 15, gap = 28;
-    const float tw = medium_.measure(word, head_px);
-    const float x0 = (W - (2 * dot_r + gap + tw)) / 2, base = 318;
-    c.fill_circle(x0 + dot_r, base - medium_.cap_height(head_px) / 2 - 4, dot_r, dot);
-    medium_.draw(c, x0 + 2 * dot_r + gap, base, word, head_px, kText);
-    if (!sub.empty())
-        regular_.draw(c, (W - regular_.measure(sub, 34)) / 2, base + 70, sub, 34, kMuted);
+    {
+        const float px = 34, dot_r = 10, gap = 16;
+        const float tw = medium_.measure(h.word, px), right = W - kMargin;
+        c.fill_circle(right - tw - gap - dot_r, 80 - medium_.cap_height(px) / 2, dot_r, health_color(h.tone));
+        medium_.draw(c, right - tw, 80, h.word, px, kText);
+        if (!h.sub.empty())
+            regular_.draw(c, right - regular_.measure(h.sub, 24), 116, h.sub, 24, kMuted);
+    }
+
+    // Eye panel: gaze and openness per eye, as sent.
+    const float groups_gap = 110, gx = (W - 2 * kEyeGroupW - groups_gap) / 2;
+    render_eye(c, gx, 150, "Left eye", s.eyes[0]);
+    render_eye(c, gx + kEyeGroupW + groups_gap, 150, "Right eye", s.eyes[1]);
 
     // Feed indicators, each with its on/off switch.
     const float cw = (W - 2 * kMargin - 24) / 2, ch = 132, cy = 470;
@@ -167,6 +177,68 @@ void DashboardView::render_home(Canvas &c, const Status &s) {
         }
         regular_.draw(c, r.x + 33, r.y + 104, fit(regular_, detail, 28, text_w), 28, kMuted);
     }
+}
+
+// A gaze plot (+-45 deg square, crosshair, dot), an openness bar and a slim widen bar.
+void DashboardView::render_eye(Canvas &c, float x, float y, const char *name, const EyeReading &e) {
+    constexpr float kRange = 45;
+    medium_.draw(c, x, y + 22, name, 28, kText);
+    if (e.raw) {   // the value going into calibration, right-aligned on the heading row
+        char buf[32];
+        snprintf(buf, sizeof(buf), "raw %.3f", e.raw_lid);
+        regular_.draw(c, x + kEyeGroupW - regular_.measure(buf, 22), y + 22, buf, 22, kMuted);
+    }
+    const Rect plot{x, y + 40, kPlot, kPlot};
+    c.fill_rect(plot, kCard, 18);
+    const float cx = plot.x + kPlot / 2, cy = plot.y + kPlot / 2, half = kPlot / 2 - 14;
+    c.line(plot.x + 14, cy, plot.x + kPlot - 14, cy, 2, kLine);
+    c.line(cx, plot.y + 14, cx, plot.y + kPlot - 14, 2, kLine);
+    std::string caption = "no gaze";
+    if (e.gaze) {
+        auto clampd = [](double v) { return std::max(-1.0, std::min(1.0, v)); };
+        const float dx = float(clampd(e.yaw_deg / kRange)) * half, dy = float(clampd(e.pitch_deg / kRange)) * half;
+        c.fill_circle(cx + dx, cy - dy, 13, kAccent);
+        char buf[64];
+        snprintf(buf, sizeof(buf), "%+.0f°  %+.0f°", e.yaw_deg, e.pitch_deg);
+        caption = buf;
+    }
+    regular_.draw(c, plot.x + (kPlot - regular_.measure(caption, 22)) / 2, plot.y + kPlot + 30, caption, 22, kMuted);
+
+    const Rect bar{x + kPlot + kBarGap, plot.y, kBarW, kPlot};
+    c.fill_rect(bar, kCard, kBarW / 2);
+    std::string value = "--";
+    if (e.lid) {
+        const float frac = float(std::max(0.0, std::min(1.0, e.openness)));
+        if (frac > 0.01f)
+            c.fill_rect({bar.x, bar.y + bar.h * (1 - frac), bar.w, bar.h * frac}, kGreen, kBarW / 2);
+        char buf[16];
+        snprintf(buf, sizeof(buf), "%.2f", e.openness);
+        value = buf;
+    }
+    regular_.draw(c, bar.x + (kBarW - regular_.measure(value, 22)) / 2, plot.y + kPlot + 30, value, 22, kMuted);
+
+    const Rect wbar{bar.x + kBarW + kWidenGap, plot.y, kWidenW, kPlot};
+    c.fill_rect(wbar, kCard, kWidenW / 2);
+    if (e.lid && e.widen > 0.01) {
+        const float frac = float(std::min(1.0, e.widen));
+        c.fill_rect({wbar.x, wbar.y + wbar.h * (1 - frac), wbar.w, wbar.h * frac}, kAmber, kWidenW / 2);
+    }
+    regular_.draw(c, wbar.x + (kWidenW - regular_.measure("W", 20)) / 2, plot.y + kPlot + 30, "W", 20, kMuted);
+}
+
+void DashboardView::render_visualizer_button(Canvas &c, AppState state) {
+    if (state == AppState::Unavailable)
+        return;
+    const std::string text = state == AppState::Running ? "Close Visualizer" : "Open Visualizer";
+    const float px = 28, pad = 30, h = 64;
+    const float w = medium_.measure(text, px) + 2 * pad;
+    const Rect r{float(c.width()) - kMargin - w, float(c.height()) - 84 - h / 2, w, h};
+    const bool hover = hovered(r);
+    const Color fill = state == AppState::Running ? (hover ? kCardHover : kCard)
+                                                  : (hover ? Color::hex(0x6aa0ff) : kAccent);
+    c.fill_rect(r, fill, h / 2);
+    medium_.draw(c, r.x + pad, r.y + (h + medium_.cap_height(px)) / 2, text, px, kText);
+    hits_.push_back({Hit::Visualizer, r});
 }
 
 void DashboardView::render_switch(Canvas &c, Rect r, bool on, bool hover) {
@@ -267,6 +339,9 @@ DashboardView::ClickResult DashboardView::click(Point p) {
         case Hit::Toggle:
             out.toggle = std::make_pair(h.choice, h.value > 0.5);
             out.redraw = true;
+            break;
+        case Hit::Visualizer:
+            out.visualizer = true;
             break;
         }
         break;

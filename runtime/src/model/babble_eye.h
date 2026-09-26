@@ -40,13 +40,30 @@ namespace babble {
 // pupil_hz (3; split layout only), pupil_gain (2), lid_alpha (0.6), calib_window_s (20),
 // calib_warmup_s (3), calib (true), pupil_gate (0.4), pupil_gate_hys (0.1),
 // pupil_hold_s (0.1), pupil_alpha (0.2), pupil_rate (0.6), pupil_base_s (60),
-// babble_swap (false).
+// babble_swap (false), lid_calibration:
+//   "baseline" (default): eye::OpennessCalibrator. A neutral baseline that
+//             only nearby values move (blinks and held wide eyes don't), Lid =
+//             the ratio to it, Widen = (ratio - 1) scaled to the person's
+//             widest sustained ratio: widen_seed (0.15) until one is seen,
+//             capped at widen_ceiling_max (1.6); calib_warmup_s (3) seeds it
+//             after the first second, calib_tol (0.15) is the band around it.
+//             Needs a model whose lid output isn't capped at 1 for Widen.
+//   "median": the reference's rolling-median neutral (calib_window_s,
+//             calib_warmup_s 3), Widen = ratio - 1,
+// openness_source (live option):
+//   "model" (default): lid openness from our model.
+//   "native": Valve's own per-eye openness from the eye-service shared memory
+//             (EyeServerClient), through the same calibration and smoothing;
+//             frames without a fresh native sample use the model's value.
+//             Pupil and dilation always come from our model.
 class BabbleEye : public PipelineBase {
 public:
     BabbleEye(const nlohmann::json &cfg, PipelineDeps deps) : PipelineBase(cfg, std::move(deps), "infE") {}
     ~BabbleEye() override;
     bool init() override;
     void on_presence(bool worn) override;
+    void set_tracking(bool on) override;
+    bool set_option(const std::string &key, const nlohmann::json &value) override;
 
     // Preprocess one stereo pair into the [2,1,R,R] float input.
     void prepare(const StereoFrame &sf, float *x);
@@ -71,7 +88,10 @@ private:
     std::vector<uint8_t> flip_, small_;
 
     // Post-processing state, index 0 = view 2 ("L"), 1 = view 3 ("R").
-    std::vector<eye::LidCalibrator> calib_;
+    std::vector<eye::LidCalibrator> calib_;           // lid_calibration "median"
+    std::vector<eye::OpennessCalibrator> openness_;   // lid_calibration "baseline"
+    bool baseline_calib_ = true;
+    eye::OpennessCalibrator::Params openness_params() const;
     std::vector<eye::PupilTracker> trackers_;
     std::array<std::optional<double>, 2> smoothed_{};
     void reset_session();
@@ -82,6 +102,10 @@ private:
     eye::RateScale tuned_;
     uint64_t last_retune_ns_ = 0;
     std::atomic<bool> reset_pending_{false};
+    std::atomic<bool> native_openness_{false};   // openness_source
+    std::atomic<bool> tracking_on_{true};
+    void update_eye_server_want();
+    Counter native_fallback_;
     bool use_calib_ = true, babble_swap_ = false;
     double lid_alpha_ = 0.6, pupil_gain_ = 2.0;
     uint64_t pupil_every_ns_ = 0, last_pupil_submit_ns_ = 0;
@@ -98,6 +122,7 @@ private:
     bool pupil_busy_ = false, pupil_stop_ = false;
 
     std::array<SignalId, 3> left_ids_{}, right_ids_{};   // Lid, Widen, Dilation
+    SignalId left_raw_id_ = 0, right_raw_id_ = 0;        // _LeftEyeLidRaw / _RightEyeLidRaw (debug, not sent)
     LatencyStat pupil_time_;
     RateStat pupil_rate_;
 };

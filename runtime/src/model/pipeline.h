@@ -18,6 +18,7 @@
 
 namespace babble {
 
+class EyeServerClient;
 class ISink;
 class SteamVrClient;
 
@@ -50,6 +51,11 @@ public:
         if (!on)
             on_presence(false);
     }
+    // The config key ("eye", "gaze"); live options address the pipeline by it.
+    virtual const std::string &name() const = 0;
+    // A user-facing option changed live (SteamVR Settings, config reload).
+    // False = not an option this pipeline has, or a value it rejects.
+    virtual bool set_option(const std::string &key, const nlohmann::json &value) { return false; }
 };
 
 struct PipelineDeps {
@@ -61,6 +67,7 @@ struct PipelineDeps {
     std::vector<ISink *> frame_taps;          // output modules that asked for camera frames
     std::filesystem::path models_dir;         // relative "model" paths resolve here
     SteamVrClient *steamvr = nullptr;         // shared SteamVR connection (gaze, presence); may be null
+    EyeServerClient *eye_server = nullptr;    // SteamVR's eye-service shared memory; may be null
 };
 
 std::unique_ptr<IPipeline> make_pipeline(const nlohmann::json &cfg, PipelineDeps deps);
@@ -75,6 +82,7 @@ public:
     void stop() override;
     const std::string &source() const override { return source_; }
     const std::string &feed() const override { return feed_.empty() ? source_ : feed_; }
+    const std::string &name() const override { return name_; }
     uint64_t processed() const override { return rate_.total(); }
 
 protected:

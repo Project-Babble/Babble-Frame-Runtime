@@ -178,3 +178,109 @@ TEST_CASE("update rate follows frame intervals and skips pauses") {
     r.tick(t + 5'000'000'000ull);   // a 5 s pause is not an interval
     CHECK(r.hz() == doctest::Approx(30).epsilon(0.01));
 }
+
+namespace {
+
+// Feeds a constant raw openness for `seconds` at `hz`; returns the last output.
+eye::OpennessCalibrator::Out hold(eye::OpennessCalibrator &c, double raw, double seconds, double hz = 90,
+                                  double alpha = 0.6) {
+    eye::OpennessCalibrator::Out out;
+    for (int i = 0; i < int(seconds * hz); i++)
+        out = c.update(raw, alpha);
+    return out;
+}
+
+eye::OpennessCalibrator seeded(double neutral) {
+    eye::OpennessCalibrator c;
+    hold(c, neutral, 4.0);   // 1 s skipped, 2 s warm-up, then running
+    REQUIRE(c.ready());
+    return c;
+}
+
+} // namespace
+
+TEST_CASE("openness baseline: seeds from the warm-up and reads 1 at neutral") {
+    eye::OpennessCalibrator c;
+    auto first = hold(c, 0.7, 0.5);
+    CHECK_FALSE(first.ready);
+    CHECK(first.openness == doctest::Approx(0.7));   // uncalibrated pass-through until seeded
+    auto out = hold(c, 0.7, 3.5);
+    REQUIRE(out.ready);
+    CHECK(c.baseline() == doctest::Approx(0.7));
+    CHECK(out.openness == doctest::Approx(1.0).epsilon(0.001));
+    CHECK(out.widen == doctest::Approx(0.0));
+}
+
+TEST_CASE("openness baseline: a low neutral calibrates (no absolute 0.6 gate)") {
+    auto c = seeded(0.5);
+    auto out = hold(c, 0.5, 5);
+    CHECK(c.baseline() == doctest::Approx(0.5));
+    CHECK(out.openness == doctest::Approx(1.0).epsilon(0.001));
+}
+
+TEST_CASE("openness baseline: a 10 s wide hold keeps the neutral and keeps Widen up") {
+    auto c = seeded(0.7);
+    hold(c, 0.7, 20);
+    const double b = c.baseline();
+    double min_widen = 1;
+    for (int i = 0; i < 900; i++) {   // 10 s at 0.85 (1.21x neutral)
+        auto out = c.update(0.85, 0.6);
+        if (i > 45)   // after the smoothing has caught up
+            min_widen = std::min(min_widen, out.widen);
+    }
+    CHECK(c.baseline() == doctest::Approx(b).epsilon(0.01));
+    CHECK(min_widen > 0.95);   // no erosion over the hold
+}
+
+TEST_CASE("openness baseline: blinks don't move it, slow drift is followed") {
+    auto c = seeded(0.7);
+    for (int k = 0; k < 20; k++) {   // 20 blinks of 150 ms every second
+        hold(c, 0.7, 0.85);
+        hold(c, 0.05, 0.15);
+    }
+    CHECK(c.baseline() == doctest::Approx(0.7).epsilon(0.005));
+
+    for (int s = 0; s < 60; s++)     // 10% higher over a minute (a strap shift)
+        hold(c, 0.7 * (1.0 + 0.1 * (s + 1) / 60.0), 1.0);
+    hold(c, 0.77, 60);
+    CHECK(c.baseline() == doctest::Approx(0.77).epsilon(0.02));
+}
+
+TEST_CASE("openness ceiling: seed first, then the person's own wide peak") {
+    auto c = seeded(0.7);
+    hold(c, 0.7, 5);
+    CHECK(c.ceiling() == doctest::Approx(1.15));
+    // A mild widening before any peak is scaled by the seed.
+    auto mild = hold(c, 0.7 * 1.075, 1);
+    CHECK(mild.widen == doctest::Approx(0.5).epsilon(0.05));
+    hold(c, 0.7, 2);
+    // A sustained wide at 1.21x raises the ceiling; the same wide later reads ~1.
+    hold(c, 0.85, 2);
+    CHECK(c.ceiling() == doctest::Approx(0.85 / 0.7).epsilon(0.02));
+    hold(c, 0.7, 3);
+    CHECK(hold(c, 0.85, 1).widen > 0.95);
+    // A single-frame spike doesn't move it; the cap bounds glitches.
+    const double before = c.ceiling();
+    c.update(3.0, 1.0);
+    hold(c, 0.7, 1);
+    CHECK(c.ceiling() == doctest::Approx(before));
+    hold(c, 3.0, 1);
+    CHECK(c.ceiling() <= 1.6);
+}
+
+TEST_CASE("openness calibration behaves the same over time at 30 Hz") {
+    eye::RateScale r{90, 30};
+    eye::OpennessCalibrator::Params p;
+    p.skip = r.count(90);
+    p.warmup = r.count(180);
+    p.every = r.count(12);
+    p.peak_window = r.count(9);
+    eye::OpennessCalibrator c(p);
+    hold(c, 0.7, 4, 30, r.alpha(0.6));
+    REQUIRE(c.ready());
+    hold(c, 0.7, 10, 30, r.alpha(0.6));
+    const double b = c.baseline();
+    auto out = hold(c, 0.85, 5, 30, r.alpha(0.6));
+    CHECK(c.baseline() == doctest::Approx(b).epsilon(0.01));
+    CHECK(out.widen > 0.95);
+}

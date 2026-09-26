@@ -67,6 +67,51 @@ private:
     size_t n_ = 0;
 };
 
+// Per-eye openness calibration for models whose lid output isn't capped at
+// 1, after the VIVE SRanipal lip post-processing (blendshape_post_processing.py,
+// reverse-engineered from LPredictionModule.dll):
+//  - a baseline (the person's neutral open) seeded from a warm-up median and
+//    then tracked by SRanipal's guarded Kalman-like EMA: only inputs within
+//    `tol` of the baseline move it, so blinks and held wide eyes don't;
+//  - one axis split into two outputs around it: the ratio x / baseline
+//    (Lid, 1 = neutral) and Widen = (ratio - 1) / (ceiling - 1);
+//  - the wide ceiling normalised by the largest sustained ratio seen, seeded
+//    at 1 + widen_seed and capped (SRanipal's max-observed normalisation).
+// All state resets per session. Counts are in updates (convert with RateScale).
+class OpennessCalibrator {
+public:
+    struct Params {
+        size_t skip = 90, warmup = 180;        // updates ignored, then used for the seed (1 s, 2 s at 90 Hz)
+        size_t every = 12, peak_window = 9;    // baseline update interval; median length for the ceiling
+        double floor = 0.2;                    // seed samples below this are blinks
+        double tol = 0.15;                     // relative band around the baseline that may move it
+        double gain = 0.001, decay = 20.5, acc0 = 0.5;   // SRanipal's calibration smoother
+        double widen_seed = 0.15, ceiling_max = 1.6;
+    };
+    struct Out {
+        double openness = 0;   // smoothed ratio to the neutral (>= 0; Lid = min(openness, 1))
+        double widen = 0;      // 0..1
+        bool ready = false;
+    };
+
+    OpennessCalibrator() : OpennessCalibrator(Params{}) {}
+    explicit OpennessCalibrator(Params p);
+    // x: this update's raw openness; alpha: the smoothing factor for one update.
+    Out update(double x, double alpha);
+    void set_timing(size_t skip, size_t warmup, size_t every, size_t peak_window);
+    bool ready() const { return ready_; }
+    double baseline() const { return b_; }
+    double ceiling() const { return c_; }
+
+private:
+    Params p_;
+    size_t n_ = 0;
+    bool ready_ = false;
+    double b_ = 1.0, acc_ = 0, c_ = 1.0;
+    std::deque<double> seed_, chunk_, recent_;
+    std::optional<double> sm_;
+};
+
 // Hysteresis gate, blink hold, low-pass + rate limit, baseline ratio (class PupilTracker).
 class PupilTracker {
 public:

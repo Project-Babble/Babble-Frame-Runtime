@@ -36,6 +36,8 @@ public:
 
     void update(std::span<const std::pair<SignalId, Signal>> values);
     Snapshot snapshot() const;
+    // Current values of a few signals (out[i] for ids[i]; unknown ids read as default).
+    void read(std::span<const SignalId> ids, Signal *out) const;
 
     // Blocks until an update newer than `after_seq`, or the timeout; returns
     // the current sequence number either way.

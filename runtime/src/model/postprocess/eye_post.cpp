@@ -61,6 +61,69 @@ void LidCalibrator::set_timing(size_t window, size_t warmup, size_t every) {
         buf_.pop_front();
 }
 
+OpennessCalibrator::OpennessCalibrator(Params p) : p_(p), c_(1.0 + p.widen_seed) {}
+
+void OpennessCalibrator::set_timing(size_t skip, size_t warmup, size_t every, size_t peak_window) {
+    p_.skip = skip;
+    p_.warmup = std::max<size_t>(1, warmup);
+    p_.every = std::max<size_t>(1, every);
+    p_.peak_window = std::max<size_t>(1, peak_window);
+    while (seed_.size() > p_.warmup)
+        seed_.pop_front();
+    while (recent_.size() > p_.peak_window)
+        recent_.pop_front();
+}
+
+OpennessCalibrator::Out OpennessCalibrator::update(double x, double alpha) {
+    n_++;
+    double value;
+    if (!ready_) {
+        // Seed: the median of non-blink samples after the first second.
+        if (n_ > p_.skip && x > p_.floor) {
+            seed_.push_back(x);
+            if (seed_.size() > p_.warmup)
+                seed_.pop_front();
+        }
+        if (n_ >= p_.skip + p_.warmup && seed_.size() >= std::max<size_t>(1, p_.warmup / 4)) {
+            b_ = std::max(p_.floor, median(std::vector<double>(seed_.begin(), seed_.end())));
+            acc_ = p_.acc0;
+            ready_ = true;
+            seed_.clear();
+            sm_.reset();   // the ratio starts clean rather than blending with the pass-through
+        }
+        value = std::min(x, 1.0);   // uncalibrated until the seed exists, like the reference
+    } else {
+        // SRanipal _update_calibration: every `every` updates, a guarded
+        // Kalman-like step towards the chunk's median.
+        chunk_.push_back(x);
+        if (chunk_.size() >= p_.every) {
+            const double xm = median(std::vector<double>(chunk_.begin(), chunk_.end()));
+            chunk_.clear();
+            if (std::fabs(xm - b_) < p_.tol * b_) {
+                const double w = p_.gain + acc_;
+                const double a = w / (w + p_.decay);
+                b_ += a * (xm - b_);
+                acc_ = (1.0 - a) * w;
+            }
+        }
+        value = x / b_;
+    }
+    sm_ = sm_ ? *sm_ + alpha * (value - *sm_) : value;
+    Out out;
+    out.openness = std::max(*sm_, 0.0);
+    out.ready = ready_;
+    if (ready_) {
+        // Ceiling: the largest sustained ratio (short median), seeded and capped.
+        recent_.push_back(out.openness);
+        if (recent_.size() > p_.peak_window)
+            recent_.pop_front();
+        if (recent_.size() == p_.peak_window)
+            c_ = std::min(p_.ceiling_max, std::max(c_, median(std::vector<double>(recent_.begin(), recent_.end()))));
+        out.widen = std::clamp((out.openness - 1.0) / (c_ - 1.0), 0.0, 1.0);
+    }
+    return out;
+}
+
 PupilTracker::PupilTracker(double gate, double hys, int hold, double alpha, double rate, size_t base_window,
                            size_t base_min)
     : gate_(gate), hys_(hys), alpha_(alpha), rate_(rate), hold_(hold), base_window_(base_window), base_min_(base_min) {}

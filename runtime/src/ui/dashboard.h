@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/threading.h"
+#include "state/expression_state.h"
 #include "ui/dashboard_view.h"
 #include "ui/vk_uploader.h"
 
@@ -31,11 +32,14 @@ public:
         std::string key = "babble.dashboard";
         std::string name = "Babble";
         float width_m = 1.6f;
+        ExpressionState *state = nullptr;   // the eye panel's source; null = no panel data
     };
     ~Dashboard();
 
+    // start()/stop() may repeat (the debug-overlay setting switches the tab live).
     void start(SteamVrClient &vr, ThreadSpec thread, Options options, std::vector<Choice> choices);
     void stop();
+    bool started() const { return thread_.joinable(); }
     // Frees the GPU objects; OpenVR requires this after SteamVR has shut down.
     void release_gpu();
 
@@ -45,12 +49,20 @@ public:
     // Settings changed on the panel since the last call: (JSON pointer, new
     // value), e.g. ("/sources/mouth/process_fps", 60), ("/sources/eye/tracking", false).
     std::vector<std::pair<std::string, nlohmann::json>> take_changes();
+    // True once per click on the visualizer button since the last call.
+    bool take_visualizer_request() { return visualizer_request_.exchange(false); }
 
 private:
     void run();
     bool create_overlays();
     void destroy_overlays();
     void present();
+    // The eye panel's values from ExpressionState (tangent gaze -> degrees).
+    std::array<EyeReading, 2> read_eyes() const;
+    // Per eye (left, right): X, Y, Lid, Widen, raw lid.
+    std::array<SignalId, 10> eye_ids_{};
+    std::array<EyeReading, 2> drawn_eyes_{};
+    uint64_t last_present_ns_ = 0;
 
     SteamVrClient *vr_ = nullptr;
     ThreadSpec thread_spec_;
@@ -63,6 +75,7 @@ private:
     std::vector<Choice> choices_;
     std::vector<std::pair<std::string, nlohmann::json>> changes_;
     bool dirty_ = true;
+    std::atomic<bool> visualizer_request_{false};
 
     // Dashboard thread only.
     DashboardView view_;

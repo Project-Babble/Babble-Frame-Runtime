@@ -11,6 +11,29 @@ namespace babble {
 
 using json = nlohmann::json;
 
+namespace {
+
+using Type = SteamVrSettingsBridge::Entry::Type;
+
+std::optional<Type> type_of(const json &v) {
+    if (v.is_boolean())
+        return Type::Bool;
+    if (v.is_number())
+        return Type::Int;
+    if (v.is_string())
+        return Type::String;
+    return std::nullopt;
+}
+
+// The value as SteamVR stores it for this entry, or nullopt if the type doesn't fit.
+std::optional<json> normalize(Type t, const json &v) {
+    if (type_of(v) != t)
+        return std::nullopt;
+    return t == Type::Int ? json(int32_t(std::lround(v.get<double>()))) : v;
+}
+
+} // namespace
+
 std::vector<SteamVrSettingsBridge::Entry> SteamVrSettingsBridge::entries_from_config(const json &cfg) {
     std::vector<Entry> out;
     const json sc = cfg.value("steamvr_settings", json::object());
@@ -23,12 +46,13 @@ std::vector<SteamVrSettingsBridge::Entry> SteamVrSettingsBridge::entries_from_co
             LOG_WARN("steamvr settings: ignoring '%s' with a bad id '%s'", e.key.c_str(), e.id.c_str());
             continue;
         }
-        if (e.key.empty() || !cfg.contains(ptr) || !(cfg[ptr].is_boolean() || cfg[ptr].is_number())) {
-            LOG_WARN("steamvr settings: ignoring '%s' (%s is not a bool or number setting)", e.key.c_str(),
+        const auto type = cfg.contains(ptr) ? type_of(cfg[ptr]) : std::nullopt;
+        if (e.key.empty() || !type) {
+            LOG_WARN("steamvr settings: ignoring '%s' (%s is not a bool, number or string setting)", e.key.c_str(),
                      e.id.c_str());
             continue;
         }
-        e.is_bool = cfg[ptr].is_boolean();
+        e.type = *type;
         out.push_back(std::move(e));
     }
     return out;
@@ -41,14 +65,27 @@ std::optional<json> SteamVrSettingsBridge::read(const Entry &e) {
     std::optional<json> out;
     vr_.with_vr([&] {
         vr::EVRSettingsError err = vr::VRSettingsError_None;
-        if (e.is_bool) {
-            bool b = vr::VRSettings()->GetBool(section_.c_str(), e.key.c_str(), &err);
+        const char *sec = section_.c_str(), *key = e.key.c_str();
+        switch (e.type) {
+        case Type::Bool: {
+            bool b = vr::VRSettings()->GetBool(sec, key, &err);
             if (err == vr::VRSettingsError_None)
                 out = b;
-        } else {
-            int32_t i = vr::VRSettings()->GetInt32(section_.c_str(), e.key.c_str(), &err);
+            break;
+        }
+        case Type::Int: {
+            int32_t i = vr::VRSettings()->GetInt32(sec, key, &err);
             if (err == vr::VRSettingsError_None)
                 out = i;
+            break;
+        }
+        case Type::String: {
+            char buf[256] = {};
+            vr::VRSettings()->GetString(sec, key, buf, sizeof(buf), &err);
+            if (err == vr::VRSettingsError_None)
+                out = std::string(buf);
+            break;
+        }
         }
     });
     return out;
@@ -57,11 +94,12 @@ std::optional<json> SteamVrSettingsBridge::read(const Entry &e) {
 bool SteamVrSettingsBridge::write(const Entry &e, const json &value) {
     vr::EVRSettingsError err = vr::VRSettingsError_None;
     const bool connected = vr_.with_vr([&] {
-        if (e.is_bool)
-            vr::VRSettings()->SetBool(section_.c_str(), e.key.c_str(), value.get<bool>(), &err);
-        else
-            vr::VRSettings()->SetInt32(section_.c_str(), e.key.c_str(), int32_t(std::lround(value.get<double>())),
-                                       &err);
+        const char *sec = section_.c_str(), *key = e.key.c_str();
+        switch (e.type) {
+        case Type::Bool: vr::VRSettings()->SetBool(sec, key, value.get<bool>(), &err); break;
+        case Type::Int: vr::VRSettings()->SetInt32(sec, key, value.get<int32_t>(), &err); break;
+        case Type::String: vr::VRSettings()->SetString(sec, key, value.get<std::string>().c_str(), &err); break;
+        }
     });
     if (connected && err != vr::VRSettingsError_None)
         LOG_WARN("steamvr settings: writing %s/%s failed (%d)", section_.c_str(), e.key.c_str(), int(err));
@@ -78,9 +116,9 @@ std::vector<std::pair<std::string, json>> SteamVrSettingsBridge::poll(const json
         // New connection: SteamVR shows what the runtime is using.
         known_.clear();
         for (const Entry &e : entries_) {
-            const json v = cfg[json::json_pointer(e.id)];
-            if ((e.is_bool ? v.is_boolean() : v.is_number()) && write(e, v))
-                known_[e.id] = e.is_bool ? v : json(int32_t(std::lround(v.get<double>())));
+            auto v = normalize(e.type, cfg[json::json_pointer(e.id)]);
+            if (v && write(e, *v))
+                known_[e.id] = *v;
         }
         connection_ = vr_.connection();
         next_poll_ns_ = now_ns + 500000000ull;
@@ -105,13 +143,13 @@ std::vector<std::pair<std::string, json>> SteamVrSettingsBridge::poll(const json
 
 void SteamVrSettingsBridge::push(const std::string &id, const json &value) {
     for (const Entry &e : entries_) {
-        if (e.id != id || (e.is_bool ? !value.is_boolean() : !value.is_number()))
+        if (e.id != id)
             continue;
-        const json v = e.is_bool ? value : json(int32_t(std::lround(value.get<double>())));
-        if (known_.count(id) && known_[id] == v)
+        auto v = normalize(e.type, value);
+        if (!v || (known_.count(id) && known_[id] == *v))
             continue;
-        if (write(e, v))
-            known_[id] = v;
+        if (write(e, *v))
+            known_[id] = *v;
     }
 }
 

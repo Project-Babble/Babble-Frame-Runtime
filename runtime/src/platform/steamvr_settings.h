@@ -25,13 +25,13 @@ class SteamVrClient;
 //
 // Config "steamvr_settings": {"section": "driver_babble",
 //   "values": [{"key": "mouthRate", "id": "/sources/mouth/process_fps"}, ...]}
-// The type (toggle = bool, select = int) follows the config value's type.
+// The type (bool, int, string) follows the config value's type.
 class SteamVrSettingsBridge {
 public:
     struct Entry {
         std::string key;   // name in the SteamVR section
         std::string id;    // JSON pointer into the runtime config
-        bool is_bool = false;
+        enum class Type { Bool, Int, String } type = Type::Int;   // toggle, select/segment of numbers, of strings
     };
 
     // Entries whose id exists in cfg as a bool or number; others are skipped (logged).
