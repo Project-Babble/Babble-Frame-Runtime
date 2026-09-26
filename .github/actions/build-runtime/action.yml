@@ -90,4 +90,4 @@ runs:
       shell: bash
       run: |
         find build/babble -type f | sort
-        file build/babble/bin/linuxarm64/babble-runtime build/babble/bin/linuxarm64/driver_babble.so
+        file build/babble/bin/linuxarm64/babble-runtime build/babble/bin/linuxarm64/driver_babble.so build/babble/bin/linuxarm64/babble-setup
