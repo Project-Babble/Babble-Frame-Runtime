@@ -72,6 +72,11 @@
 				"on_label" : "On",
 				"off_label" : "Off",
 				"advanced_only" : true
+			},
+			{
+				"name" : "/settings/driver_babble/version",
+				"control" : "label",
+				"label" : "Babble Frame Runtime @BABBLE_VERSION@"
 			}
 		]
 	}

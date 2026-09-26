@@ -9,6 +9,12 @@ inputs:
     description: CMake build type for the runtime and driver
     required: false
     default: Release
+  version:
+    description: >-
+      Release version, "Vx.x Stage" or "Vx.x-Stage" (Stage: Alpha, Beta, RC,
+      Release). Empty builds the VERSION file's version, marked as a dev build.
+    required: false
+    default: ''
 
 outputs:
   package-dir:
@@ -81,6 +87,7 @@ runs:
         cmake -S . -B build -G Ninja
         -DCMAKE_BUILD_TYPE=${{ inputs.build-type }}
         -DBABBLE_EXECUTORCH_PREFIX=${{ steps.paths.outputs.et-prefix }}
+        "-DBABBLE_VERSION=${{ inputs.version }}"
 
     - name: Build runtime, driver shim and driver folder
       shell: bash

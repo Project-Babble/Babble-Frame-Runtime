@@ -16,6 +16,8 @@ add_library(driver_babble SHARED src/driver_babble.cpp)
 target_include_directories(driver_babble SYSTEM PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/openvr
     ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/nlohmann_json/single_include)
+target_include_directories(driver_babble PRIVATE ${BABBLE_GENERATED_DIR})   # babble_version.h
+add_dependencies(driver_babble babble_version)
 target_compile_options(driver_babble PRIVATE -Wall -Wextra)
 target_link_options(driver_babble PRIVATE -Wl,--no-undefined -static-libstdc++ -static-libgcc)
 target_link_libraries(driver_babble PRIVATE dl pthread)
@@ -64,6 +66,9 @@ endforeach()
 add_custom_target(babble_package ALL
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${CMAKE_CURRENT_SOURCE_DIR}/package ${BABBLE_OUT}
+    # The settings schema with the version filled in (cmake/babble_version.cmake).
+    COMMAND ${CMAKE_COMMAND} -E copy
+        ${BABBLE_GENERATED_DIR}/settingsschema.vrsettings ${BABBLE_OUT}/resources/settings/settingsschema.vrsettings
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${CMAKE_CURRENT_SOURCE_DIR}/../runtime/resources ${BABBLE_OUT}/resources/runtime
     # Copy then rename: the shim may be running the old binary, which cannot
@@ -76,5 +81,5 @@ add_custom_target(babble_package ALL
         ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/openvr/lib/linuxarm64/libopenvr_api.so
         ${BABBLE_OUT}/bin/${BABBLE_PLATFORM}/libopenvr_api.so
     ${BABBLE_PLUGIN_COMMANDS}
-    DEPENDS driver_babble babble_runtime babble_setup
+    DEPENDS driver_babble babble_runtime babble_setup babble_version
     VERBATIM)
