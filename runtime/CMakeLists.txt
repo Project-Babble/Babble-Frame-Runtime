@@ -66,6 +66,7 @@ add_library(babble_core STATIC
     src/sink/sink.cpp
     src/sink/osc.cpp
     src/sink/osc_sink.cpp
+    src/sink/plugin_sink.cpp
     src/ui/canvas.cpp
     src/ui/font.cpp
     src/ui/image.cpp
@@ -75,9 +76,10 @@ add_library(babble_core STATIC
 )
 target_include_directories(babble_core
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_BINARY_DIR}/generated
+           ${CMAKE_CURRENT_SOURCE_DIR}/../sdk/include
     SYSTEM PUBLIC ${THIRD_PARTY}/nlohmann_json/single_include ${THIRD_PARTY}/openvr ${THIRD_PARTY}/stb)
 target_compile_options(babble_core PUBLIC -Wall -Wextra -Wno-unused-parameter)
-target_link_libraries(babble_core PUBLIC pthread
+target_link_libraries(babble_core PUBLIC pthread ${CMAKE_DL_LIBS}
     executorch extension_module_static extension_tensor extension_threadpool
     xnnpack_backend executorch_selected_kernels portable_kernels
     ${THIRD_PARTY}/openvr/lib/linuxarm64/libopenvr_api.so
@@ -122,6 +124,7 @@ if(BABBLE_TESTS)
         tests/test_gaze.cpp
         tests/test_dashboard.cpp
         tests/test_eye_server.cpp
+        tests/test_plugin_sink.cpp
     )
     target_link_libraries(babble_tests PRIVATE babble_core)
     set_target_properties(babble_tests PROPERTIES BUILD_RPATH "${THIRD_PARTY}/openvr/lib/linuxarm64")
@@ -130,4 +133,12 @@ if(BABBLE_TESTS)
         BABBLE_MODELS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/resources/models"
         BABBLE_RESOURCES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/resources")
     add_test(NAME babble_tests COMMAND babble_tests)
+
+    # Output plugins the tests load: the SDK template, and one with a wrong ABI version.
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../sdk/templates/output_plugin ${CMAKE_CURRENT_BINARY_DIR}/template_plugin)
+    add_library(babble_bad_abi_plugin SHARED tests/plugins/bad_abi.cpp)
+    target_include_directories(babble_bad_abi_plugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../sdk/include)
+    add_dependencies(babble_tests babble_udp_json babble_bad_abi_plugin)
+    target_compile_definitions(babble_tests PRIVATE BABBLE_TEMPLATE_PLUGIN="$<TARGET_FILE:babble_udp_json>"
+        BABBLE_BAD_ABI_PLUGIN="$<TARGET_FILE:babble_bad_abi_plugin>")
 endif()

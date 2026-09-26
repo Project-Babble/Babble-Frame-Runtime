@@ -45,6 +45,21 @@ set_target_properties(driver_babble PROPERTIES
 set_target_properties(babble_setup PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${BABBLE_OUT}/bin/${BABBLE_PLATFORM})
 
+# Output plugins built elsewhere, as a list of .so
+# paths; each is copied into bin/<platform>/plugins/, where a bare
+# "library" name in the config finds it.
+set(BABBLE_PLUGINS "" CACHE STRING "Output plugin libraries (.so paths, ;-separated) to package")
+set(BABBLE_PLUGIN_COMMANDS)
+foreach(plugin IN LISTS BABBLE_PLUGINS)
+    get_filename_component(plugin_name ${plugin} NAME)
+    set(dst ${BABBLE_OUT}/bin/${BABBLE_PLATFORM}/plugins/${plugin_name})
+    # Copy then rename, like the runtime: a running runtime has the old one mapped.
+    list(APPEND BABBLE_PLUGIN_COMMANDS
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${BABBLE_OUT}/bin/${BABBLE_PLATFORM}/plugins
+        COMMAND ${CMAKE_COMMAND} -E copy ${plugin} ${dst}.new
+        COMMAND ${CMAKE_COMMAND} -E rename ${dst}.new ${dst})
+endforeach()
+
 # A separate target so relinking only the runtime still refreshes the folder.
 add_custom_target(babble_package ALL
     COMMAND ${CMAKE_COMMAND} -E copy_directory
@@ -60,5 +75,6 @@ add_custom_target(babble_package ALL
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/openvr/lib/linuxarm64/libopenvr_api.so
         ${BABBLE_OUT}/bin/${BABBLE_PLATFORM}/libopenvr_api.so
+    ${BABBLE_PLUGIN_COMMANDS}
     DEPENDS driver_babble babble_runtime babble_setup
     VERBATIM)
