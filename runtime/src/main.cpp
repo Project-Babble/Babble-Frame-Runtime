@@ -14,7 +14,9 @@
 #include "core/threading.h"
 #include "model/executorch_runner.h"
 #include "model/pipeline.h"
+#include "platform/app_launcher.h"
 #include "platform/camera_arbiter_client.h"
+#include "platform/eye_server_client.h"
 #include "platform/steamvr_client.h"
 #include "platform/steamvr_settings.h"
 #include "sink/sink.h"
@@ -192,6 +194,16 @@ int main(int argc, char **argv) {
         o.eyetracking_path = vc.value("eyetracking_path", o.eyetracking_path);
         steamvr.start(thread_spec(threads, "steamvr", "bbl-steamvr"), o);
     }
+    // SteamVR's eye-service shared memory (independent gaze, native openness);
+    // it only reads while a pipeline asks for it.
+    EyeServerClient eye_server;
+    {
+        const json ec = cfg.value("eye_server", json::object());
+        EyeServerClient::Options o;
+        o.path = ec.value("path", o.path);
+        o.version = ec.value("version", o.version);
+        eye_server.start(thread_spec(threads, ec.value("thread", "eyesrv"), "bbl-eyesrv"), o, &stats);
+    }
 
     // One output slot per configured source; pipelines find theirs by name.
     const json scfg = cfg.value("sources", json::object());
@@ -237,7 +249,8 @@ int main(int argc, char **argv) {
             continue;
         }
         auto p = make_pipeline(it.value(),
-                               PipelineDeps{it.key(), threads, slot_of, state, stats, frame_taps, models_dir, &steamvr});
+                               PipelineDeps{it.key(), threads, slot_of, state, stats, frame_taps, models_dir, &steamvr,
+                                            &eye_server});
         if (p && p->init())
             pipelines.push_back(std::move(p));
         else
@@ -285,16 +298,30 @@ int main(int argc, char **argv) {
         if (!s.src->tracking())
             set_feed_tracking(s.name, false);
 
-    // The "Babble" tab in the SteamVR dashboard.
-    std::unique_ptr<ui::Dashboard> dashboard;
+    // The "Babble" tab in the SteamVR dashboard: a debug overlay, shown while
+    // dashboard.enabled is on (the Debug Overlay toggle in SteamVR Settings).
+    // The object lives for the whole run so its GPU objects outlive the
+    // SteamVR connection; the setting only starts and stops the tab.
     const json dcfg = cfg.value("dashboard", json::object());
-    if (dcfg.value("enabled", true)) {
-        ui::Dashboard::Options o;
-        o.fonts_dir = paths::resource_dir() / "fonts";
-        o.width_m = dcfg.value("width_m", o.width_m);
-        dashboard = std::make_unique<ui::Dashboard>();
-        dashboard->start(steamvr, thread_spec(threads, "ui", "bbl-ui"), o, dashboard_choices(cfg));
-    }
+    auto dashboard = std::make_unique<ui::Dashboard>();
+    auto set_dashboard = [&](bool on) {
+        if (on == dashboard->started())
+            return;
+        if (on) {
+            ui::Dashboard::Options o;
+            o.fonts_dir = paths::resource_dir() / "fonts";
+            o.width_m = dcfg.value("width_m", o.width_m);
+            o.state = &state;
+            dashboard->start(steamvr, thread_spec(threads, "ui", "bbl-ui"), o, dashboard_choices(cfg));
+        } else {
+            dashboard->stop();
+        }
+        LOG_INFO("dashboard: debug overlay %s", on ? "on" : "off");
+    };
+    set_dashboard(dcfg.value("enabled", false));
+    // The tracking visualizer the debug overlay can start.
+    AppLauncher visualizer(cfg.value("visualizer", json::object()),
+                           (paths::state_dir() / "visualizer.log").string());
     const std::filesystem::path settings_file = default_settings_file();
 
     // The driver's "Expression Tracking" section in SteamVR Settings.
@@ -320,6 +347,15 @@ int main(int argc, char **argv) {
                 applied = true;
             }
         }
+        for (auto &p : pipelines) {
+            const std::string prefix = "/pipelines/" + p->name() + "/";
+            if (id.starts_with(prefix) && p->set_option(id.substr(prefix.size()), value))
+                applied = true;
+        }
+        if (id == "/dashboard/enabled" && value.is_boolean()) {
+            set_dashboard(value.get<bool>());
+            applied = true;
+        }
         if (!applied) {
             LOG_WARN("settings: ignoring %s = %s", id.c_str(), value.dump().c_str());
             return;
@@ -333,7 +369,7 @@ int main(int argc, char **argv) {
             else
                 LOG_ERROR("settings: saving %s failed: %s", id.c_str(), err.c_str());
         }
-        if (dashboard && value.is_number())
+        if (dashboard->started() && value.is_number())
             dashboard->set_choice(id, value.get<double>());   // feed switches follow the source's state
         if (origin != Origin::SteamVr)
             steamvr_settings.push(id, value);
@@ -401,6 +437,12 @@ int main(int argc, char **argv) {
                                 if (fresh.contains(ptr))
                                     apply_setting(ptr.to_string(), fresh[ptr], Origin::Reload);
                             }
+                        for (const char *id :
+                             {"/pipelines/eye/openness_source", "/pipelines/gaze/gaze_source", "/dashboard/enabled"}) {
+                            const json::json_pointer ptr(id);
+                            if (fresh.contains(ptr))
+                                apply_setting(id, fresh[ptr], Origin::Reload);
+                        }
                     } else {
                         exit_reason = si.ssi_signo == SIGTERM ? "SIGTERM" : "SIGINT";
                         running = false;
@@ -457,14 +499,23 @@ int main(int argc, char **argv) {
         }
         for (auto &[id, value] : steamvr_settings.poll(cfg, now))
             apply_setting(id, value, Origin::SteamVr);
-        if (dashboard) {
+        if (dashboard->started()) {
             for (auto &[id, value] : dashboard->take_changes())
                 apply_setting(id, value, Origin::Dashboard);
+            if (dashboard->take_visualizer_request()) {
+                if (visualizer.running())
+                    visualizer.stop();
+                else
+                    visualizer.start();
+            }
             ui::Status st;
             st.steamvr = steamvr.connected();
             st.worn = steamvr.worn();
             st.mouth = feed_status(ui::kFeedSources[0]);
             st.eye = feed_status(ui::kFeedSources[1]);
+            st.visualizer = !visualizer.available() ? ui::AppState::Unavailable
+                            : visualizer.running()  ? ui::AppState::Running
+                                                    : ui::AppState::Stopped;
             dashboard->set_status(st);
         }
 
@@ -480,8 +531,7 @@ int main(int argc, char **argv) {
     }
 
     LOG_INFO("shutting down: %s", exit_reason);
-    if (dashboard)
-        dashboard->stop();
+    dashboard->stop();
     // Order: consumers first so nothing holds frames when sources stop.
     for (auto &p : pipelines)
         p->stop();
@@ -491,9 +541,9 @@ int main(int argc, char **argv) {
         s.src->shutdown();
     sources.clear();
     pipelines.clear();
+    eye_server.stop();
     steamvr.stop();
-    if (dashboard)
-        dashboard->release_gpu();   // OpenVR wants its Vulkan objects to outlive the connection
+    dashboard->release_gpu();   // OpenVR wants its Vulkan objects to outlive the connection
     LOG_INFO("stopped");
     return 0;
 }

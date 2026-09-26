@@ -4,6 +4,7 @@
 #include "ui/canvas.h"
 #include "ui/font.h"
 
+#include <array>
 #include <cstddef>
 #include <filesystem>
 #include <optional>
@@ -27,10 +28,25 @@ struct FeedStatus {
     bool tracking = true;    // the user's on/off
 };
 
+// The helper app the front page can start (the tracking visualizer).
+enum class AppState { Unavailable, Stopped, Running };
+
+// One eye as the runtime outputs it (the wearer's eye, not mirrored).
+struct EyeReading {
+    bool gaze = false, lid = false;   // false = no recent value
+    double yaw_deg = 0, pitch_deg = 0;   // +right, +up
+    double openness = 0;                 // the Lid output, 0..1
+    double widen = 0;                    // the Widen output, 0..1
+    bool raw = false;                    // raw_lid is recent
+    double raw_lid = 0;                  // the lid value before calibration (model or native)
+};
+
 struct Status {
     bool steamvr = false;
     Worn worn = Worn::Unknown;
     FeedStatus mouth, eye;
+    AppState visualizer = AppState::Unavailable;   // Unavailable hides the button
+    std::array<EyeReading, 2> eyes{};              // [0] left, [1] right; the eye panel
 };
 
 // The overall tracking state in words (the Babble tab's headline); tone
@@ -71,6 +87,7 @@ public:
         bool redraw = false;
         std::optional<std::pair<size_t, double>> setting;   // (choice index, new value)
         std::optional<std::pair<size_t, bool>> toggle;      // (feed index, tracking on)
+        bool visualizer = false;                            // start/stop the visualizer
     };
     // Hit-tests against the last render.
     ClickResult click(Point p);
@@ -83,7 +100,7 @@ public:
 
 private:
     struct Hit {
-        enum Kind { Cog, Back, Option, Toggle } kind;
+        enum Kind { Cog, Back, Option, Toggle, Visualizer } kind;
         Rect rect;
         size_t choice = 0;   // Option: choice index; Toggle: feed index
         double value = 0;    // Option: value; Toggle: 1 = turn on
@@ -92,6 +109,8 @@ private:
     void render_settings(Canvas &c, const std::vector<Choice> &choices);
     void render_cog(Canvas &c);
     void render_switch(Canvas &c, Rect r, bool on, bool hover);
+    void render_visualizer_button(Canvas &c, AppState state);
+    void render_eye(Canvas &c, float x, float y, const char *name, const EyeReading &e);
     bool hovered(const Rect &r) const;
     // Text shortened with an ellipsis to fit max_w.
     std::string fit(const Font &f, const std::string &text, float px, float max_w) const;

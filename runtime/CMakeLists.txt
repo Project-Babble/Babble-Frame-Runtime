@@ -44,7 +44,9 @@ add_library(babble_core STATIC
     src/camera/eye/dsp_client.cpp
     src/camera/eye/dsp_eye_source.cpp
     src/camera/tracking_source.cpp
+    src/platform/app_launcher.cpp
     src/platform/camera_arbiter_client.cpp
+    src/platform/eye_server_client.cpp
     src/platform/media_graph.cpp
     src/platform/steamvr_client.cpp
     src/platform/steamvr_settings.cpp
@@ -118,6 +120,7 @@ if(BABBLE_TESTS)
         tests/test_postprocess.cpp
         tests/test_gaze.cpp
         tests/test_dashboard.cpp
+        tests/test_eye_server.cpp
     )
     target_link_libraries(babble_tests PRIVATE babble_core)
     set_target_properties(babble_tests PROPERTIES BUILD_RPATH "${THIRD_PARTY}/openvr/lib/linuxarm64")

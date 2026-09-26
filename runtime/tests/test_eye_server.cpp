@@ -1,0 +1,154 @@
+#include <doctest/doctest.h>
+
+#include "core/clock.h"
+#include "platform/eye_server_client.h"
+
+#include <atomic>
+#include <climits>
+#include <cstring>
+#include <filesystem>
+#include <string>
+#include <thread>
+
+#include <fcntl.h>
+#include <linux/futex.h>
+#include <pthread.h>
+#include <sys/mman.h>
+#include <sys/syscall.h>
+#include <unistd.h>
+
+using namespace babble;
+using namespace babble::eye_server;
+
+namespace {
+
+template <typename T> void put(uint8_t *p, size_t off, T v) { memcpy(p + off, &v, sizeof(v)); }
+
+// A record whose every value identifies its own field.
+void write_record(uint8_t *r, uint32_t state) {
+    put<uint32_t>(r, rec::kProducerState, state);
+    put<double>(r, rec::kSampleTime, 123.5);
+    for (int e = 0; e < 2; e++)
+        for (int k = 0; k < 3; k++) {
+            put<float>(r, rec::kGaze + 4 * (3 * e + k), float(10 * e + k));
+            put<float>(r, rec::kPreFusionGaze + 4 * (3 * e + k), float(100 + 10 * e + k));
+        }
+    for (int k = 0; k < 3; k++)
+        put<float>(r, rec::kFixation + 4 * k, float(200 + k));
+    put<float>(r, rec::kOpenness, 0.25f);
+    put<float>(r, rec::kOpenness + 4, 0.75f);
+}
+
+// Plays the eye service: a version-N file with a robust process-shared mutex.
+struct FakeService {
+    std::string path;
+    int fd = -1;
+    uint8_t *base = nullptr;
+
+    explicit FakeService(uint32_t version) {
+        path = (std::filesystem::temp_directory_path() / ("babble_eyesrv_" + std::to_string(getpid()) + "_" +
+                                                          std::to_string(version)))
+                   .string();
+        fd = open(path.c_str(), O_RDWR | O_CREAT | O_TRUNC, 0600);
+        REQUIRE(fd >= 0);
+        REQUIRE(ftruncate(fd, kMinFileSize) == 0);
+        base = static_cast<uint8_t *>(mmap(nullptr, kMinFileSize, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0));
+        REQUIRE(base != MAP_FAILED);
+        put<uint32_t>(base, kVersionOffset, version);
+        put<uint32_t>(base, kInitializedOffset, 1);
+        pthread_mutexattr_t a;
+        pthread_mutexattr_init(&a);
+        pthread_mutexattr_setpshared(&a, PTHREAD_PROCESS_SHARED);
+        pthread_mutexattr_setrobust(&a, PTHREAD_MUTEX_ROBUST);
+        pthread_mutex_init(mutex(), &a);
+        pthread_mutexattr_destroy(&a);
+    }
+    ~FakeService() {
+        munmap(base, kMinFileSize);
+        close(fd);
+        unlink(path.c_str());
+    }
+    pthread_mutex_t *mutex() { return reinterpret_cast<pthread_mutex_t *>(base + kMutexOffset); }
+    uint32_t *word(size_t off) { return reinterpret_cast<uint32_t *>(base + off); }
+
+    // Writes a record, bumps the sequence and wakes waiters, like the service.
+    void produce(uint32_t state) {
+        pthread_mutex_lock(mutex());
+        write_record(base + kRecordOffset, state);
+        __atomic_add_fetch(word(kSequenceOffset), 1, __ATOMIC_RELEASE);
+        pthread_mutex_unlock(mutex());
+        syscall(SYS_futex, word(kSequenceOffset), FUTEX_WAKE, INT_MAX, nullptr, nullptr, 0);
+    }
+    uint32_t requested() { return __atomic_load_n(word(kRequestedOffset), __ATOMIC_ACQUIRE); }
+};
+
+// Runs the producer until the client has a sample or the timeout passes.
+std::optional<Sample> wait_for_sample(FakeService &svc, EyeServerClient &c, uint32_t state, uint64_t timeout_ns) {
+    const uint64_t end = mono_ns() + timeout_ns;
+    while (mono_ns() < end) {
+        svc.produce(state);
+        if (auto s = c.latest(1000000000ull))
+            return s;
+        sleep_ns(10000000);
+    }
+    return std::nullopt;
+}
+
+} // namespace
+
+TEST_CASE("an eye-service record decodes field by field") {
+    std::vector<uint8_t> r(kRecordBytes, 0);
+    write_record(r.data(), 1);
+    Sample s;
+    REQUIRE(parse_record(r.data(), &s));
+    CHECK(s.sample_time == 123.5);
+    CHECK(s.gaze[0] == Vec3{0, 1, 2});
+    CHECK(s.gaze[1] == Vec3{10, 11, 12});
+    CHECK(s.pre_fusion_gaze[0] == Vec3{100, 101, 102});
+    CHECK(s.pre_fusion_gaze[1] == Vec3{110, 111, 112});
+    CHECK(s.fixation == Vec3{200, 201, 202});
+    CHECK(s.openness[0] == 0.25f);
+    CHECK(s.openness[1] == 0.75f);
+
+    write_record(r.data(), 0);   // producer says invalid
+    CHECK_FALSE(parse_record(r.data(), &s));
+    write_record(r.data(), 1);
+    put<float>(r.data(), rec::kOpenness, std::nanf(""));
+    CHECK_FALSE(parse_record(r.data(), &s));
+}
+
+TEST_CASE("the client follows the service's protocol and publishes samples") {
+    FakeService svc(4);
+    EyeServerClient c;
+    c.start(ThreadSpec{"t-eyesrv", {}, 0}, {svc.path, 4}, nullptr);
+    CHECK_FALSE(c.latest(1000000000ull));   // nobody wants it yet
+    c.want(EyeServerClient::Gaze, true);
+    auto s = wait_for_sample(svc, c, 1, 3000000000ull);
+    REQUIRE(s);
+    CHECK(c.available());
+    CHECK(s->pre_fusion_gaze[1] == Vec3{110, 111, 112});
+    CHECK(s->openness[1] == 0.75f);
+    CHECK(svc.requested() == 1);   // asked the service for records
+    c.stop();
+}
+
+TEST_CASE("an unknown layout version is left alone") {
+    FakeService svc(5);
+    EyeServerClient c;
+    c.start(ThreadSpec{"t-eyesrv", {}, 0}, {svc.path, 4}, nullptr);
+    c.want(EyeServerClient::Openness, true);
+    CHECK_FALSE(wait_for_sample(svc, c, 1, 500000000ull));
+    CHECK_FALSE(c.available());
+    CHECK(svc.requested() == 0);   // never wrote to it
+    c.stop();
+}
+
+TEST_CASE("records the producer marks invalid are not published") {
+    FakeService svc(4);
+    EyeServerClient c;
+    c.start(ThreadSpec{"t-eyesrv", {}, 0}, {svc.path, 4}, nullptr);
+    c.want(EyeServerClient::Gaze, true);
+    CHECK_FALSE(wait_for_sample(svc, c, 0, 500000000ull));
+    CHECK(c.available());
+    c.stop();
+}

@@ -4,6 +4,9 @@
 		"mouthTracking" : true,
 		"mouthRate" : 120,
 		"eyeTracking" : true,
-		"eyeRate" : 90
+		"eyeRate" : 90,
+		"opennessSource" : "model",
+		"gazeSource" : "independent",
+		"debugOverlay" : false
 	}
 }

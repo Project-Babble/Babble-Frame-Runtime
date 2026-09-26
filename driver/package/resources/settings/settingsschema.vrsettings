@@ -41,6 +41,37 @@
 					{ "value" : 90, "label" : "90" }
 				],
 				"requires" : { "/settings/driver_babble/eyeTracking" : true }
+			},
+			{
+				"name" : "/settings/driver_babble/opennessSource",
+				"control" : "segment",
+				"label" : "Openness Source",
+				"options" : [
+					{ "value" : "model", "label" : "Babble" },
+					{ "value" : "native", "label" : "Native" }
+				],
+				"advanced_only" : true,
+				"requires" : { "/settings/driver_babble/eyeTracking" : true }
+			},
+			{
+				"name" : "/settings/driver_babble/gazeSource",
+				"control" : "segment",
+				"label" : "Gaze Source",
+				"options" : [
+					{ "value" : "combined", "label" : "Combined" },
+					{ "value" : "independent", "label" : "Independent" }
+				],
+				"advanced_only" : true,
+				"requires" : { "/settings/driver_babble/eyeTracking" : true }
+			},
+			{
+				"name" : "/settings/driver_babble/debugOverlay",
+				"control" : "toggle",
+				"label" : "Debug Overlay",
+				"text" : "Adds a Babble tab to the SteamVR dashboard with live feed status and a visualizer launcher.",
+				"on_label" : "On",
+				"off_label" : "Off",
+				"advanced_only" : true
 			}
 		]
 	}

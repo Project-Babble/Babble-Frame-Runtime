@@ -135,3 +135,60 @@ TEST_CASE("the headline summarises tracking, pauses and feeds that are off") {
     s.steamvr = false;
     CHECK(headline(s).word == "Waiting for SteamVR");
 }
+
+TEST_CASE("the visualizer button appears only when the visualizer is installed") {
+    DashboardView view;
+    REQUIRE(view.load_fonts(kFonts));
+    Canvas c(DashboardView::kWidth, DashboardView::kHeight);
+    Status s{true, Worn::Yes, on(Health::Working, 120), on(Health::Working, 90)};
+    const Point button{DashboardView::kWidth - 100.f, DashboardView::kHeight - 84.f};   // bottom right
+
+    view.render(c, s, rates(), std::nullopt);   // Unavailable by default
+    CHECK_FALSE(view.click(button).visualizer);
+
+    s.visualizer = AppState::Stopped;
+    view.render(c, s, rates(), std::nullopt);
+    CHECK(view.click(button).visualizer);
+    s.visualizer = AppState::Running;   // same button closes it
+    view.render(c, s, rates(), std::nullopt);
+    CHECK(view.click(button).visualizer);
+
+    view.set_page(DashboardView::Page::Settings);   // front page only
+    view.render(c, s, rates(), std::nullopt);
+    CHECK_FALSE(view.click(button).visualizer);
+}
+
+TEST_CASE("the eye panel places the gaze dot and fills the openness bar") {
+    DashboardView view;
+    REQUIRE(view.load_fonts(kFonts));
+    Canvas c(DashboardView::kWidth, DashboardView::kHeight);
+    Status s{true, Worn::Yes, on(Health::Working, 120), on(Health::Working, 90)};
+    auto px = [&](float x, float y) {
+        const uint8_t *p = c.data() + (size_t(y) * DashboardView::kWidth + size_t(x)) * 4;
+        return Color{p[0], p[1], p[2]};
+    };
+    auto is = [](Color a, uint32_t rgb) { return a.r == uint8_t(rgb >> 16) && a.g == uint8_t(rgb >> 8) && a.b == uint8_t(rgb); };
+    // Left eye group: 318 px wide, groups 110 apart, so it starts at (1200 - 746) / 2 = 227; plot 230 px at y 190.
+    const float gx = 227, cx = gx + 115, cy = 190 + 115, half = 115 - 14, bar_x = gx + 230 + 24 + 18;
+
+    view.render(c, s, rates(), std::nullopt);   // no data: no dot
+    CHECK_FALSE(is(px(cx + half, cy), 0x4d8dff));
+
+    s.eyes[0] = {true, true, 45, 0, 1.0};   // full right, eye open
+    view.render(c, s, rates(), std::nullopt);
+    CHECK(is(px(cx + half, cy), 0x4d8dff));            // dot at the right edge
+    CHECK(is(px(bar_x, 200), 0x3fcf73));   // bar filled to the top
+
+    s.eyes[0].openness = 0.2;                          // mostly closed: top of the bar empty
+    view.render(c, s, rates(), std::nullopt);
+    CHECK_FALSE(is(px(bar_x, 200), 0x3fcf73));
+    CHECK(is(px(bar_x, 190 + 225), 0x3fcf73));
+
+    const float widen_x = gx + 230 + 24 + 36 + 10 + 9;   // the slim widen bar
+    CHECK_FALSE(is(px(widen_x, 190 + 200), 0xf2b33d));
+    s.eyes[0].openness = 1.0;
+    s.eyes[0].widen = 0.5;                             // half wide: lower half amber
+    view.render(c, s, rates(), std::nullopt);
+    CHECK(is(px(widen_x, 190 + 200), 0xf2b33d));
+    CHECK_FALSE(is(px(widen_x, 190 + 30), 0xf2b33d));
+}

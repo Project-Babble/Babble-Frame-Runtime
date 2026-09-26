@@ -23,6 +23,12 @@ void ExpressionState::update(std::span<const std::pair<SignalId, Signal>> values
     cv_.notify_all();
 }
 
+void ExpressionState::read(std::span<const SignalId> ids, Signal *out) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (size_t i = 0; i < ids.size(); i++)
+        out[i] = ids[i] < signals_.size() ? signals_[ids[i]] : Signal{};
+}
+
 ExpressionState::Snapshot ExpressionState::snapshot() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return {seq_, names_, signals_};

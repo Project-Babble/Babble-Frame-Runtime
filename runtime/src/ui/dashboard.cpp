@@ -20,6 +20,12 @@ void Dashboard::start(SteamVrClient &vr, ThreadSpec thread, Options options, std
     thread_spec_ = std::move(thread);
     options_ = std::move(options);
     choices_ = std::move(choices);
+    if (options_.state) {
+        const char *names[10] = {"LeftEyeX",  "LeftEyeY",  "LeftEyeLid",  "LeftEyeWiden",  "_LeftEyeLidRaw",
+                                 "RightEyeX", "RightEyeY", "RightEyeLid", "RightEyeWiden", "_RightEyeLidRaw"};
+        for (int i = 0; i < 10; i++)   // add_signal is idempotent: these are the pipelines' own signals
+            eye_ids_[i] = options_.state->add_signal(names[i]);
+    }
     if (!view_.load_fonts(options_.fonts_dir))
         LOG_WARN("dashboard: fonts not found in %s; text won't be drawn", options_.fonts_dir.c_str());
     stop_ = false;
@@ -31,6 +37,11 @@ void Dashboard::stop() {
     if (thread_.joinable())
         thread_.join();
     destroy_overlays();
+    // A later start() makes a fresh tab (the GPU objects are kept for it).
+    connection_ = 0;
+    pointer_.reset();
+    hover_ = -1;
+    view_.set_page(DashboardView::Page::Home);
 }
 
 void Dashboard::release_gpu() { gpu_.release(); }
@@ -42,7 +53,7 @@ void Dashboard::set_status(const Status &s) {
                a.available == b.available && a.tracking == b.tracking;
     };
     if (s.steamvr != status_.steamvr || s.worn != status_.worn || !same_feed(s.mouth, status_.mouth) ||
-        !same_feed(s.eye, status_.eye))
+        !same_feed(s.eye, status_.eye) || s.visualizer != status_.visualizer)
         dirty_ = true;
     status_ = s;
 }
@@ -120,6 +131,30 @@ void Dashboard::destroy_overlays() {
     visible_ = false;
 }
 
+std::array<EyeReading, 2> Dashboard::read_eyes() const {
+    std::array<EyeReading, 2> out{};
+    if (!options_.state)
+        return out;
+    Signal v[10];
+    options_.state->read(eye_ids_, v);
+    const uint64_t now = mono_ns(), fresh = 1000000000ull;   // older than 1 s: no data
+    auto recent = [&](const Signal &s) { return s.t_ns != 0 && now - s.t_ns < fresh; };
+    for (int e = 0; e < 2; e++) {
+        const Signal &x = v[5 * e], &y = v[5 * e + 1], &lid = v[5 * e + 2], &widen = v[5 * e + 3],
+                     &raw = v[5 * e + 4];
+        EyeReading &r = out[e];
+        r.gaze = recent(x) || recent(y);
+        r.yaw_deg = std::atan(x.value) * 180 / M_PI;   // the gaze outputs are tan(angle)
+        r.pitch_deg = std::atan(y.value) * 180 / M_PI;
+        r.lid = recent(lid);
+        r.openness = lid.value;
+        r.widen = widen.value;
+        r.raw = recent(raw);
+        r.raw_lid = raw.value;
+    }
+    return out;
+}
+
 void Dashboard::present() {
     Status status;
     std::vector<Choice> choices;
@@ -129,6 +164,8 @@ void Dashboard::present() {
         choices = choices_;
         dirty_ = false;
     }
+    status.eyes = drawn_eyes_ = read_eyes();
+    last_present_ns_ = mono_ns();
     view_.render(canvas_, status, choices, pointer_);
 
     std::string error;
@@ -203,6 +240,8 @@ void Dashboard::run() {
         for (const Point &p : clicks) {
             auto r = view_.click(p);
             redraw |= r.redraw;
+            if (r.visualizer)
+                visualizer_request_ = true;
             std::lock_guard<std::mutex> lock(mutex_);
             if (r.setting) {
                 Choice &c = choices_[r.setting->first];
@@ -225,6 +264,18 @@ void Dashboard::run() {
         if (visible_) {
             const int hover = view_.hit_at(pointer_);
             redraw |= hover != hover_;
+            // The eye panel moves with the tracking: redraw when a value
+            // visibly changed, at most ~30 times a second.
+            if (!redraw && mono_ns() - last_present_ns_ >= 33000000ull) {
+                const auto eyes = read_eyes();
+                for (int e = 0; e < 2; e++) {
+                    const EyeReading &a = eyes[e], &b = drawn_eyes_[e];
+                    redraw |= a.gaze != b.gaze || a.lid != b.lid || std::fabs(a.yaw_deg - b.yaw_deg) > 0.3 ||
+                              std::fabs(a.pitch_deg - b.pitch_deg) > 0.3 || std::fabs(a.openness - b.openness) > 0.005 ||
+                              std::fabs(a.widen - b.widen) > 0.005 || a.raw != b.raw ||
+                              std::fabs(a.raw_lid - b.raw_lid) > 0.002;
+                }
+            }
             {
                 std::lock_guard<std::mutex> lock(mutex_);
                 redraw |= dirty_;

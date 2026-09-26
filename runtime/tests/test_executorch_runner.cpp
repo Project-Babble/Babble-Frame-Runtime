@@ -54,9 +54,9 @@ TEST_CASE("ExecuTorchRunner runs FusionNet and matches the Python ExecuTorch run
 TEST_CASE("ExecuTorchRunner runs the fp16 combined eye model and matches the Python ExecuTorch runtime") {
     ExecuTorchRunner::set_threads(1);
     ExecuTorchRunner r;
-    REQUIRE(r.load(std::string(BABBLE_MODELS_DIR) + "/eye_split96_fp16.pte"));
+    REQUIRE(r.load(std::string(BABBLE_MODELS_DIR) + "/eye_split96_uncapped_fp16.pte"));
 
-    // Contract from its README: fp16 [2,1,96,96] in, fp16 [2,2] (lid, pupil per eye) out.
+    // Contract from its README: fp16 [2,1,96,96] in, fp16 [2,2] (lid, pupil per eye) out; lid uncapped.
     REQUIRE(r.inputs().size() == 1);
     CHECK(r.inputs()[0].dtype == DType::F16);
     CHECK(r.inputs()[0].shape == std::vector<int64_t>{2, 1, 96, 96});

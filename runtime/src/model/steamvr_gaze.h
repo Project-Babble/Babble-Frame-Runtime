@@ -34,6 +34,12 @@ enum class Scaling { Tangent, Angle };
 std::optional<std::array<double, 3>> convert(double x, double y, double z, double ipd, double max_deg, bool flip_y,
                                              const Offsets &off, Scaling scaling = Scaling::Tangent);
 
+// One eye's own gaze direction (head space, +x right, +y up, forward along
+// -z) -> (yaw, pitch) for that eye, limited and scaled like convert().
+// nullopt for a degenerate vector.
+std::optional<std::array<double, 2>> from_direction(double x, double y, double z, double max_deg, bool flip_y,
+                                                    const Offsets &off, Scaling scaling = Scaling::Tangent);
+
 } // namespace gaze
 
 // Config type "steamvr_gaze": eye gaze from SteamVR's own eye tracking,
@@ -53,8 +59,13 @@ std::optional<std::array<double, 3>> convert(double x, double y, double z, doubl
 // override; 0.063 is the fallback), scaling ("tangent" | "angle"),
 // max_deg (45), flip_y (false),
 // yaw_offset/pitch_offset/roll_offset (deg), stale_s (0.5), feed ("eye":
-// the eye feed's on/off also switches gaze). The input
-// binding lives in the SteamVR client (config "steamvr").
+// the eye feed's on/off also switches gaze), gaze_source (live option):
+//   "independent" (default): each eye's own gaze before SteamVR fuses them,
+//                 from the eye-service shared memory (EyeServerClient);
+//                 per-eye yaw and pitch, no IPD split. Falls back to
+//                 "combined" for as long as that data is unavailable.
+//   "combined":   SteamVR's fused gaze through IVRInput, split per eye by IPD.
+// The input binding lives in the SteamVR client (config "steamvr").
 class SteamVrGaze : public IPipeline {
 public:
     SteamVrGaze(const nlohmann::json &cfg, PipelineDeps deps);
@@ -64,7 +75,9 @@ public:
     void start() override;
     void stop() override;
     const std::string &feed() const override { return feed_; }
+    const std::string &name() const override { return name_; }
     void set_tracking(bool on) override { tracking_ = on; }
+    bool set_option(const std::string &key, const nlohmann::json &value) override;
 
 private:
     void run();
@@ -77,6 +90,12 @@ private:
     std::atomic<bool> stop_{false};
     std::string feed_;
     std::atomic<bool> tracking_{true};   // off: centre once, then stop reading gaze
+    std::atomic<bool> independent_{true};   // gaze_source
+
+    // One tick of each source; true if a valid sample was published.
+    bool tick_independent(uint64_t now);
+    bool tick_combined(uint64_t now);
+    void publish(double lx, double ly, double rx, double ry, uint64_t now);
 
     std::optional<double> ipd_override_;
     uint64_t setup_connection_ = 0;
@@ -84,7 +103,11 @@ private:
     std::array<SignalId, 4> ids_{};   // LeftEyeX, LeftEyeY, RightEyeX, RightEyeY
 
     RateStat samples_;
-    Counter invalid_, reconnects_;
+    Counter invalid_, reconnects_, fallback_;
+    double max_deg_ = 45, stale_ns_ = 5e8;
+    bool flip_y_ = false;
+    gaze::Scaling scaling_ = gaze::Scaling::Tangent;
+    gaze::Offsets off_;
     bool stats_registered_ = false;
 };
 

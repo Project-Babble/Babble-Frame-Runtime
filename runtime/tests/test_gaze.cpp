@@ -61,3 +61,34 @@ TEST_CASE("tangent scaling gives VRCFT's Gaze (tan of the angle; atan() recovers
     REQUIRE(far);
     CHECK((*far)[0] == doctest::Approx(1.0));
 }
+
+TEST_CASE("per-eye gaze directions convert independently") {
+    const gaze::Offsets none;
+    // Straight ahead (-z forward) is centre.
+    auto c = gaze::from_direction(0, 0, -1, 45, false, none);
+    REQUIRE(c);
+    CHECK((*c)[0] == doctest::Approx(0));
+    CHECK((*c)[1] == doctest::Approx(0));
+    // 30 deg right and 10 deg up: tangents of the angles.
+    const double yaw = 30 * M_PI / 180, pitch = 10 * M_PI / 180;
+    auto d = gaze::from_direction(std::sin(yaw) * std::cos(pitch), std::sin(pitch), -std::cos(yaw) * std::cos(pitch),
+                                  45, false, none);
+    REQUIRE(d);
+    CHECK((*d)[0] == doctest::Approx(std::tan(yaw)));
+    CHECK((*d)[1] == doctest::Approx(std::tan(pitch)));
+    // Past the limit: clamped to +-45 deg (tan = 1), and the angle scaling gives +-1 too.
+    auto far = gaze::from_direction(-1, 0, -0.1, 45, false, none);
+    REQUIRE(far);
+    CHECK((*far)[0] == doctest::Approx(-1.0));
+    auto far_angle = gaze::from_direction(-1, 0, -0.1, 45, false, none, gaze::Scaling::Angle);
+    CHECK((*far_angle)[0] == doctest::Approx(-1.0));
+    // flip_y and a yaw offset apply like in convert().
+    auto f = gaze::from_direction(0, 0.2, -1, 45, true, none);
+    CHECK((*f)[1] < 0);
+    gaze::Offsets yaw10;
+    yaw10.yaw_deg = 10;
+    auto o = gaze::from_direction(0, 0, -1, 45, false, yaw10);
+    CHECK((*o)[0] == doctest::Approx(std::tan(10 * M_PI / 180)));
+    // Degenerate direction.
+    CHECK_FALSE(gaze::from_direction(0, 0, 0, 45, false, none));
+}
