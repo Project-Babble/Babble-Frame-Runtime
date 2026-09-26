@@ -1,0 +1,38 @@
+name: CI
+
+# Checks that the runtime, the SteamVR driver shim and the unit-test binary
+# still compile on every push and pull request. Nothing is executed.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-linuxarm64:
+    name: Build (linuxarm64)
+    runs-on: ubuntu-24.04-arm
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          # Direct submodules only; tools/build_executorch.sh fetches the
+          # nested ExecuTorch dependencies it needs. The models are Git LFS
+          # and a compile check does not need them, so LFS is left off.
+          submodules: true
+
+      - name: Build
+        uses: ./.github/actions/build-runtime
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: babble-frame-runtime-bin-linuxarm64
+          path: build/babble/bin/linuxarm64
+          retention-days: 7
