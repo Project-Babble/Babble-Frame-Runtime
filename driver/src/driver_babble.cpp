@@ -11,6 +11,8 @@
 
 #include <openvr_driver.h>
 
+#include <nlohmann/json.hpp>
+
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -20,6 +22,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -41,6 +45,8 @@ namespace {
 
 constexpr int kParentFd = 3;
 constexpr auto kPollInterval = std::chrono::milliseconds(500);
+// Polls without driver.vrdrivermanifest before the folder counts as uninstalled.
+constexpr int kUninstallPolls = 4;
 constexpr auto kTermGrace = std::chrono::seconds(3);
 constexpr int kMaxBackoffSeconds = 30;
 // A runtime that stays up this long is considered healthy and resets backoff.
@@ -81,6 +87,66 @@ std::string StateDir() {
     return dir;
 }
 
+// <driver root>: ModuleDir() is <root>/bin/linuxarm64.
+std::string DriverRoot() {
+    std::string dir = ModuleDir();
+    for (int i = 0; i < 2; i++) {
+        auto slash = dir.rfind('/');
+        if (slash == std::string::npos)
+            break;
+        dir.resize(slash);
+    }
+    return dir;
+}
+
+bool DriverFolderPresent() {
+    return access((DriverRoot() + "/driver.vrdrivermanifest").c_str(), F_OK) == 0;
+}
+
+// Steam deleted the driver folder (the app was uninstalled, or moved to
+// another library). Drop it from SteamVR's external driver list so the next
+// SteamVR start does not look for it, and remove the runtime's state dir
+// (logs, generated input manifests). User settings in the config dir stay,
+// so a reinstall keeps them; babble-setup --uninstall removes those too.
+// The shim itself stays loaded in vrserver, idle, until SteamVR restarts.
+void ForgetInstall() {
+    namespace fs = std::filesystem;
+    const std::string root = DriverRoot();
+    std::string cfg;
+    if (const char *x = getenv("XDG_CONFIG_HOME"); x && *x)
+        cfg = x;
+    else if (const char *home = getenv("HOME"); home && *home)
+        cfg = std::string(home) + "/.config";
+    if (!cfg.empty()) {
+        const fs::path file = fs::path(cfg) / "openvr" / "openvrpaths.vrpath";
+        try {
+            std::ifstream in(file);
+            nlohmann::json j = nlohmann::json::parse(in, nullptr, true, true);
+            if (j.is_object() && j.contains("external_drivers") && j["external_drivers"].is_array()) {
+                nlohmann::json kept = nlohmann::json::array();
+                for (const auto &d : j["external_drivers"])
+                    if (!(d.is_string() && d.get<std::string>() == root))
+                        kept.push_back(d);
+                if (kept.size() != j["external_drivers"].size()) {
+                    j["external_drivers"] = kept.empty() ? nlohmann::json(nullptr) : kept;
+                    const fs::path tmp = file.string() + ".babble-tmp";
+                    std::ofstream out(tmp, std::ios::trunc);
+                    out << j.dump(1, '\t') << "\n";
+                    out.close();
+                    if (out && rename(tmp.c_str(), file.c_str()) == 0)
+                        Log("Babble: unregistered %s from %s\n", root.c_str(), file.c_str());
+                    else
+                        unlink(tmp.c_str());
+                }
+            }
+        } catch (const std::exception &e) {
+            Log("Babble: could not update %s: %s\n", file.c_str(), e.what());
+        }
+    }
+    std::error_code ec;
+    fs::remove_all(StateDir(), ec);
+}
+
 class RuntimeSupervisor {
 public:
     bool Start(std::string exe, std::string logPath) {
@@ -111,6 +177,11 @@ private:
         while (!stop_) {
             auto started = std::chrono::steady_clock::now();
             if (!Spawn()) {
+                if (!DriverFolderPresent()) {
+                    Log("Babble: driver folder is gone (app uninstalled); giving up\n");
+                    ForgetInstall();
+                    return;
+                }
                 if (Sleep(std::chrono::seconds(backoff)))
                     break;
                 backoff = std::min(backoff * 2, kMaxBackoffSeconds);
@@ -119,9 +190,19 @@ private:
 
             int status = 0;
             bool exited = false;
+            int missing = 0;
             while (!(exited = Reap(&status))) {
                 if (Sleep(kPollInterval))
                     break;
+                // Steam removing the folder under us is the uninstall signal:
+                // stop tracking now rather than at the next SteamVR restart.
+                missing = DriverFolderPresent() ? 0 : missing + 1;
+                if (missing >= kUninstallPolls) {
+                    Log("Babble: driver folder is gone (app uninstalled); stopping the runtime\n");
+                    Terminate();
+                    ForgetInstall();
+                    return;
+                }
             }
             if (!exited) {
                 Terminate();

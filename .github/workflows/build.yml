@@ -194,4 +194,5 @@ jobs:
           firstDepotIdOverride: ${{ vars.STEAM_DEPOT_ID }}
           buildDescription: ${{ github.event.inputs.version-number }}
           depot1Path: builds/babble
+          depot1InstallScriptPath: builds/babble/installscript.vdf
           releaseBranch: ${{ github.event.inputs.set-live == 'true' && github.event.inputs.steam-branch || '' }}
