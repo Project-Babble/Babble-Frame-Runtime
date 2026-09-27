@@ -8,6 +8,8 @@
 
 #include <atomic>
 #include <map>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -15,6 +17,24 @@
 namespace babble {
 
 class ExpressionState;
+
+// A destination that changes while an OscSink runs (set by the PC link,
+// sink/link_sink.h). Unset means: send nothing. Every set() starts a new
+// generation, after which the sink resends every signal's current value, so a
+// new receiver (or one reached over a new path) gets the full state.
+class OscDestination {
+public:
+    void set(const sockaddr_in &to);
+    void clear();
+    // False while unset; otherwise the address and its generation.
+    bool get(sockaddr_in *to, uint64_t *generation) const;
+
+private:
+    mutable std::mutex mutex_;
+    bool valid_ = false;
+    sockaddr_in to_{};
+    uint64_t generation_ = 0;
+};
 
 // Config type "osc". Sends tracked signals as OSC over UDP, one message per
 // datagram with a single float, which is what the Baballonia VRCFT module
@@ -37,7 +57,9 @@ class ExpressionState;
 //                     instead of tracking data (to test the receiving end)
 class OscSink : public ISink {
 public:
-    OscSink(const nlohmann::json &cfg, SinkDeps deps);
+    // With `destination`, host/port are ignored and the sink sends to wherever
+    // the destination currently points (nothing while it's unset).
+    OscSink(const nlohmann::json &cfg, SinkDeps deps, std::shared_ptr<OscDestination> destination = nullptr);
     ~OscSink() override;
 
     bool start() override;
@@ -61,6 +83,7 @@ private:
 
     int sock_ = -1;
     sockaddr_in dest_{};
+    std::shared_ptr<OscDestination> destination_;   // dynamic target, or null for host/port
     std::thread thread_;
     std::atomic<bool> stop_{false};
 

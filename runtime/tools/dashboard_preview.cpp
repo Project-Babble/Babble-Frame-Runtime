@@ -63,10 +63,13 @@ int main(int argc, char **argv) {
     tracking.visualizer = AppState::Stopped;
     tracking.eyes[0] = {true, true, -18, 6, 1.0, 0.6, true, 0.843, true, 0.742, 0.941, true, 0.62};   // looking left and up, wide
     tracking.eyes[1] = {true, true, -21, 5, 0.35, 0, true, 0.251, false, 0, 0, false, 0};   // half closed, calibrating
+    tracking.link = {true, true, "lan", "ChadBox", "192.168.0.149", 3.6};
     Status paused{true, Worn::No, feed(Health::Paused), feed(Health::Paused)};
     Status fault{true, Worn::Yes, feed(Health::Working, 120),
                  feed(Health::Fault, 0, "cannot connect to dsp_service (is the eye tracking service running?)")};
     Status starting{true, Worn::Yes, feed(Health::Starting), feed(Health::Starting)};
+    starting.visualizer = AppState::Stopped;
+    starting.link = {true, false, "", "", "", -1};   // searching for the PC
     Status no_vr{false, Worn::Unknown, feed(Health::Starting), feed(Health::Off)};
     Status eyes_off{true, Worn::Yes, feed(Health::Working, 120), feed(Health::Off, 0, "", false)};
     Status all_off{true, Worn::Yes, feed(Health::Off, 0, "", false), feed(Health::Off, 0, "", false)};

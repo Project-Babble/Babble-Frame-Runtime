@@ -1,6 +1,7 @@
 #include "ui/dashboard_view.h"
 
 #include "babble_version.h"
+#include "core/clock.h"
 
 #include <algorithm>
 #include <cmath>
@@ -100,7 +101,7 @@ void DashboardView::render(Canvas &c, const Status &status, const std::vector<Ch
     c.clear(kBg);
     if (page_ == Page::Home) {
         render_home(c, status);
-        render_visualizer_button(c, status.visualizer);
+        render_link(c, status.link, render_visualizer_button(c, status.visualizer) - 32);
     } else
         render_settings(c, choices);
     render_cog(c);
@@ -256,9 +257,9 @@ void DashboardView::render_eye(Canvas &c, float x, float y, const char *name, co
     regular_.draw(c, dbar.x + (kWidenW - regular_.measure("D", 20)) / 2, plot.y + kPlot + 30, "D", 20, kMuted);
 }
 
-void DashboardView::render_visualizer_button(Canvas &c, AppState state) {
+float DashboardView::render_visualizer_button(Canvas &c, AppState state) {
     if (state == AppState::Unavailable)
-        return;
+        return float(c.width()) - kMargin;
     const std::string text = state == AppState::Running ? "Close Visualizer" : "Open Visualizer";
     const float px = 28, pad = 30, h = 64;
     const float w = medium_.measure(text, px) + 2 * pad;
@@ -269,6 +270,50 @@ void DashboardView::render_visualizer_button(Canvas &c, AppState state) {
     c.fill_rect(r, fill, h / 2);
     medium_.draw(c, r.x + pad, r.y + (h + medium_.cap_height(px)) / 2, text, px, kText);
     hits_.push_back({Hit::Visualizer, r});
+    return r.x;
+}
+
+// Bottom right of the settings page. Two clicks: the first arms it for 3 s.
+void DashboardView::render_restart_button(Canvas &c) {
+    const bool armed = restart_armed(mono_ns());
+    const std::string text = armed ? "Click again to restart" : "Restart Runtime";
+    const float px = 28, pad = 30, h = 64;
+    const float w = medium_.measure(text, px) + 2 * pad;
+    const Rect r{float(c.width()) - kMargin - w, float(c.height()) - 84 - h / 2, w, h};
+    const bool hover = hovered(r);
+    const Color fill = armed ? kRed : hover ? kCardHover : kCard;
+    c.fill_rect(r, fill, h / 2);
+    medium_.draw(c, r.x + pad, r.y + (h + medium_.cap_height(px)) / 2, text, px, kText);
+    const float note_x = 150, px_note = 24;
+    regular_.draw(c, note_x, r.y + (h + regular_.cap_height(px_note)) / 2,
+                  fit(regular_, "Restarts tracking. SteamVR keeps running.", px_note, r.x - 32 - note_x), px_note, kMuted);
+    hits_.push_back({Hit::Restart, r});
+}
+
+// The PC link on one line, between the cog and the visualizer button:
+// "PC  ChadBox via LAN · 192.168.0.149 · 4 ms", or searching.
+void DashboardView::render_link(Canvas &c, const LinkReading &link, float right) {
+    if (!link.available)
+        return;
+    const float x = 150, y = float(c.height()) - 84, px = 26, dot_r = 9;
+    c.fill_circle(x + dot_r, y, dot_r, link.linked ? kGreen : kAmber);
+    const float label_x = x + 2 * dot_r + 14;
+    const float base = y + medium_.cap_height(px) / 2;
+    medium_.draw(c, label_x, base, "PC", px, kText);
+    std::string text;
+    if (link.linked) {
+        const std::string path = link.path == "lan" ? "LAN" : link.path == "usb" ? "USB" : link.path;
+        text = (link.pc.empty() ? std::string("VRCFaceTracking") : link.pc) + " via " + path + "  \u00b7  " + link.address;
+        if (link.rtt_ms >= 0) {
+            char ms[32];
+            snprintf(ms, sizeof(ms), "  \u00b7  %.0f ms", link.rtt_ms);
+            text += ms;
+        }
+    } else {
+        text = "Searching for VRCFaceTracking\u2026";
+    }
+    const float text_x = label_x + medium_.measure("PC", px) + 16;
+    regular_.draw(c, text_x, base, fit(regular_, text, px, right - text_x), px, link.linked ? kText : kMuted);
 }
 
 void DashboardView::render_switch(Canvas &c, Rect r, bool on, bool hover) {
@@ -289,6 +334,7 @@ void DashboardView::render_settings(Canvas &c, const std::vector<Choice> &choice
     c.line(kMargin, 74, kMargin + 14, 90, 5, kText);
     medium_.draw(c, kMargin + 36, 90, "Settings", 40, kText);
     hits_.push_back({Hit::Back, back});
+    render_restart_button(c);
 
     float y = 160;
     for (size_t i = 0; i < choices.size(); i++) {
@@ -364,6 +410,7 @@ DashboardView::ClickResult DashboardView::click(Point p) {
             out.redraw = true;
             break;
         case Hit::Back:
+            restart_armed_until_ns_ = 0;
             page_ = Page::Home;
             out.redraw = true;
             break;
@@ -378,6 +425,17 @@ DashboardView::ClickResult DashboardView::click(Point p) {
         case Hit::Visualizer:
             out.visualizer = true;
             break;
+        case Hit::Restart: {
+            const uint64_t now = mono_ns();
+            if (restart_armed(now)) {
+                out.restart = true;
+                restart_armed_until_ns_ = 0;
+            } else {
+                restart_armed_until_ns_ = now + 3'000'000'000ull;
+            }
+            out.redraw = true;
+            break;
+        }
         }
         break;
     }
