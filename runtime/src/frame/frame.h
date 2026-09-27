@@ -8,7 +8,7 @@ namespace babble {
 
 enum class PixelFormat { Gray8, Bayer8 /* raw Bayer treated as gray */ };
 
-enum class FrameOrigin { MouthL, MouthR, EyeL, EyeR };
+enum class FrameOrigin { MouthL, MouthR, EyeL, EyeR, Face };   // Face: an external mono face tracker
 
 inline const char *to_string(FrameOrigin o) {
     switch (o) {
@@ -16,6 +16,7 @@ inline const char *to_string(FrameOrigin o) {
     case FrameOrigin::MouthR: return "mouthR";
     case FrameOrigin::EyeL: return "eyeL";
     case FrameOrigin::EyeR: return "eyeR";
+    case FrameOrigin::Face: return "face";
     }
     return "?";
 }

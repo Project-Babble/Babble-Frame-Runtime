@@ -160,6 +160,43 @@ TEST_CASE("the visualizer button appears only when the visualizer is installed")
     CHECK_FALSE(view.click(button).visualizer);
 }
 
+TEST_CASE("the settings page switches the mouth source and picks a USB camera on its own page") {
+    DashboardView view;
+    REQUIRE(view.load_fonts(kFonts));
+    Canvas c(DashboardView::kWidth, DashboardView::kHeight);
+    Status s{true, Worn::Yes, on(Health::Working, 120), on(Health::Working, 90)};
+    view.set_page(DashboardView::Page::Settings);
+
+    // The mouth source row sits under the two rate rows (y 160 + 2 x 124): Frunk | USB, right-aligned.
+    view.render(c, s, rates(), std::nullopt);
+    const Point usb_segment{DashboardView::kWidth - 56.f - 4 - 80, 408 + 62};
+    auto r = view.click(usb_segment);
+    REQUIRE(r.mouth_source);
+    CHECK(*r.mouth_source == "usb");
+
+    // With USB, a camera row opens the camera page and asks for a fresh list.
+    s.mouth_source = "usb";
+    s.cameras = {{"303a:8000:ABC", "ETVR openiristracker", "303a:8000"}, {"046d:0825:X", "Webcam", "046d:0825"}};
+    view.render(c, s, rates(), std::nullopt);
+    r = view.click({600, 532 + 44});
+    CHECK(r.refresh_cameras);
+    CHECK(view.page() == DashboardView::Page::Cameras);
+
+    // Rows: Automatic, then each camera (150 + 92 per row).
+    view.render(c, s, rates(), std::nullopt);
+    r = view.click({600, 150 + 92 + 40});
+    REQUIRE(r.camera);
+    CHECK(*r.camera == "303a:8000:ABC");
+    r = view.click({600, 150 + 40});
+    REQUIRE(r.camera);
+    CHECK(r.camera->empty());   // automatic
+    CHECK(view.click({DashboardView::kWidth - 56.f - 60, 74}).refresh_cameras);
+
+    // Back goes to Settings, not the front page.
+    view.click({60, 70});
+    CHECK(view.page() == DashboardView::Page::Settings);
+}
+
 TEST_CASE("the restart button on the settings page needs a second click") {
     DashboardView view;
     REQUIRE(view.load_fonts(kFonts));

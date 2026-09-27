@@ -12,6 +12,17 @@
 				"off_label" : "Off"
 			},
 			{
+				"name" : "/settings/driver_babble/mouthSource",
+				"control" : "segment",
+				"label" : "Mouth Source",
+				"text" : "Where mouth tracking comes from: the Frame's own mouth cameras (Frunk), or a USB camera such as a Babble face tracker. Pick the USB camera in the Babble debug overlay's settings.",
+				"options" : [
+					{ "value" : "frunk", "label" : "Frunk" },
+					{ "value" : "usb", "label" : "USB" }
+				],
+				"requires" : { "/settings/driver_babble/mouthTracking" : true }
+			},
+			{
 				"name" : "/settings/driver_babble/mouthRate",
 				"control" : "segment",
 				"label" : "Tracking Rate (Hz)",

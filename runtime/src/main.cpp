@@ -6,6 +6,7 @@
 
 #include "babble_version.h"
 #include "camera/tracking_source.h"
+#include "camera/usb/babble_usb_source.h"
 #include "core/clock.h"
 #include "core/config.h"
 #include "core/lifecycle.h"
@@ -307,6 +308,38 @@ int main(int argc, char **argv) {
         if (!s.src->tracking())
             set_feed_tracking(s.name, false);
 
+    // The mouth comes from the Frame's own cameras, the "frunk" (source
+    // "mouth"), or a USB camera such as a Babble face tracker (source "face"),
+    // per "mouth_source". The Mouth Tracking switch (/sources/mouth/tracking)
+    // turns whichever it is on or off; the other one stays off.
+    auto mouth_from_usb = [&] { return cfg.value("mouth_source", "frunk") == "usb"; };
+    auto route_mouth = [&] {
+        const bool on = cfg.value(json::json_pointer("/sources/mouth/tracking"), true);
+        set_feed_tracking("mouth", on && !mouth_from_usb());
+        set_feed_tracking("face", on && mouth_from_usb());
+    };
+    route_mouth();
+
+    // The USB camera source, and the camera list the debug overlay shows
+    // (read at start and whenever the overlay asks for a refresh).
+    BabbleUsbSource *usb_source = nullptr;
+    for (auto &s : sources)
+        if (!usb_source)
+            usb_source = dynamic_cast<BabbleUsbSource *>(s.src.get());
+    std::vector<ui::UsbCamera> usb_cameras;
+    auto refresh_usb_cameras = [&] {
+        usb_cameras.clear();
+        for (const auto &f : usb::list_uvc()) {
+            char vp[16];
+            snprintf(vp, sizeof(vp), "%04x:%04x", f.vendor, f.product);
+            std::string detail = vp;
+            if (!f.serial.empty())
+                detail += " \u00b7 serial " + f.serial;
+            usb_cameras.push_back({usb::device_id(f), usb::device_label(f), detail});
+        }
+    };
+    refresh_usb_cameras();
+
     // The "Babble" tab in the SteamVR dashboard: a debug overlay, shown while
     // dashboard.enabled is on (the Debug Overlay toggle in SteamVR Settings).
     // The object lives for the whole run so its GPU objects outlive the
@@ -348,13 +381,25 @@ int main(int argc, char **argv) {
         if (cfg.contains(ptr) && cfg[ptr] == value)
             return;
         bool applied = false;
+        const bool mouth_routing = (id == "/sources/mouth/tracking" && value.is_boolean()) ||
+                                   (id == "/mouth_source" && (value == "frunk" || value == "usb"));
+        if (mouth_routing) {
+            cfg[ptr] = value;
+            route_mouth();
+            applied = true;
+        }
         for (auto &s : sources) {
+            if (mouth_routing)
+                break;
             if (id == "/sources/" + s.name + "/process_fps" && value.is_number() && value.get<double>() > 0) {
                 s.src->set_process_fps(value.get<double>());
                 applied = true;
             } else if (id == "/sources/" + s.name + "/tracking" && value.is_boolean()) {
                 set_feed_tracking(s.name, value.get<bool>());
                 applied = true;
+            } else if (id.starts_with("/sources/" + s.name + "/") &&
+                       s.src->set_option(id.substr(s.name.size() + 10), value)) {
+                applied = true;   // a module's own option (the USB camera choice)
             }
         }
         for (auto &p : pipelines) {
@@ -448,7 +493,8 @@ int main(int argc, char **argv) {
                                     apply_setting(ptr.to_string(), fresh[ptr], Origin::Reload);
                             }
                         for (const char *id :
-                             {"/pipelines/eye/openness_source", "/pipelines/gaze/gaze_source", "/dashboard/enabled"}) {
+                             {"/pipelines/eye/openness_source", "/pipelines/gaze/gaze_source", "/dashboard/enabled",
+                              "/mouth_source"}) {
                             const json::json_pointer ptr(id);
                             if (fresh.contains(ptr))
                                 apply_setting(id, fresh[ptr], Origin::Reload);
@@ -512,6 +558,8 @@ int main(int argc, char **argv) {
         if (dashboard->started()) {
             for (auto &[id, value] : dashboard->take_changes())
                 apply_setting(id, value, Origin::Dashboard);
+            if (dashboard->take_camera_refresh_request())
+                refresh_usb_cameras();
             if (dashboard->take_restart_request()) {
                 // A clean exit: the driver shim starts the runtime again.
                 exit_reason = "restart requested from the Babble tab";
@@ -526,11 +574,17 @@ int main(int argc, char **argv) {
             ui::Status st;
             st.steamvr = steamvr.connected();
             st.worn = steamvr.worn();
-            st.mouth = feed_status(ui::kFeedSources[0]);
+            st.mouth = feed_status(mouth_from_usb() ? "face" : ui::kFeedSources[0]);
             st.eye = feed_status(ui::kFeedSources[1]);
             st.visualizer = !visualizer.available() ? ui::AppState::Unavailable
                             : visualizer.running()  ? ui::AppState::Running
                                                     : ui::AppState::Stopped;
+            st.mouth_source = mouth_from_usb() ? "usb" : "frunk";
+            st.cameras = usb_cameras;
+            if (usb_source) {
+                st.camera = usb_source->camera();
+                st.active_camera = usb_source->active_camera();
+            }
             if (pc_link) {
                 const auto ls = pc_link->status();
                 st.link = {true, ls.linked, ls.path, ls.module, ls.address, ls.rtt_ms};

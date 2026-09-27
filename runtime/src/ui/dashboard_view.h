@@ -8,6 +8,7 @@
 #include <array>
 #include <cstddef>
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <string>
 #include <utility>
@@ -54,6 +55,13 @@ struct LinkReading {
     double rtt_ms = -1;       // -1: not measured yet
 };
 
+// A USB camera the mouth can use (the settings page's camera list).
+struct UsbCamera {
+    std::string id;       // usb::device_id(), the setting's value
+    std::string label;    // "ETVR openiristracker"
+    std::string detail;   // "303a:8000 · serial 28372F18F94C"
+};
+
 struct Status {
     bool steamvr = false;
     Worn worn = Worn::Unknown;
@@ -61,6 +69,11 @@ struct Status {
     AppState visualizer = AppState::Unavailable;   // Unavailable hides the button
     std::array<EyeReading, 2> eyes{};              // [0] left, [1] right; the eye panel
     LinkReading link{};
+    // Where the mouth comes from ("frunk" or "usb"), and for USB the camera
+    // list (from the last refresh), the setting ("" = automatic) and the one streaming.
+    std::string mouth_source = "frunk";
+    std::vector<UsbCamera> cameras{};
+    std::string camera{}, active_camera{};
 };
 
 // The overall tracking state in words (the Babble tab's headline); tone
@@ -89,7 +102,7 @@ struct Point {
 class DashboardView {
 public:
     static constexpr int kWidth = 1200, kHeight = 750, kThumb = 128;
-    enum class Page { Home, Settings };
+    enum class Page { Home, Settings, Cameras };
 
     bool load_fonts(const std::filesystem::path &dir);   // NotoSans-Regular.ttf, NotoSans-Medium.ttf
     bool load_icons(const std::filesystem::path &dir);   // bfr_logo_48.png, bfr_logo_128.png (optional)
@@ -104,6 +117,9 @@ public:
         std::optional<std::pair<size_t, bool>> toggle;      // (feed index, tracking on)
         bool visualizer = false;                            // start/stop the visualizer
         bool restart = false;                               // restart the runtime (confirmed)
+        std::optional<std::string> mouth_source;            // "frunk" or "usb"
+        std::optional<std::string> camera;                  // a UsbCamera id, "" = automatic
+        bool refresh_cameras = false;                       // list the USB cameras again
     };
     // Hit-tests against the last render.
     ClickResult click(Point p);
@@ -119,13 +135,18 @@ public:
 
 private:
     struct Hit {
-        enum Kind { Cog, Back, Option, Toggle, Visualizer, Restart } kind;
+        enum Kind { Cog, Back, Option, Toggle, Visualizer, Restart, MouthSource, OpenCameras, Camera, Refresh } kind;
         Rect rect;
         size_t choice = 0;   // Option: choice index; Toggle: feed index
         double value = 0;    // Option: value; Toggle: 1 = turn on
+        std::string text{};  // MouthSource: the value; Camera: the id ("" = automatic)
     };
     void render_home(Canvas &c, const Status &s);
-    void render_settings(Canvas &c, const std::vector<Choice> &choices);
+    void render_settings(Canvas &c, const std::vector<Choice> &choices, const Status &s);
+    void render_cameras(Canvas &c, const Status &s);
+    void render_back(Canvas &c, const char *title);
+    float render_segments(Canvas &c, float right, float y, const std::vector<std::string> &labels, int selected,
+                          const std::function<void(size_t, const Rect &)> &hit);   // -> the control's left edge
     void render_cog(Canvas &c);
     void render_switch(Canvas &c, Rect r, bool on, bool hover);
     float render_visualizer_button(Canvas &c, AppState state);   // -> its left edge

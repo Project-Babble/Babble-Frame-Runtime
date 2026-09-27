@@ -96,6 +96,25 @@ int main(int argc, char **argv) {
     view.render(c, tracking, choices, Point{1000, 222});
     save(c, "settings");
 
+    // Mouth from USB: the camera row, then its page with two cameras, the tracker streaming.
+    Status usb = tracking;
+    usb.mouth_source = "usb";
+    usb.cameras = {{"303a:8000:28372F18F94C", "ETVR openiristracker", "303a:8000 \u00b7 serial 28372F18F94C"},
+                   {"046d:0825:A1B2C3", "Logitech Webcam C270", "046d:0825 \u00b7 serial A1B2C3"}};
+    usb.camera = "303a:8000:28372F18F94C";
+    usb.active_camera = usb.camera;
+    view.render(c, usb, choices, std::nullopt);
+    save(c, "settings_usb");
+    view.set_page(DashboardView::Page::Cameras);
+    view.render(c, usb, choices, Point{600, 340});   // hovering the second camera
+    save(c, "cameras");
+    Status none = usb;
+    none.cameras.clear();
+    none.camera.clear();
+    none.active_camera.clear();
+    view.render(c, none, choices, std::nullopt);
+    save(c, "cameras_none");
+
     // Render cost (what the dashboard thread pays per redraw).
     {
         view.set_page(DashboardView::Page::Home);
