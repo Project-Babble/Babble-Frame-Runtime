@@ -6,6 +6,7 @@
 
 #include <openvr.h>
 
+#include <algorithm>
 #include <cmath>
 
 namespace babble::ui {
@@ -61,7 +62,11 @@ void Dashboard::set_status(const Status &s) {
         !same_feed(s.eye, status_.eye) || s.visualizer != status_.visualizer ||
         s.link.available != status_.link.available || s.link.linked != status_.link.linked ||
         s.link.path != status_.link.path || s.link.pc != status_.link.pc || s.link.address != status_.link.address ||
-        std::lround(s.link.rtt_ms) != std::lround(status_.link.rtt_ms))
+        std::lround(s.link.rtt_ms) != std::lround(status_.link.rtt_ms) || s.mouth_source != status_.mouth_source ||
+        s.camera != status_.camera || s.active_camera != status_.active_camera ||
+        s.cameras.size() != status_.cameras.size() ||
+        !std::equal(s.cameras.begin(), s.cameras.end(), status_.cameras.begin(),
+                    [](const UsbCamera &a, const UsbCamera &b) { return a.id == b.id && a.label == b.label; }))
         dirty_ = true;
     status_ = s;
 }
@@ -258,7 +263,18 @@ void Dashboard::run() {
                 visualizer_request_ = true;
             if (r.restart)
                 restart_request_ = true;
+            if (r.refresh_cameras)
+                camera_refresh_request_ = true;
             std::lock_guard<std::mutex> lock(mutex_);
+            // String settings: shown at once, applied by the main thread.
+            if (r.mouth_source && *r.mouth_source != status_.mouth_source) {
+                status_.mouth_source = *r.mouth_source;
+                changes_.emplace_back("/mouth_source", *r.mouth_source);
+            }
+            if (r.camera && *r.camera != status_.camera) {
+                status_.camera = *r.camera;
+                changes_.emplace_back("/sources/face/camera", *r.camera);
+            }
             if (r.setting) {
                 Choice &c = choices_[r.setting->first];
                 if (c.value != r.setting->second) {

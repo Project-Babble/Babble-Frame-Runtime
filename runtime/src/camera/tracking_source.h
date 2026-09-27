@@ -46,6 +46,9 @@ public:
     // next tick, like the headset-off pause; the module stays loaded.
     virtual void set_tracking(bool on) = 0;
     virtual bool tracking() const = 0;
+    // A module-specific option changed live (config reload, the debug overlay).
+    // False = not an option this module has, or a value it rejects.
+    virtual bool set_option(const std::string &key, const nlohmann::json &value) { return false; }
 
     virtual bool streaming() const = 0;
     virtual SourceActivity activity() const = 0;

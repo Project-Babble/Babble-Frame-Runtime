@@ -2,6 +2,7 @@
   "version": 1,
   "log_level": "info",
   "stats_interval_s": 5,
+  "mouth_source": "frunk",
   "threads": {
     "main": {
       "name": "babble-runtime",
@@ -52,6 +53,10 @@
       "cpus": [0, 1],
       "nice": 5
     },
+    "face": {
+      "cpus": [0, 1],
+      "nice": -5
+    },
     "eyesrv": {
       "cpus": [0, 1],
       "nice": 0
@@ -95,6 +100,20 @@
       },
       "predict_margin_us": 1500,
       "pause_when_absent": true
+    },
+    "face": {
+      "type": "babble_usb",
+      "enabled": true,
+      "camera": "",
+      "vendor": "303a",
+      "product": "8000",
+      "width": 240,
+      "height": 240,
+      "fps": 30,
+      "process_fps": 30,
+      "tracking": true,
+      "pause_when_absent": true,
+      "reopen_backoff_ms": { "min": 1000, "max": 10000 }
     }
   },
   "pipelines": {
@@ -156,6 +175,19 @@
       "pitch_offset": 0,
       "roll_offset": 0,
       "stale_s": 0.5
+    },
+    "face": {
+      "type": "babble_mono_face",
+      "enabled": true,
+      "from": "face",
+      "thread": "infM",
+      "model": "face_mono_224_fp16.pte",
+      "roi": [],
+      "gain": 1.0,
+      "rotate": 0,
+      "flip": "none",
+      "one_euro": { "min_cutoff": 0.5, "beta": 3.0, "d_cutoff": 1.0 },
+      "calibration": { "mode": "auto" }
     }
   },
   "sinks": {
@@ -215,6 +247,7 @@
     "section": "driver_babble",
     "values": [
       { "key": "mouthTracking", "id": "/sources/mouth/tracking" },
+      { "key": "mouthSource", "id": "/mouth_source" },
       { "key": "mouthRate", "id": "/sources/mouth/process_fps" },
       { "key": "eyeTracking", "id": "/sources/eye/tracking" },
       { "key": "eyeRate", "id": "/sources/eye/process_fps" },

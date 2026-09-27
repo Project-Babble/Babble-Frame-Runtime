@@ -54,6 +54,8 @@ public:
     bool take_visualizer_request() { return visualizer_request_.exchange(false); }
     // The Restart Runtime button was clicked (and confirmed).
     bool take_restart_request() { return restart_request_.exchange(false); }
+    // The USB camera list should be read again (Refresh, or its page opened).
+    bool take_camera_refresh_request() { return camera_refresh_request_.exchange(false); }
 
 private:
     void run();
@@ -81,6 +83,7 @@ private:
     bool dirty_ = true;
     std::atomic<bool> visualizer_request_{false};
     std::atomic<bool> restart_request_{false};
+    std::atomic<bool> camera_refresh_request_{false};
     bool drawn_restart_armed_ = false;
 
     // Dashboard thread only.

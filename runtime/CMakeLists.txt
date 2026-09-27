@@ -44,6 +44,11 @@ add_library(babble_core STATIC
     src/camera/eye/dsp_client.cpp
     src/camera/eye/dsp_eye_source.cpp
     src/camera/tracking_source.cpp
+    src/camera/usb/babble_usb_source.cpp
+    src/camera/usb/jpeg.cpp
+    src/camera/usb/usb_device.cpp
+    src/camera/usb/uvc.cpp
+    src/camera/usb/uvc_camera.cpp
     src/platform/app_launcher.cpp
     src/platform/camera_arbiter_client.cpp
     src/platform/eye_server_client.cpp
@@ -58,6 +63,8 @@ add_library(babble_core STATIC
     src/model/null_pipeline.cpp
     src/model/fusionnet_mouth.cpp
     src/model/babble_eye.cpp
+    src/model/babble_mono_face.cpp
+    src/model/postprocess/face_post.cpp
     src/model/steamvr_gaze.cpp
     src/model/postprocess/mouth_post.cpp
     src/model/postprocess/eye_post.cpp
@@ -109,6 +116,16 @@ target_link_libraries(dashboard_preview PRIVATE babble_core)
 set_target_properties(dashboard_preview PROPERTIES BUILD_RPATH "${THIRD_PARTY}/openvr/lib/linuxarm64")
 target_compile_definitions(dashboard_preview PRIVATE BABBLE_RESOURCES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/resources")
 
+# Times a .pte the way the runtime runs it (one pinned core, XNNPACK thread count).
+add_executable(model_bench tools/model_bench.cpp)
+target_link_libraries(model_bench PRIVATE babble_core)
+set_target_properties(model_bench PROPERTIES BUILD_RPATH "${THIRD_PARTY}/openvr/lib/linuxarm64")
+
+# Streams a Babble face tracker over usbfs and reports/saves what arrives (bring-up and debugging).
+add_executable(babble_usb_probe tools/babble_usb_probe.cpp)
+target_link_libraries(babble_usb_probe PRIVATE babble_core)
+set_target_properties(babble_usb_probe PROPERTIES BUILD_RPATH "${THIRD_PARTY}/openvr/lib/linuxarm64")
+
 if(BABBLE_TESTS)
     enable_testing()
     add_executable(babble_tests
@@ -128,6 +145,7 @@ if(BABBLE_TESTS)
         tests/test_eye_server.cpp
         tests/test_plugin_sink.cpp
         tests/test_link_sink.cpp
+        tests/test_babble_tracker.cpp
     )
     target_link_libraries(babble_tests PRIVATE babble_core)
     set_target_properties(babble_tests PROPERTIES BUILD_RPATH "${THIRD_PARTY}/openvr/lib/linuxarm64")
