@@ -1,5 +1,7 @@
 #include <doctest/doctest.h>
 
+#include "core/clock.h"
+
 #include "ui/canvas.h"
 #include "ui/dashboard_view.h"
 
@@ -156,6 +158,33 @@ TEST_CASE("the visualizer button appears only when the visualizer is installed")
     view.set_page(DashboardView::Page::Settings);   // front page only
     view.render(c, s, rates(), std::nullopt);
     CHECK_FALSE(view.click(button).visualizer);
+}
+
+TEST_CASE("the restart button on the settings page needs a second click") {
+    DashboardView view;
+    REQUIRE(view.load_fonts(kFonts));
+    Canvas c(DashboardView::kWidth, DashboardView::kHeight);
+    Status s{true, Worn::Yes, on(Health::Working, 120), on(Health::Working, 90)};
+    const Point button{DashboardView::kWidth - 100.f, DashboardView::kHeight - 84.f};   // bottom right
+
+    view.set_page(DashboardView::Page::Settings);
+    view.render(c, s, rates(), std::nullopt);
+    auto first = view.click(button);
+    CHECK_FALSE(first.restart);
+    CHECK(first.redraw);   // shows "Click again to restart"
+    CHECK(view.restart_armed(babble::mono_ns()));
+    view.render(c, s, rates(), std::nullopt);
+    CHECK(view.click(button).restart);
+    CHECK_FALSE(view.restart_armed(babble::mono_ns()));
+
+    // Leaving the page disarms it: one click after coming back only arms it again.
+    view.render(c, s, rates(), std::nullopt);
+    CHECK_FALSE(view.click(button).restart);
+    view.render(c, s, rates(), std::nullopt);
+    view.click({60, 70});   // Back
+    view.set_page(DashboardView::Page::Settings);
+    view.render(c, s, rates(), std::nullopt);
+    CHECK_FALSE(view.click(button).restart);
 }
 
 TEST_CASE("the eye panel places the gaze dot and fills the openness bar") {

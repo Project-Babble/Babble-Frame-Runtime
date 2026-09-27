@@ -52,7 +52,7 @@ bool FusionNetMouth::init() {
     // Calibration: a user copy in the config dir wins over the shipped default.
     const auto cal_cfg = cfg_.value("calibration", nlohmann::json::object());
     mouth::CalibMode mode = mouth::CalibMode::Manual;
-    if (!mouth::parse_mode(cal_cfg.value("mode", "manual"), &mode)) {
+    if (!mouth::parse_mode(cal_cfg.value("mode", "auto"), &mode)) {
         LOG_ERROR("pipeline %s: unknown calibration mode", name_.c_str());
         return false;
     }
@@ -83,7 +83,7 @@ bool FusionNetMouth::init() {
                  probe_total_);
     LOG_INFO("pipeline %s: FusionNet on %s (swap=%d flip=%s%s rotate=%d interp=%s calibration=%s from %s)",
              name_.c_str(), source_.c_str(), int(swap_), flip_l_ ? "l" : "", flip_r_ ? "r" : "", rot,
-             area_ ? "area" : "linear", cal_cfg.value("mode", "manual").c_str(), cal_path.c_str());
+             area_ ? "area" : "linear", cal_cfg.value("mode", "auto").c_str(), cal_path.c_str());
     return true;
 }
 

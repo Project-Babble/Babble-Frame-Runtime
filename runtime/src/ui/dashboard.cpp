@@ -58,7 +58,10 @@ void Dashboard::set_status(const Status &s) {
                a.available == b.available && a.tracking == b.tracking;
     };
     if (s.steamvr != status_.steamvr || s.worn != status_.worn || !same_feed(s.mouth, status_.mouth) ||
-        !same_feed(s.eye, status_.eye) || s.visualizer != status_.visualizer)
+        !same_feed(s.eye, status_.eye) || s.visualizer != status_.visualizer ||
+        s.link.available != status_.link.available || s.link.linked != status_.link.linked ||
+        s.link.path != status_.link.path || s.link.pc != status_.link.pc || s.link.address != status_.link.address ||
+        std::lround(s.link.rtt_ms) != std::lround(status_.link.rtt_ms))
         dirty_ = true;
     status_ = s;
 }
@@ -253,6 +256,8 @@ void Dashboard::run() {
             redraw |= r.redraw;
             if (r.visualizer)
                 visualizer_request_ = true;
+            if (r.restart)
+                restart_request_ = true;
             std::lock_guard<std::mutex> lock(mutex_);
             if (r.setting) {
                 Choice &c = choices_[r.setting->first];
@@ -275,6 +280,10 @@ void Dashboard::run() {
         if (visible_) {
             const int hover = view_.hit_at(pointer_);
             redraw |= hover != hover_;
+            // The restart button's armed state runs out by itself.
+            const bool armed = view_.restart_armed(mono_ns());
+            redraw |= armed != drawn_restart_armed_;
+            drawn_restart_armed_ = armed;
             // The eye panel moves with the tracking: redraw when a value
             // visibly changed, at most ~30 times a second.
             if (!redraw && mono_ns() - last_present_ns_ >= 33000000ull) {

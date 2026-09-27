@@ -66,6 +66,7 @@ add_library(babble_core STATIC
     src/sink/sink.cpp
     src/sink/osc.cpp
     src/sink/osc_sink.cpp
+    src/sink/link_sink.cpp
     src/sink/plugin_sink.cpp
     src/ui/canvas.cpp
     src/ui/font.cpp
@@ -126,6 +127,7 @@ if(BABBLE_TESTS)
         tests/test_dashboard.cpp
         tests/test_eye_server.cpp
         tests/test_plugin_sink.cpp
+        tests/test_link_sink.cpp
     )
     target_link_libraries(babble_tests PRIVATE babble_core)
     set_target_properties(babble_tests PROPERTIES BUILD_RPATH "${THIRD_PARTY}/openvr/lib/linuxarm64")

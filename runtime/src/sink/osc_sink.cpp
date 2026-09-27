@@ -16,11 +16,32 @@
 
 namespace babble {
 
-OscSink::OscSink(const nlohmann::json &cfg, SinkDeps deps)
+void OscDestination::set(const sockaddr_in &to) {
+    std::lock_guard lock(mutex_);
+    valid_ = true;
+    to_ = to;
+    generation_++;
+}
+
+void OscDestination::clear() {
+    std::lock_guard lock(mutex_);
+    valid_ = false;
+}
+
+bool OscDestination::get(sockaddr_in *to, uint64_t *generation) const {
+    std::lock_guard lock(mutex_);
+    if (!valid_)
+        return false;
+    *to = to_;
+    *generation = generation_;
+    return true;
+}
+
+OscSink::OscSink(const nlohmann::json &cfg, SinkDeps deps, std::shared_ptr<OscDestination> destination)
     : name_(deps.name), thread_spec_(thread_spec(deps.threads, cfg.value("thread", "osc"), "bbl-osc")),
       state_(deps.state), stats_(deps.stats), host_(cfg.value("host", "127.0.0.1")),
       prefix_(cfg.value("prefix", "")), port_(cfg.value("port", 8888)), max_rate_hz_(cfg.value("max_rate_hz", 0.0)),
-      test_pattern_(cfg.value("test_pattern", false)) {
+      test_pattern_(cfg.value("test_pattern", false)), destination_(std::move(destination)) {
     if (cfg.contains("rename") && cfg["rename"].is_object())
         for (auto &[k, v] : cfg["rename"].items())
             if (v.is_string())
@@ -42,7 +63,7 @@ bool OscSink::start() {
     dest_ = {};
     dest_.sin_family = AF_INET;
     dest_.sin_port = htons(uint16_t(port_));
-    if (inet_pton(AF_INET, host_.c_str(), &dest_.sin_addr) != 1) {
+    if (!destination_ && inet_pton(AF_INET, host_.c_str(), &dest_.sin_addr) != 1) {
         LOG_ERROR("%s: '%s' is not an IPv4 address", name_.c_str(), host_.c_str());
         return false;
     }
@@ -53,8 +74,9 @@ bool OscSink::start() {
     }
     stop_ = false;
     thread_ = start_thread(thread_spec_, [this] { run(); });
-    LOG_INFO("%s: sending OSC to %s:%d%s%s", name_.c_str(), host_.c_str(), port_,
-             prefix_.empty() ? "" : (" prefix " + prefix_).c_str(), test_pattern_ ? " (TEST PATTERN)" : "");
+    if (!destination_)
+        LOG_INFO("%s: sending OSC to %s:%d%s%s", name_.c_str(), host_.c_str(), port_,
+                 prefix_.empty() ? "" : (" prefix " + prefix_).c_str(), test_pattern_ ? " (TEST PATTERN)" : "");
     return true;
 }
 
@@ -81,14 +103,16 @@ void OscSink::send(const std::string &address, float value) {
     send_errors_.add();
     uint64_t now = mono_ns();
     if (now - last_error_log_ns_ > 5000000000ull) {
-        LOG_WARN("%s: send to %s:%d failed: %s", name_.c_str(), host_.c_str(), port_, strerror(errno));
+        char ip[INET_ADDRSTRLEN] = "?";
+        inet_ntop(AF_INET, &dest_.sin_addr, ip, sizeof(ip));
+        LOG_WARN("%s: send to %s:%d failed: %s", name_.c_str(), ip, ntohs(dest_.sin_port), strerror(errno));
         last_error_log_ns_ = now;
     }
 }
 
 void OscSink::run() {
     const uint64_t min_period_ns = max_rate_hz_ > 0 ? uint64_t(1e9 / max_rate_hz_) : 0;
-    uint64_t seq = 0, last_batch_ns = 0;
+    uint64_t seq = 0, last_batch_ns = 0, generation = 0;
     std::vector<uint64_t> last_sent_t;   // per signal: t_ns of the value last sent
     std::vector<std::string> addresses;  // per signal: final OSC address, "" = excluded
 
@@ -106,6 +130,15 @@ void OscSink::run() {
             continue;
         last_batch_ns = now;
 
+        bool resend_all = false;
+        if (destination_) {
+            uint64_t g = 0;
+            if (!destination_->get(&dest_, &g))
+                continue;   // no receiver: send nothing
+            resend_all = g != generation;
+            generation = g;
+        }
+
         auto snap = state_.snapshot();
         if (addresses.size() != snap.names.size()) {
             // Signals are registered before streaming starts; rebuild the address table if that changes.
@@ -121,6 +154,8 @@ void OscSink::run() {
             }
             last_sent_t.assign(snap.names.size(), 0);
         }
+        if (resend_all)   // a new receiver or path: send every current value once
+            std::fill(last_sent_t.begin(), last_sent_t.end(), 0);
 
         for (size_t i = 0; i < snap.signals.size(); i++) {
             if (addresses[i].empty())

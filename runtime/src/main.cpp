@@ -20,6 +20,7 @@
 #include "platform/eye_server_client.h"
 #include "platform/steamvr_client.h"
 #include "platform/steamvr_settings.h"
+#include "sink/link_sink.h"
 #include "sink/sink.h"
 #include "state/expression_state.h"
 #include "ui/dashboard.h"
@@ -30,10 +31,12 @@
 #include <cstdlib>
 #include <cstring>
 #include <algorithm>
+#include <chrono>
 #include <map>
 #include <memory>
 #include <optional>
 #include <string>
+#include <thread>
 
 #include <sys/epoll.h>
 #include <sys/signalfd.h>
@@ -282,6 +285,11 @@ int main(int argc, char **argv) {
         std::erase(frame_taps, it->sink.get());
         it = sinks.erase(it);
     }
+    // The PC link, for the debug overlay's status line (the first one, if any).
+    LinkSink *pc_link = nullptr;
+    for (auto &k : sinks)
+        if (!pc_link)
+            pc_link = dynamic_cast<LinkSink *>(k.sink.get());
     for (auto &p : pipelines)
         p->start();
 
@@ -504,6 +512,11 @@ int main(int argc, char **argv) {
         if (dashboard->started()) {
             for (auto &[id, value] : dashboard->take_changes())
                 apply_setting(id, value, Origin::Dashboard);
+            if (dashboard->take_restart_request()) {
+                // A clean exit: the driver shim starts the runtime again.
+                exit_reason = "restart requested from the Babble tab";
+                running = false;
+            }
             if (dashboard->take_visualizer_request()) {
                 if (visualizer.running())
                     visualizer.stop();
@@ -518,6 +531,10 @@ int main(int argc, char **argv) {
             st.visualizer = !visualizer.available() ? ui::AppState::Unavailable
                             : visualizer.running()  ? ui::AppState::Running
                                                     : ui::AppState::Stopped;
+            if (pc_link) {
+                const auto ls = pc_link->status();
+                st.link = {true, ls.linked, ls.path, ls.module, ls.address, ls.rtt_ms};
+            }
             dashboard->set_status(st);
         }
 
@@ -533,6 +550,13 @@ int main(int argc, char **argv) {
     }
 
     LOG_INFO("shutting down: %s", exit_reason);
+    // Shutdown has a few seconds: if something hangs (SteamVR's VR_Shutdown has
+    // been seen to), exit anyway so the shim can start a fresh runtime.
+    std::thread([] {
+        std::this_thread::sleep_for(std::chrono::seconds(5));
+        LOG_ERROR("shutdown is stuck after 5 s; exiting now");
+        _exit(1);
+    }).detach();
     dashboard->stop();
     // Order: consumers first so nothing holds frames when sources stop.
     for (auto &p : pipelines)

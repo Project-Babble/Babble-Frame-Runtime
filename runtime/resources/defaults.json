@@ -109,7 +109,7 @@
       "rotate": 0,
       "interp": "linear",
       "ema": 0.5,
-      "calibration": { "mode": "manual", "file": "calibration_mouth.json" }
+      "calibration": { "mode": "auto", "file": "calibration_mouth.json" }
     },
     "eye": {
       "type": "babble_eye",
@@ -169,6 +169,22 @@
       "prefix": "",
       "max_rate_hz": 0,
       "test_pattern": false,
+      "exclude": []
+    },
+    "pc": {
+      "type": "vrcft_link",
+      "enabled": true,
+      "thread": "osc",
+      "control_port": 6767,
+      "path_order": ["dongle", "usb", "lan"],
+      "interfaces": { "wlanap": "dongle", "usb0": "usb" },
+      "hosts": [],
+      "beacon_s": [2, 5],
+      "ping_s": 1,
+      "timeout_s": 3,
+      "name": "",
+      "prefix": "",
+      "max_rate_hz": 0,
       "exclude": []
     }
   },

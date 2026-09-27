@@ -24,7 +24,7 @@ namespace babble {
 // rotate (0|90|180|270, counter-clockwise), interp ("linear"|"area"),
 // ema (0.5). Presence comes from the headset (SteamVR proximity): the
 // cameras pause while it's off and each new session resets the filters.
-// calibration: {mode: "manual"|"raw"|"auto", file: "calibration_mouth.json"},
+// calibration: {mode: "auto" (default)|"manual"|"raw", file: "calibration_mouth.json"},
 // probe_orientation (N > 0: for the first N frames also run all 8 rotate x
 // swap combinations and log them ranked by mean UserPresent, like
 // mouth_osc_pc.py --probe-orientation; tracking output is unaffected).

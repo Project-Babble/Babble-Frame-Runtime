@@ -46,12 +46,21 @@ struct EyeReading {
     double dilation = 0;                 // the Dilation output, 0..1 (0.5 = the person's baseline)
 };
 
+// The PC link (sink/link_sink.h), for the front page's status line.
+struct LinkReading {
+    bool available = false;   // a link output is running; false hides the line
+    bool linked = false;
+    std::string path, pc, address;
+    double rtt_ms = -1;       // -1: not measured yet
+};
+
 struct Status {
     bool steamvr = false;
     Worn worn = Worn::Unknown;
     FeedStatus mouth, eye;
     AppState visualizer = AppState::Unavailable;   // Unavailable hides the button
     std::array<EyeReading, 2> eyes{};              // [0] left, [1] right; the eye panel
+    LinkReading link{};
 };
 
 // The overall tracking state in words (the Babble tab's headline); tone
@@ -94,6 +103,7 @@ public:
         std::optional<std::pair<size_t, double>> setting;   // (choice index, new value)
         std::optional<std::pair<size_t, bool>> toggle;      // (feed index, tracking on)
         bool visualizer = false;                            // start/stop the visualizer
+        bool restart = false;                               // restart the runtime (confirmed)
     };
     // Hit-tests against the last render.
     ClickResult click(Point p);
@@ -101,12 +111,15 @@ public:
     // render. Hover highlights only change when this does.
     int hit_at(std::optional<Point> p) const;
 
+    // The restart button needs a second click within 3 s; true while it waits for it.
+    bool restart_armed(uint64_t now_ns) const { return now_ns < restart_armed_until_ns_; }
+
     Page page() const { return page_; }
     void set_page(Page p) { page_ = p; }
 
 private:
     struct Hit {
-        enum Kind { Cog, Back, Option, Toggle, Visualizer } kind;
+        enum Kind { Cog, Back, Option, Toggle, Visualizer, Restart } kind;
         Rect rect;
         size_t choice = 0;   // Option: choice index; Toggle: feed index
         double value = 0;    // Option: value; Toggle: 1 = turn on
@@ -115,13 +128,16 @@ private:
     void render_settings(Canvas &c, const std::vector<Choice> &choices);
     void render_cog(Canvas &c);
     void render_switch(Canvas &c, Rect r, bool on, bool hover);
-    void render_visualizer_button(Canvas &c, AppState state);
+    float render_visualizer_button(Canvas &c, AppState state);   // -> its left edge
+    void render_restart_button(Canvas &c);
+    void render_link(Canvas &c, const LinkReading &link, float right);
     void render_eye(Canvas &c, float x, float y, const char *name, const EyeReading &e);
     bool hovered(const Rect &r) const;
     // Text shortened with an ellipsis to fit max_w.
     std::string fit(const Font &f, const std::string &text, float px, float max_w) const;
 
     Page page_ = Page::Home;
+    uint64_t restart_armed_until_ns_ = 0;   // the restart button's confirmation window
     Font regular_, medium_;
     std::optional<Image> logo_small_, logo_thumb_;
     std::vector<Hit> hits_;

@@ -52,6 +52,8 @@ public:
     std::vector<std::pair<std::string, nlohmann::json>> take_changes();
     // True once per click on the visualizer button since the last call.
     bool take_visualizer_request() { return visualizer_request_.exchange(false); }
+    // The Restart Runtime button was clicked (and confirmed).
+    bool take_restart_request() { return restart_request_.exchange(false); }
 
 private:
     void run();
@@ -78,6 +80,8 @@ private:
     std::vector<std::pair<std::string, nlohmann::json>> changes_;
     bool dirty_ = true;
     std::atomic<bool> visualizer_request_{false};
+    std::atomic<bool> restart_request_{false};
+    bool drawn_restart_armed_ = false;
 
     // Dashboard thread only.
     DashboardView view_;
