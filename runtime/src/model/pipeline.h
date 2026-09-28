@@ -12,6 +12,9 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <utility>
+#include <span>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -85,6 +88,13 @@ public:
     const std::string &name() const override { return name_; }
     uint64_t processed() const override { return rate_.total(); }
 
+    // Headset off, or the feed turned off: publish neutral() once and hold the
+    // pipeline, so a frame finishing on the pipeline thread can't overwrite the
+    // neutral values; the next session starts fresh (reset_session). The two
+    // reasons are independent: publishing resumes when neither holds.
+    void on_presence(bool worn) override;
+    void set_tracking(bool on) override;
+
 protected:
     PipelineBase(const nlohmann::json &cfg, PipelineDeps deps, const char *default_thread_key);
 
@@ -95,6 +105,13 @@ protected:
     virtual void process(const StereoFrame &frames) = 0;   // pipeline thread
     virtual void on_start() {}
     virtual void on_stop() {}
+    // The values published when the pipeline is held (headset off, feed off).
+    virtual std::vector<std::pair<SignalId, Signal>> neutral(uint64_t now_ns) const { return {}; }
+    // Main thread, when a hold starts: forget per-session state (calibration,
+    // filters). Implementations flag their pipeline thread to do it.
+    virtual void reset_session() {}
+    // Pipeline thread: publish, unless held (then the frame is dropped).
+    void publish(std::span<const std::pair<SignalId, Signal>> updates);
 
     std::string name_;
     nlohmann::json cfg_;
@@ -107,6 +124,11 @@ protected:
     LatencyStat preprocess_, inference_, capture_to_state_;
 
 private:
+    enum Hold : uint8_t { kHeadsetOff = 1, kFeedOff = 2 };
+    void hold(Hold reason, bool on);
+    std::mutex publish_mutex_;   // orders publish() against the neutral values
+    uint8_t held_ = 0;           // Hold bits, under publish_mutex_
+
     void run();
     std::thread thread_;
     std::atomic<bool> stop_{false};

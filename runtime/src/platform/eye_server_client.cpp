@@ -15,6 +15,10 @@
 #include <sys/syscall.h>
 #include <unistd.h>
 
+namespace {
+const babble::log::Logger LOG("eyesrv");
+} // namespace
+
 namespace babble {
 
 namespace eye_server {
@@ -76,7 +80,7 @@ bool lock(uint8_t *base) {
     if (rc == EOWNERDEAD)
         rc = pthread_mutex_consistent(shm_mutex(base));
     if (rc != 0) {
-        LOG_WARN("eye-server: locking the shared mutex failed: %s", strerror(rc));
+        LOG.warn("eye-server: locking the shared mutex failed: %s", strerror(rc));
         return false;
     }
     return true;
@@ -127,7 +131,7 @@ std::optional<Sample> EyeServerClient::latest(uint64_t max_age_ns) const {
 bool EyeServerClient::open_map() {
     auto problem = [&](std::string why) {
         if (why != last_problem_)   // once per distinct reason
-            LOG_WARN("eye-server: %s: %s; independent gaze and native openness unavailable", options_.path.c_str(),
+            LOG.warn("eye-server: %s: %s; independent gaze and native openness unavailable", options_.path.c_str(),
                      why.c_str());
         last_problem_ = std::move(why);
         close_map();
@@ -150,7 +154,7 @@ bool EyeServerClient::open_map() {
     if (__atomic_load_n(shm_word(base_, kInitializedOffset), __ATOMIC_ACQUIRE) != 1)
         return problem("not initialized");
     if (!announced_ || !last_problem_.empty())
-        LOG_INFO("eye-server: reading %s (layout version %u)", options_.path.c_str(), version);
+        LOG.info("eye-server: reading %s (layout version %u)", options_.path.c_str(), version);
     announced_ = true;
     last_problem_.clear();
     available_ = true;

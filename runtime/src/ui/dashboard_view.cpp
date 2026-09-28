@@ -104,6 +104,8 @@ void DashboardView::render(Canvas &c, const Status &status, const std::vector<Ch
         render_link(c, status.link, render_visualizer_button(c, status.visualizer) - 32);
     } else if (page_ == Page::Cameras) {
         render_cameras(c, status);
+    } else if (page_ == Page::Diagnostics) {
+        render_diagnostics(c, status);
     } else {
         render_settings(c, choices, status);
     }
@@ -364,6 +366,7 @@ void DashboardView::render_settings(Canvas &c, const std::vector<Choice> &choice
     const float W = float(c.width());
     render_back(c, "Settings");
     render_restart_button(c);
+    hits_.push_back({Hit::OpenDiagnostics, render_pill(c, W - kMargin, 42, "Diagnostics", false)});
 
     float y = 160;
     for (size_t i = 0; i < choices.size(); i++) {
@@ -428,6 +431,59 @@ void DashboardView::render_settings(Canvas &c, const std::vector<Choice> &choice
         c.line(chev_x - 12, y + 30, chev_x, y + 44, 5, kMuted);   // chevron: opens the camera page
         c.line(chev_x, y + 44, chev_x - 12, y + 58, 5, kMuted);
         hits_.push_back({Hit::OpenCameras, row});
+    }
+}
+
+// A rounded button; primary ones use the accent colour.
+Rect DashboardView::render_pill(Canvas &c, float right, float y, const std::string &text, bool primary) {
+    const float px = 28, pad = 30, h = 64;
+    const float w = medium_.measure(text, px) + 2 * pad;
+    const Rect r{right - w, y, w, h};
+    const bool hover = hovered(r);
+    c.fill_rect(r, primary ? (hover ? Color::hex(0x6aa0ff) : kAccent) : (hover ? kCardHover : kCard), h / 2);
+    medium_.draw(c, r.x + pad, r.y + (h + medium_.cap_height(px)) / 2, text, px, kText);
+    return r;
+}
+
+// Diagnostics: verbose logging for a while, a diagnostics file on demand, and
+// where the logs are (what a tester sends with a problem report).
+void DashboardView::render_diagnostics(Canvas &c, const Status &s) {
+    const float W = float(c.width());
+    render_back(c, "Diagnostics");
+    float y = 160;
+    {   // Verbose logging, with its switch.
+        const bool on = s.verbose_minutes_left > 0;
+        const Rect sw{W - kMargin - 92, y + 36, 92, 52};
+        const Rect hit{sw.x - 24, y, W - kMargin - (sw.x - 24), 124};
+        render_switch(c, sw, on, hovered(hit));
+        Hit h{Hit::Verbose, hit};
+        h.value = on ? 0.0 : 1.0;
+        hits_.push_back(h);
+        medium_.draw(c, kMargin, y + 56, "Verbose logging", 32, kText);
+        const std::string hint = on ? "On for " + std::to_string(s.verbose_minutes_left) + " more min: every module logs in detail."
+                                    : "Every module logs in detail for 10 minutes.";
+        regular_.draw(c, kMargin, y + 94, fit(regular_, hint, 25, hit.x - kMargin - 24), 25, kMuted);
+        y += 124;
+    }
+    c.fill_rect({kMargin, y, W - 2 * kMargin, 2}, kLine);
+    {   // A diagnostics file.
+        const Rect b = render_pill(c, W - kMargin, y + 30, "Write file", true);
+        hits_.push_back({Hit::WriteDiagnostics, b});
+        medium_.draw(c, kMargin, y + 56, "Diagnostics file", 32, kText);
+        const std::string hint = s.last_diagnostics.empty() ? "A report of the current state, to send with a problem."
+                                                            : "Saved " + s.last_diagnostics;
+        regular_.draw(c, kMargin, y + 94, fit(regular_, hint, 25, b.x - kMargin - 24), 25, kMuted);
+        y += 124;
+    }
+    c.fill_rect({kMargin, y, W - 2 * kMargin, 2}, kLine);
+    y += 50;
+    for (const auto &[label, path] : {std::pair<const char *, const std::string &>{"Log", s.log_file},
+                                      {"Stats", s.stats_file}}) {
+        if (path.empty())
+            continue;
+        medium_.draw(c, kMargin, y, label, 26, kText);
+        regular_.draw(c, kMargin + 110, y, fit(regular_, path, 24, W - 2 * kMargin - 110), 24, kMuted);
+        y += 44;
     }
 }
 
@@ -537,7 +593,19 @@ DashboardView::ClickResult DashboardView::click(Point p) {
             break;
         case Hit::Back:
             restart_armed_until_ns_ = 0;
-            page_ = page_ == Page::Cameras ? Page::Settings : Page::Home;
+            page_ = page_ == Page::Cameras || page_ == Page::Diagnostics ? Page::Settings : Page::Home;
+            out.redraw = true;
+            break;
+        case Hit::OpenDiagnostics:
+            page_ = Page::Diagnostics;
+            out.redraw = true;
+            break;
+        case Hit::Verbose:
+            out.verbose = h.value > 0.5;
+            out.redraw = true;
+            break;
+        case Hit::WriteDiagnostics:
+            out.write_diagnostics = true;
             out.redraw = true;
             break;
         case Hit::MouthSource:

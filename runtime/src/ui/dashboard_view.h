@@ -74,6 +74,10 @@ struct Status {
     std::string mouth_source = "frunk";
     std::vector<UsbCamera> cameras{};
     std::string camera{}, active_camera{};
+    // Diagnostics page: verbose logging (minutes left, 0 = off), the last
+    // diagnostics file written, and where the log files are.
+    int verbose_minutes_left = 0;
+    std::string last_diagnostics{}, log_file{}, stats_file{};
 };
 
 // The overall tracking state in words (the Babble tab's headline); tone
@@ -102,7 +106,7 @@ struct Point {
 class DashboardView {
 public:
     static constexpr int kWidth = 1200, kHeight = 750, kThumb = 128;
-    enum class Page { Home, Settings, Cameras };
+    enum class Page { Home, Settings, Cameras, Diagnostics };
 
     bool load_fonts(const std::filesystem::path &dir);   // NotoSans-Regular.ttf, NotoSans-Medium.ttf
     bool load_icons(const std::filesystem::path &dir);   // bfr_logo_48.png, bfr_logo_128.png (optional)
@@ -120,6 +124,8 @@ public:
         std::optional<std::string> mouth_source;            // "frunk" or "usb"
         std::optional<std::string> camera;                  // a UsbCamera id, "" = automatic
         bool refresh_cameras = false;                       // list the USB cameras again
+        std::optional<bool> verbose;                        // verbose logging on (for a while) / off
+        bool write_diagnostics = false;                     // write a diagnostics file now
     };
     // Hit-tests against the last render.
     ClickResult click(Point p);
@@ -135,7 +141,10 @@ public:
 
 private:
     struct Hit {
-        enum Kind { Cog, Back, Option, Toggle, Visualizer, Restart, MouthSource, OpenCameras, Camera, Refresh } kind;
+        enum Kind {
+            Cog, Back, Option, Toggle, Visualizer, Restart, MouthSource, OpenCameras, Camera, Refresh,
+            OpenDiagnostics, Verbose, WriteDiagnostics
+        } kind;
         Rect rect;
         size_t choice = 0;   // Option: choice index; Toggle: feed index
         double value = 0;    // Option: value; Toggle: 1 = turn on
@@ -144,6 +153,8 @@ private:
     void render_home(Canvas &c, const Status &s);
     void render_settings(Canvas &c, const std::vector<Choice> &choices, const Status &s);
     void render_cameras(Canvas &c, const Status &s);
+    void render_diagnostics(Canvas &c, const Status &s);
+    Rect render_pill(Canvas &c, float right, float y, const std::string &text, bool primary);   // -> its rect
     void render_back(Canvas &c, const char *title);
     float render_segments(Canvas &c, float right, float y, const std::vector<std::string> &labels, int selected,
                           const std::function<void(size_t, const Rect &)> &hit);   // -> the control's left edge

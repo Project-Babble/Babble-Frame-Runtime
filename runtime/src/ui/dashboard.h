@@ -56,6 +56,9 @@ public:
     bool take_restart_request() { return restart_request_.exchange(false); }
     // The USB camera list should be read again (Refresh, or its page opened).
     bool take_camera_refresh_request() { return camera_refresh_request_.exchange(false); }
+    // The Diagnostics page: verbose logging switched (1 on, 0 off, -1 no change), a file wanted.
+    int take_verbose_request() { return verbose_request_.exchange(-1); }
+    bool take_diagnostics_request() { return diagnostics_request_.exchange(false); }
 
 private:
     void run();
@@ -84,6 +87,8 @@ private:
     std::atomic<bool> visualizer_request_{false};
     std::atomic<bool> restart_request_{false};
     std::atomic<bool> camera_refresh_request_{false};
+    std::atomic<int> verbose_request_{-1};
+    std::atomic<bool> diagnostics_request_{false};
     bool drawn_restart_armed_ = false;
 
     // Dashboard thread only.

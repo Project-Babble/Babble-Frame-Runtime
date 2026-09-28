@@ -9,6 +9,10 @@
 #include <algorithm>
 #include <cmath>
 
+namespace {
+const babble::log::Logger LOG("pipe.eye");
+} // namespace
+
 namespace babble {
 
 namespace {
@@ -42,7 +46,7 @@ bool BabbleEye::init() {
     if (!lid_->load(model_path(combined_ ? "model" : "lid_model")))
         return false;
     if (!eye_contract(*lid_, combined_ ? 4 : 2, &res_)) {
-        LOG_ERROR("pipeline %s: %s model does not match [2,1,R,R] -> %s", name_.c_str(), combined_ ? "eye" : "lid",
+        LOG.error("pipeline %s: %s model does not match [2,1,R,R] -> %s", name_.c_str(), combined_ ? "eye" : "lid",
                   combined_ ? "[2,2]" : "[2]");
         return false;
     }
@@ -51,7 +55,7 @@ bool BabbleEye::init() {
         uint32_t pupil_res = 0;
         if (!pupil_->load(model_path("pupil_model")) || !eye_contract(*pupil_, 2, &pupil_res) ||
             pupil_res != res_) {
-            LOG_WARN("pipeline %s: pupil model unusable; running without dilation", name_.c_str());
+            LOG.warn("pipeline %s: pupil model unusable; running without dilation", name_.c_str());
             pupil_.reset();
         }
     }
@@ -65,7 +69,7 @@ bool BabbleEye::init() {
     {
         const std::string src = cfg_.value("openness_source", "model");
         if (src != "model" && src != "native") {
-            LOG_ERROR("pipeline %s: openness_source must be model or native", name_.c_str());
+            LOG.error("pipeline %s: openness_source must be model or native", name_.c_str());
             return false;
         }
         native_openness_ = src == "native";
@@ -77,14 +81,14 @@ bool BabbleEye::init() {
     {
         const std::string mode = cfg_.value("lid_calibration", "baseline");
         if (mode != "baseline" && mode != "median") {
-            LOG_ERROR("pipeline %s: lid_calibration must be baseline or median", name_.c_str());
+            LOG.error("pipeline %s: lid_calibration must be baseline or median", name_.c_str());
             return false;
         }
         baseline_calib_ = mode == "baseline";
     }
     pupil_every_ns_ = uint64_t(1e9 / pupil_hz);
 
-    reset_session();
+    start_session();
 
     const char *names[3] = {"Lid", "Widen", "Dilation"};
     for (int k = 0; k < 3; k++) {
@@ -107,17 +111,17 @@ bool BabbleEye::init() {
     deps_.stats.add("pipe." + name_ + ".pupil_fps", &pupil_rate_);
     deps_.stats.add("pipe." + name_ + ".pupil_inference", &pupil_time_);
     if (combined_)
-        LOG_INFO("pipeline %s: combined lid + pupil model (%u px, %s) on %s, filters tuned at %.0f updates/s",
+        LOG.info("pipeline %s: combined lid + pupil model (%u px, %s) on %s, filters tuned at %.0f updates/s",
                  name_.c_str(), res_, lid_->inputs()[0].dtype == DType::F16 ? "fp16" : "fp32", source_.c_str(), hz);
     else
-        LOG_INFO("pipeline %s: lid%s on %s at %.0f updates/s%s", name_.c_str(), pupil_ ? " + pupil" : "",
+        LOG.info("pipeline %s: lid%s on %s at %.0f updates/s%s", name_.c_str(), pupil_ ? " + pupil" : "",
                  source_.c_str(), hz, pupil_ ? (", pupil " + std::to_string(int(pupil_hz)) + " Hz").c_str() : "");
     return true;
 }
 
 // Per-person state: lid reference, pupil baseline, smoothing. Rebuilt at init
 // and for every new session (headset put back on).
-void BabbleEye::reset_session() {
+void BabbleEye::start_session() {
     calib_.clear();
     openness_.clear();
     trackers_.clear();
@@ -179,7 +183,7 @@ void BabbleEye::retune(double hz) {
     for (auto &c : openness_)
         c.set_timing(op.skip, op.warmup, op.every, op.peak_window);
     set_pupil_windows();
-    LOG_INFO("pipeline %s: eye filters tuned for %.0f updates/s", name_.c_str(), hz);
+    LOG.info("pipeline %s: eye filters tuned for %.0f updates/s", name_.c_str(), hz);
 }
 
 bool BabbleEye::set_option(const std::string &key, const nlohmann::json &value) {
@@ -188,7 +192,7 @@ bool BabbleEye::set_option(const std::string &key, const nlohmann::json &value) 
     const bool native = value == "native";
     if (native != native_openness_.exchange(native)) {
         reset_pending_ = true;   // the two sources have different scales: relearn the lid reference
-        LOG_INFO("pipeline %s: openness from %s", name_.c_str(), native ? "Valve's eye tracker" : "the model");
+        LOG.info("pipeline %s: openness from %s", name_.c_str(), native ? "Valve's eye tracker" : "the model");
     }
     update_eye_server_want();
     return true;
@@ -205,16 +209,11 @@ void BabbleEye::update_eye_server_want() {
         deps_.eye_server->want(EyeServerClient::Openness, native_openness_ && tracking_on_);
 }
 
-void BabbleEye::on_presence(bool worn) {
-    if (worn)
-        return;
-    // Headset off: open, relaxed eyes once (VRCFT's defaults); dilation keeps
-    // its last value. The next session relearns the lid reference and baseline.
-    const uint64_t now = mono_ns();
-    std::pair<SignalId, Signal> u[4] = {{left_ids_[0], {1.0f, 0.0f, now}}, {left_ids_[1], {0.0f, 0.0f, now}},
-                                        {right_ids_[0], {1.0f, 0.0f, now}}, {right_ids_[1], {0.0f, 0.0f, now}}};
-    deps_.state.update(u);
-    reset_pending_ = true;
+std::vector<std::pair<SignalId, Signal>> BabbleEye::neutral(uint64_t now) const {
+    // Open, relaxed eyes (VRCFT's defaults); dilation keeps its last value.
+    // The next session relearns the lid reference and baseline.
+    return {{left_ids_[0], {1.0f, 0.0f, now}}, {left_ids_[1], {0.0f, 0.0f, now}},
+            {right_ids_[0], {1.0f, 0.0f, now}}, {right_ids_[1], {0.0f, 0.0f, now}}};
 }
 
 void BabbleEye::prepare(const StereoFrame &sf, float *x) {
@@ -223,6 +222,8 @@ void BabbleEye::prepare(const StereoFrame &sf, float *x) {
         const Frame &f = *views[v];
         img::View cur{f.data, f.width, f.height, f.stride};
         if (v == 1) {   // "R" pane: rot90(2) then mirror == vertical flip
+            if (flip_.size() < size_t(f.width) * f.height)   // sized by the frame, not the default crop
+                flip_.resize(size_t(f.width) * f.height);
             img::flip_vertical(cur, {flip_.data(), f.width, f.height, f.width});
             cur = {flip_.data(), f.width, f.height, f.width};
         }
@@ -311,7 +312,7 @@ void BabbleEye::pupil_loop() {
 
 void BabbleEye::process(const StereoFrame &sf) {
     if (reset_pending_.exchange(false))
-        reset_session();
+        start_session();
     // Follow the real update rate (the user's eye rate, or less if the
     // cameras deliver less). Within 3% of the reference counts as the
     // reference; otherwise retune after a 10% move, at most once a second.
@@ -416,7 +417,7 @@ void BabbleEye::process(const StereoFrame &sf) {
             updates.emplace_back(cal_ids_[2 * k + 1], Signal{float(c.baseline() * c.ceiling()), 1.0f, sf.capture_ns});
         }
     }
-    deps_.state.update(updates);
+    publish(updates);
 }
 
 } // namespace babble

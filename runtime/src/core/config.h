@@ -5,6 +5,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace babble {
 
@@ -18,6 +19,11 @@ struct ConfigLoad {
     std::filesystem::path settings_file;   // where the settings file was looked for
     bool settings_loaded = false;
     std::string settings_error;
+    // Keys whose type didn't match the defaults ("/sources/mouth/tracking: string, expected boolean");
+    // they were reset to the default value.
+    std::vector<std::string> type_fixes;
+    // Leaf keys set by settings.json (they win over config.json).
+    std::vector<std::string> settings_overrides;
 };
 
 // Parses the compiled-in defaults and deep-merges the user file, then the
@@ -40,6 +46,15 @@ bool save_setting(const std::filesystem::path &settings_file, const json::json_p
 
 // Same merge used by load_config, exposed for tests.
 json merge_config(json defaults, const json &user);
+
+// Resets every key of cfg whose JSON kind (object, array, string, boolean,
+// number) differs from the same key in defaults, so later reads can trust the
+// types. A null default accepts anything. Returns what was reset.
+std::vector<std::string> fix_types(json &cfg, const json &defaults);
+
+// A config section, or an empty object if it's missing or not an object
+// (never inserts, unlike operator[]).
+const json &section(const json &cfg, const char *key);
 
 // Parses JSON allowing // and /* */ comments; returns nullopt on error.
 std::optional<json> parse_json(const std::string &text, std::string *error);

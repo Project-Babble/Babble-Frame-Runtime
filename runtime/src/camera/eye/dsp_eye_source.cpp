@@ -6,6 +6,10 @@
 
 #include <cstring>
 
+namespace {
+const babble::log::Logger LOG("eye");
+} // namespace
+
 namespace babble {
 
 namespace {
@@ -55,12 +59,12 @@ DspEyeSource::~DspEyeSource() {
 
 void DspEyeSource::set_process_fps(double fps) {
     limiter_.set_fps(fps);
-    LOG_INFO("%s: process rate %.1f fps", name_.c_str(), fps);
+    LOG.info("%s: process rate %.1f fps", name_.c_str(), fps);
 }
 
 void DspEyeSource::set_tracking(bool on) {
     if (on != tracking_)
-        LOG_INFO("%s: tracking turned %s", name_.c_str(), on ? "on" : "off");
+        LOG.info("%s: tracking turned %s", name_.c_str(), on ? "on" : "off");
     tracking_ = on;
 }
 
@@ -106,7 +110,7 @@ bool DspEyeSource::start() {
         } else {
             last_error_ = "unrecognized dsp_service layout (" + why + ")";
             if (last_error_ != reported_layout_error_)   // once per distinct reason
-                LOG_ERROR("eye: %s", last_error_.c_str());
+                LOG.error("eye: %s", last_error_.c_str());
             reported_layout_error_ = last_error_;
         }
         client_.disconnect();
@@ -118,13 +122,13 @@ bool DspEyeSource::start() {
     for (const Crop *c : {&crop_l_, &crop_r_}) {
         if (c->w == 0 || c->h == 0 || c->x + c->w > layout_.width || c->y + c->h > layout_.height) {
             last_error_ = "eye crop outside the 512x512 frame";
-            LOG_ERROR("eye: %s", last_error_.c_str());
+            LOG.error("eye: %s", last_error_.c_str());
             client_.disconnect();
             state_ = State::Unavailable;
             return false;
         }
     }
-    LOG_INFO("eye: dsp_service layout at ctrl base 0x%x", layout_.ctrl_base);
+    LOG.info("eye: dsp_service layout at ctrl base 0x%x", layout_.ctrl_base);
 
     // Two frames per stereo pair, a few pairs in flight downstream.
     size_t bytes = size_t(std::max(crop_l_.w * crop_l_.h, crop_r_.w * crop_r_.h));
@@ -133,6 +137,7 @@ bool DspEyeSource::start() {
     client_.start_streaming(layout_, float(cfg_.value("request_fps", 0.0)));
     stop_ = false;
     failed_ = false;
+    consecutive_faults_ = 0;
     limiter_.reset();
     thread_ = start_thread(thread_spec_, [this] { run(); });
     return true;
@@ -145,7 +150,7 @@ void DspEyeSource::stop(const char *why) {
     client_.restore_fps(layout_);
     client_.disconnect();
     pool_.reset();
-    LOG_INFO("eye: stopped (%s)", why);
+    LOG.info("eye: stopped (%s)", why);
 }
 
 bool DspEyeSource::copy_view(bool right, uint32_t idx, uint64_t now, uint32_t seq, FramePtr *out) {
@@ -225,7 +230,7 @@ void DspEyeSource::run() {
         char hex[3 * 64 + 1] = {0};
         for (int i = 0; i < 64; i++)
             snprintf(hex + 3 * i, 4, "%02x ", s[i]);
-        LOG_DEBUG("eye: slot trailer bytes: %s", hex);
+        LOG.debug("eye: slot trailer bytes: %s", hex);
         logged_gap_ = true;
     }
 
@@ -236,7 +241,7 @@ void DspEyeSource::run() {
         bool bad_r = idx.r != DspClient::kNotReady && idx.r >= layout_.slots;
         if (bad_l || bad_r) {
             layout_faults_.add();
-            if (layout_faults_.get() >= kMaxLayoutFaults) {
+            if (++consecutive_faults_ >= kMaxLayoutFaults) {
                 thread_error_ = "dsp_service index words out of range; layout changed?";
                 failed_ = true;
                 return;
@@ -244,6 +249,7 @@ void DspEyeSource::run() {
             sleep_ns(poll_ns);
             continue;
         }
+        consecutive_faults_ = 0;   // a sane index read: only a run of bad reads is fatal
         if (idx.l == DspClient::kNotReady || idx.r == DspClient::kNotReady || (idx.l == last_l && idx.r == last_r)) {
             if (now - last_frame > no_frames_ns) {
                 thread_error_ = "no eye frames";
@@ -270,7 +276,11 @@ void DspEyeSource::run() {
         uint64_t t0 = mono_ns();
         StereoFrame sf;
         seq++;
-        if (!copy_view(false, idx.l, now, seq, &sf.left) || !copy_view(true, idx.r, now, seq, &sf.right)) {
+        // Both copies always run: each hands its ring slot back to dsp_service
+        // whether it succeeds or not (a short-circuit here leaked the right slot).
+        const bool ok_l = copy_view(false, idx.l, now, seq, &sf.left);
+        const bool ok_r = copy_view(true, idx.r, now, seq, &sf.right);
+        if (!ok_l || !ok_r) {
             last_l = idx.l;
             last_r = idx.r;
             continue;
@@ -294,7 +304,7 @@ void DspEyeSource::tick(uint64_t now) {
     switch (state_) {
     case State::Paused:
         if (!hold) {
-            LOG_INFO("%s: resuming", name_.c_str());
+            LOG.info("%s: resuming", name_.c_str());
             state_ = State::Connecting;
             retry_at_ns_ = 0;
             backoff_ns_ = 0;
@@ -311,11 +321,11 @@ void DspEyeSource::tick(uint64_t now) {
         }
         if (failed_) {
             last_error_ = thread_error_;
-            bool fatal = layout_faults_.get() >= kMaxLayoutFaults;
+            bool fatal = consecutive_faults_ >= kMaxLayoutFaults;
             stop(last_error_.c_str());
             restarts_.add();
             if (fatal) {
-                LOG_ERROR("eye: disabled: %s", last_error_.c_str());
+                LOG.error("eye: disabled: %s", last_error_.c_str());
                 state_ = State::Unavailable;
                 return;
             }
@@ -335,12 +345,13 @@ void DspEyeSource::tick(uint64_t now) {
         if (start()) {
             state_ = State::Streaming;
             backoff_ns_ = 0;
-            LOG_INFO("eye: streaming");
+            last_error_.clear();
+            LOG.info("eye: streaming");
         } else if (state_ != State::Unavailable) {
             backoff_ns_ = backoff_ns_ ? std::min(backoff_ns_ * 2, backoff_max_ns_) : backoff_min_ns_;
             retry_at_ns_ = now + backoff_ns_;
             state_ = State::Backoff;
-            LOG_WARN("eye: %s; retrying in %llus", last_error_.c_str(), (unsigned long long)(backoff_ns_ / 1000000000ull));
+            LOG.warn("eye: %s; retrying in %llus", last_error_.c_str(), (unsigned long long)(backoff_ns_ / 1000000000ull));
         }
         return;
     }

@@ -7,6 +7,10 @@
 
 #include <cmath>
 
+namespace {
+const babble::log::Logger LOG("settings");
+} // namespace
+
 namespace babble {
 
 using json = nlohmann::json;
@@ -43,12 +47,12 @@ std::vector<SteamVrSettingsBridge::Entry> SteamVrSettingsBridge::entries_from_co
         try {
             ptr = json::json_pointer(e.id);
         } catch (const json::exception &) {
-            LOG_WARN("steamvr settings: ignoring '%s' with a bad id '%s'", e.key.c_str(), e.id.c_str());
+            LOG.warn("steamvr settings: ignoring '%s' with a bad id '%s'", e.key.c_str(), e.id.c_str());
             continue;
         }
         const auto type = cfg.contains(ptr) ? type_of(cfg[ptr]) : std::nullopt;
         if (e.key.empty() || !type) {
-            LOG_WARN("steamvr settings: ignoring '%s' (%s is not a bool, number or string setting)", e.key.c_str(),
+            LOG.warn("steamvr settings: ignoring '%s' (%s is not a bool, number or string setting)", e.key.c_str(),
                      e.id.c_str());
             continue;
         }
@@ -102,7 +106,7 @@ bool SteamVrSettingsBridge::write(const Entry &e, const json &value) {
         }
     });
     if (connected && err != vr::VRSettingsError_None)
-        LOG_WARN("steamvr settings: writing %s/%s failed (%d)", section_.c_str(), e.key.c_str(), int(err));
+        LOG.warn("steamvr settings: writing %s/%s failed (%d)", section_.c_str(), e.key.c_str(), int(err));
     return connected && err == vr::VRSettingsError_None;
 }
 
@@ -122,7 +126,7 @@ std::vector<std::pair<std::string, json>> SteamVrSettingsBridge::poll(const json
         }
         connection_ = vr_.connection();
         next_poll_ns_ = now_ns + 500000000ull;
-        LOG_INFO("steamvr settings: \"%s\" section in sync (%zu values)", section_.c_str(), known_.size());
+        LOG.info("steamvr settings: \"%s\" section in sync (%zu values)", section_.c_str(), known_.size());
         return changes;
     }
     if (now_ns < next_poll_ns_)

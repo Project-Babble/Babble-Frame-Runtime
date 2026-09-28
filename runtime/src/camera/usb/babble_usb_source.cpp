@@ -8,6 +8,10 @@
 
 #include <cstdlib>
 
+namespace {
+const babble::log::Logger LOG("usb");
+} // namespace
+
 namespace babble {
 
 namespace {
@@ -57,12 +61,12 @@ BabbleUsbSource::~BabbleUsbSource() {
 
 void BabbleUsbSource::set_process_fps(double fps) {
     limiter_.set_fps(fps);
-    LOG_INFO("%s: process rate %.1f fps", name_.c_str(), fps);
+    LOG.info("%s: process rate %.1f fps", name_.c_str(), fps);
 }
 
 void BabbleUsbSource::set_tracking(bool on) {
     if (on != tracking_)
-        LOG_INFO("%s: tracking turned %s", name_.c_str(), on ? "on" : "off");
+        LOG.info("%s: tracking turned %s", name_.c_str(), on ? "on" : "off");
     tracking_ = on;
 }
 
@@ -70,7 +74,7 @@ SourceActivity BabbleUsbSource::activity() const {
     switch (state_) {
     case State::Disabled: return SourceActivity::Off;
     case State::Waiting: return SourceActivity::Starting;
-    case State::Streaming: return SourceActivity::Streaming;
+    case State::Streaming: return opened_ ? SourceActivity::Streaming : SourceActivity::Starting;
     case State::Backoff: return SourceActivity::Fault;
     case State::Paused: return tracking_ ? SourceActivity::Paused : SourceActivity::Off;
     }
@@ -94,7 +98,7 @@ bool BabbleUsbSource::set_option(const std::string &key, const nlohmann::json &v
     if (value.get<std::string>() == camera_)
         return true;
     camera_ = value.get<std::string>();
-    LOG_INFO("%s: camera set to %s", name_.c_str(), camera_.empty() ? "automatic" : camera_.c_str());
+    LOG.info("%s: camera set to %s", name_.c_str(), camera_.empty() ? "automatic" : camera_.c_str());
     if (state_ == State::Streaming && active_id_ != camera_) {
         stop("switching camera");
         state_ = State::Waiting;
@@ -106,6 +110,13 @@ bool BabbleUsbSource::set_option(const std::string &key, const nlohmann::json &v
 
 std::optional<usb::Found> BabbleUsbSource::pick() const {
     const auto cams = usb::list_uvc();
+    if (LOG.debug_enabled()) {
+        std::string list;
+        for (const auto &c : cams)
+            list += (list.empty() ? "" : ", ") + usb::device_id(c);
+        LOG.debug("%s: cameras [%s]; setting %s", name_.c_str(), list.c_str(),
+                  camera_.empty() ? "automatic" : camera_.c_str());
+    }
     if (!camera_.empty()) {
         for (const auto &c : cams)
             if (usb::device_id(c) == camera_)
@@ -125,6 +136,7 @@ bool BabbleUsbSource::start(const usb::Found &dev) {
     pool_ = FramePool::create_owned(6, kMaxPixels);
     stop_ = false;
     failed_ = false;
+    opened_ = false;
     limiter_.reset();
     active_id_ = usb::device_id(dev);
     thread_ = start_thread(thread_spec_, [this, dev] { run(dev); });
@@ -137,7 +149,7 @@ void BabbleUsbSource::stop(const char *why) {
         thread_.join();
     pool_.reset();
     active_id_.clear();
-    LOG_INFO("%s: stopped (%s)", name_.c_str(), why);
+    LOG.info("%s: stopped (%s)", name_.c_str(), why);
 }
 
 void BabbleUsbSource::run(usb::Found dev) {
@@ -148,17 +160,22 @@ void BabbleUsbSource::run(usb::Found dev) {
         failed_ = true;
         return;
     }
+    opened_ = true;
     const auto &p = cam.negotiated();
-    LOG_INFO("%s: streaming %s (%s, %s): MJPEG %ux%u at %.0f fps", name_.c_str(), usb::device_label(dev).c_str(),
+    LOG.info("%s: streaming %s (%s, %s): MJPEG %ux%u at %.0f fps", name_.c_str(), usb::device_label(dev).c_str(),
              usb::device_id(dev).c_str(), dev.node.c_str(), cam.frame_size().width, cam.frame_size().height,
              p.frame_interval ? 1e7 / p.frame_interval : 0.0);
 
     uint32_t seq = 0;
     uint64_t last_dropped = 0;
+    // A stream report every 10 s at debug level: what arrived and what was kept.
+    uint64_t report_at = mono_ns() + 10'000'000'000ull, frames_in = 0, frames_kept = 0, bytes_in = 0;
     while (!stop_) {
         const bool ok = cam.read(200, [&](const uint8_t *data, size_t size) {
             const uint64_t now = mono_ns();
             frames_.tick();
+            frames_in++;
+            bytes_in += size;
             if (!limiter_.accept(now))
                 return;   // subsampled out: skip the decode
             auto frame = pool_->acquire();
@@ -186,8 +203,16 @@ void BabbleUsbSource::run(usb::Found dev) {
             sf.left = std::move(frame);
             sf.capture_ns = now;
             processed_.tick();
+            frames_kept++;
             out_.put(std::move(sf));
         }, &err);
+        if (const uint64_t t = mono_ns(); t >= report_at) {
+            LOG.debug("%s: %llu frames in 10 s (%.1f KB avg), %llu passed on, %llu dropped in reassembly", name_.c_str(),
+                      (unsigned long long)frames_in, frames_in ? double(bytes_in) / 1024.0 / double(frames_in) : 0.0,
+                      (unsigned long long)frames_kept, (unsigned long long)cam.dropped());
+            report_at = t + 10'000'000'000ull;
+            frames_in = frames_kept = bytes_in = 0;
+        }
         if (cam.dropped() != last_dropped) {
             reassembly_dropped_.add(cam.dropped() - last_dropped);
             last_dropped = cam.dropped();
@@ -209,7 +234,7 @@ void BabbleUsbSource::tick(uint64_t now) {
     case State::Disabled: return;
     case State::Paused:
         if (!hold) {
-            LOG_INFO("%s: resuming", name_.c_str());
+            LOG.info("%s: resuming", name_.c_str());
             state_ = State::Waiting;
             retry_at_ns_ = 0;
         }
@@ -219,6 +244,10 @@ void BabbleUsbSource::tick(uint64_t now) {
             stop(why);
             state_ = State::Paused;
             return;
+        }
+        if (opened_ && backoff_ns_) {   // it works again: the next failure starts over at the minimum
+            backoff_ns_ = 0;
+            last_error_.clear();
         }
         if (failed_) {
             last_error_ = thread_error_;
@@ -247,7 +276,7 @@ void BabbleUsbSource::tick(uint64_t now) {
         const auto dev = pick();
         if (!dev) {
             if (!logged_waiting_)
-                LOG_INFO("%s: waiting for %s", name_.c_str(),
+                LOG.info("%s: waiting for %s", name_.c_str(),
                          camera_.empty() ? "a USB camera" : ("USB camera " + camera_).c_str());
             logged_waiting_ = true;
             last_error_ = camera_.empty() ? "waiting for a USB camera" : "waiting for the selected USB camera";

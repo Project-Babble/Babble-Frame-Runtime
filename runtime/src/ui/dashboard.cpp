@@ -9,6 +9,10 @@
 #include <algorithm>
 #include <cmath>
 
+namespace {
+const babble::log::Logger LOG("ui");
+} // namespace
+
 namespace babble::ui {
 
 Dashboard::~Dashboard() {
@@ -31,9 +35,9 @@ void Dashboard::start(SteamVrClient &vr, ThreadSpec thread, Options options, std
             eye_ids_[i] = options_.state->add_signal(names[i]);
     }
     if (!view_.load_fonts(options_.fonts_dir))
-        LOG_WARN("dashboard: fonts not found in %s; text won't be drawn", options_.fonts_dir.c_str());
+        LOG.warn("dashboard: fonts not found in %s; text won't be drawn", options_.fonts_dir.c_str());
     if (!options_.icons_dir.empty() && !view_.load_icons(options_.icons_dir))
-        LOG_WARN("dashboard: logo not found in %s; using the plain badge", options_.icons_dir.c_str());
+        LOG.warn("dashboard: logo not found in %s; using the plain badge", options_.icons_dir.c_str());
     stop_ = false;
     thread_ = start_thread(thread_spec_, [this] { run(); });
 }
@@ -64,6 +68,8 @@ void Dashboard::set_status(const Status &s) {
         s.link.path != status_.link.path || s.link.pc != status_.link.pc || s.link.address != status_.link.address ||
         std::lround(s.link.rtt_ms) != std::lround(status_.link.rtt_ms) || s.mouth_source != status_.mouth_source ||
         s.camera != status_.camera || s.active_camera != status_.active_camera ||
+        s.verbose_minutes_left != status_.verbose_minutes_left || s.last_diagnostics != status_.last_diagnostics ||
+        s.log_file != status_.log_file ||
         s.cameras.size() != status_.cameras.size() ||
         !std::equal(s.cameras.begin(), s.cameras.end(), status_.cameras.begin(),
                     [](const UsbCamera &a, const UsbCamera &b) { return a.id == b.id && a.label == b.label; }))
@@ -110,7 +116,7 @@ bool Dashboard::create_overlays() {
         ok = true;
     });
     if (!ok) {
-        LOG_ERROR("dashboard: creating the overlay failed (%d)", int(err));
+        LOG.error("dashboard: creating the overlay failed (%d)", int(err));
         return false;
     }
 
@@ -128,10 +134,10 @@ bool Dashboard::create_overlays() {
         vr_->with_vr([&] { gpu_ok = gpu_.init(DashboardView::kWidth, DashboardView::kHeight, &error); });
         if (!gpu_ok) {
             gpu_failed_ = true;
-            LOG_WARN("dashboard: Vulkan upload unavailable (%s); falling back to SetOverlayRaw", error.c_str());
+            LOG.warn("dashboard: Vulkan upload unavailable (%s); falling back to SetOverlayRaw", error.c_str());
         }
     }
-    LOG_INFO("dashboard: \"%s\" tab ready", options_.name.c_str());
+    LOG.info("dashboard: \"%s\" tab ready", options_.name.c_str());
     present();   // so the tab never opens blank
     return true;
 }
@@ -197,7 +203,7 @@ void Dashboard::present() {
         return;
     }
     if (gpu_.ready()) {
-        LOG_WARN("dashboard: Vulkan upload failed (%s); falling back to SetOverlayRaw", error.c_str());
+        LOG.warn("dashboard: Vulkan upload failed (%s); falling back to SetOverlayRaw", error.c_str());
         gpu_failed_ = true;
         gpu_.release();
     }
@@ -265,6 +271,10 @@ void Dashboard::run() {
                 restart_request_ = true;
             if (r.refresh_cameras)
                 camera_refresh_request_ = true;
+            if (r.verbose)
+                verbose_request_ = *r.verbose ? 1 : 0;
+            if (r.write_diagnostics)
+                diagnostics_request_ = true;
             std::lock_guard<std::mutex> lock(mutex_);
             // String settings: shown at once, applied by the main thread.
             if (r.mouth_source && *r.mouth_source != status_.mouth_source) {

@@ -108,3 +108,57 @@ TEST_CASE("the SteamVR Settings section maps to live runtime settings") {
     cfg["steamvr_settings"]["values"].push_back({{"key", "bogus"}, {"id", "/sources/mouth/nodes"}});
     CHECK(SteamVrSettingsBridge::entries_from_config(cfg).size() == want.size());
 }
+
+TEST_CASE("values of the wrong type are reset to the default and reported") {
+    json defaults = {{"sources", {{"mouth", {{"tracking", true}, {"process_fps", 120}}}}},
+                     {"pipelines", {{"gaze", {{"ipd", "auto"}}}, {"face", {{"one_euro", {{"beta", 3.0}}}}}}},
+                     {"sinks", {{"debug", {{"dump_dir", nullptr}}}}}};
+    json cfg = defaults;
+    cfg["sources"]["mouth"]["tracking"] = "yes";           // string for a boolean: reset
+    cfg["sources"]["mouth"]["process_fps"] = 60.5;         // int vs float: both numbers, kept
+    cfg["pipelines"]["gaze"]["ipd"] = 0.064;               // a flexible option: kept
+    cfg["pipelines"]["face"]["one_euro"] = false;          // a flexible option: kept
+    cfg["sinks"]["debug"]["dump_dir"] = "/tmp/x";          // a null default accepts anything
+    cfg["extra"] = 1;                                      // keys the defaults don't have: untouched
+    const auto fixed = fix_types(cfg, defaults);
+    REQUIRE(fixed.size() == 1);
+    CHECK(fixed[0] == "/sources/mouth/tracking: string, expected boolean");
+    CHECK(cfg["sources"]["mouth"]["tracking"] == true);
+    CHECK(cfg["sources"]["mouth"]["process_fps"] == 60.5);
+    CHECK(cfg["pipelines"]["gaze"]["ipd"] == 0.064);
+    CHECK(cfg["pipelines"]["face"]["one_euro"] == false);
+    CHECK(cfg["sinks"]["debug"]["dump_dir"] == "/tmp/x");
+    CHECK(cfg["extra"] == 1);
+}
+
+TEST_CASE("section() reads a config section without inserting it") {
+    const json cfg = {{"arbiter", {{"root", "/etc"}}}, {"broken", 5}};
+    CHECK(section(cfg, "arbiter").value("root", "") == "/etc");
+    CHECK(section(cfg, "missing").empty());
+    CHECK(section(cfg, "broken").is_object());   // not an object: an empty one instead
+    CHECK_FALSE(cfg.contains("missing"));
+}
+
+TEST_CASE("a broken settings.json is moved aside, not lost, and overrides are listed") {
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::temp_directory_path() / ("babble_cfg_bad_" + std::to_string(getpid()));
+    fs::create_directories(dir);
+    const fs::path settings = dir / "settings.json";
+    {
+        std::ofstream(settings) << "{ \"sources\": { \"mouth\": ";   // truncated
+    }
+    ConfigLoad broken = load_config(dir / "none.json", settings);
+    CHECK_FALSE(broken.settings_loaded);
+    CHECK_FALSE(broken.settings_error.empty());
+
+    std::string err;
+    REQUIRE(save_setting(settings, json::json_pointer("/sources/eye/process_fps"), 60, &err));
+    CHECK(fs::exists(dir / "settings.json.bad"));   // the broken file, kept for inspection
+    ConfigLoad cl = load_config(dir / "none.json", settings);
+    REQUIRE(cl.settings_loaded);
+    CHECK(cl.config["sources"]["eye"]["process_fps"] == 60);
+    REQUIRE(cl.settings_overrides.size() == 1);
+    CHECK(cl.settings_overrides[0] == "/sources/eye/process_fps");
+    CHECK(cl.type_fixes.empty());
+    fs::remove_all(dir);
+}

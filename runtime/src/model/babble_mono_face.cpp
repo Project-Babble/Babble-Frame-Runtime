@@ -8,6 +8,10 @@
 #include <algorithm>
 #include <cmath>
 
+namespace {
+const babble::log::Logger LOG("pipe.face");
+} // namespace
+
 namespace babble {
 
 namespace {
@@ -29,7 +33,7 @@ bool BabbleMonoFace::init() {
     gain_ = cfg_.value("gain", 1.0f);
     const int rot = cfg_.value("rotate", 0);
     if (rot != 0 && rot != 90 && rot != 180 && rot != 270) {
-        LOG_ERROR("pipeline %s: rotate must be 0/90/180/270, got %d", name_.c_str(), rot);
+        LOG.error("pipeline %s: rotate must be 0/90/180/270, got %d", name_.c_str(), rot);
         return false;
     }
     quarter_turns_ = rot / 90;
@@ -45,7 +49,7 @@ bool BabbleMonoFace::init() {
     const std::vector<int64_t> want_in{1, 1, kSize, kSize};
     if (in.size() != 1 || in[0].shape != want_in || !is_float(in[0].dtype) || out.size() != 1 ||
         !is_float(out[0].dtype) || out[0].elements() != face::kShapes.size()) {
-        LOG_ERROR("pipeline %s: model does not match the mono face contract ([1,1,224,224] -> [1,45])", name_.c_str());
+        LOG.error("pipeline %s: model does not match the mono face contract ([1,1,224,224] -> [1,45])", name_.c_str());
         return false;
     }
 
@@ -58,7 +62,7 @@ bool BabbleMonoFace::init() {
     const auto cal = cfg_.value("calibration", nlohmann::json::object());
     face::CalibMode mode = face::CalibMode::Auto;
     if (!face::parse_mode(cal.value("mode", "auto"), &mode)) {
-        LOG_ERROR("pipeline %s: calibration mode must be auto, raw or manual", name_.c_str());
+        LOG.error("pipeline %s: calibration mode must be auto, raw or manual", name_.c_str());
         return false;
     }
     calibration_ = std::make_unique<face::Calibration>(face::kShapes.size(), mode);
@@ -78,7 +82,7 @@ bool BabbleMonoFace::init() {
     input_.resize(kSize * kSize);
     out_.resize(face::kShapes.size());
     values_.resize(face::kShapes.size());
-    LOG_INFO("pipeline %s: mono face model on %s (%s, roi %s, rotate %d, flip %s, gain %.2f, calibration %s)",
+    LOG.info("pipeline %s: mono face model on %s (%s, roi %s, rotate %d, flip %s, gain %.2f, calibration %s)",
              name_.c_str(), source_.c_str(), in[0].dtype == DType::F16 ? "fp16" : "fp32",
              roi_.w ? (std::to_string(roi_.x) + "," + std::to_string(roi_.y) + " " + std::to_string(roi_.w) + "x" +
                        std::to_string(roi_.h)).c_str()
@@ -129,16 +133,11 @@ void BabbleMonoFace::prepare(const Frame &f, float *input) {
         input[i] = float(small_[i]) / 255.0f;
 }
 
-void BabbleMonoFace::on_presence(bool worn) {
-    if (worn)
-        return;
-    // Headset off: a neutral face once, and fresh filter/calibration state next session.
+std::vector<std::pair<SignalId, Signal>> BabbleMonoFace::neutral(uint64_t now) const {
     std::vector<std::pair<SignalId, Signal>> updates;
-    const uint64_t now = mono_ns();
     for (SignalId id : ids_)
         updates.emplace_back(id, Signal{0.0f, 0.0f, now});
-    deps_.state.update(updates);
-    reset_pending_ = true;
+    return updates;
 }
 
 void BabbleMonoFace::process(const StereoFrame &sf) {
@@ -187,7 +186,7 @@ void BabbleMonoFace::process(const StereoFrame &sf) {
     updates.reserve(ids_.size());
     for (size_t i = 0; i < ids_.size(); i++)
         updates.emplace_back(ids_[i], Signal{values_[i], 1.0f, sf.capture_ns});
-    deps_.state.update(updates);
+    publish(updates);
 
     preprocess_.add(t1 - t0);
     inference_.add(t2 - t1);

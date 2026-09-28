@@ -9,6 +9,10 @@
 
 #include <sys/utsname.h>
 
+namespace {
+const babble::log::Logger LOG("arbiter");
+} // namespace
+
 namespace babble {
 
 namespace fs = std::filesystem;
@@ -92,7 +96,7 @@ ArbiterState CameraArbiterClient::poll() {
         if (vf >> v)
             version_ = v;
         if (!version_ && !warned_no_version_) {
-            LOG_WARN("arbiter: %s/VERSION missing; assuming a compatible pre-versioning install", root_.c_str());
+            LOG.warn("arbiter: %s/VERSION missing; assuming a compatible pre-versioning install", root_.c_str());
             warned_no_version_ = true;
         }
 
@@ -113,7 +117,7 @@ ArbiterState CameraArbiterClient::poll() {
             // disabled (SteamVR restarts do this), so check the graph itself.
             RouteCheck rc = check_sensor_routes(media_dev_, sensor_prefixes_);
             if (!rc.error.empty() && rc.error != last_route_error_)
-                LOG_WARN("arbiter: cannot read media graph (%s); trusting the streams unit", rc.error.c_str());
+                LOG.warn("arbiter: cannot read media graph (%s); trusting the streams unit", rc.error.c_str());
             last_route_error_ = rc.error;
             bool links_ok = !rc.error.empty() || rc.ok;
             if (!links_ok) {
@@ -121,7 +125,7 @@ ArbiterState CameraArbiterClient::poll() {
                 for (const auto &s : rc.unrouted)
                     list += (list.empty() ? "" : ", ") + s;
                 if (list != last_unrouted_)
-                    LOG_WARN("arbiter: streams unit is active but not routed: %s", list.c_str());
+                    LOG.warn("arbiter: streams unit is active but not routed: %s", list.c_str());
                 last_unrouted_ = list;
             } else {
                 last_unrouted_.clear();
@@ -130,7 +134,7 @@ ArbiterState CameraArbiterClient::poll() {
         }
     }
     if (state_ != prev)
-        LOG_INFO("arbiter: %s -> %s (%s)", to_string(prev), to_string(state_), describe().c_str());
+        LOG.info("arbiter: %s -> %s (%s)", to_string(prev), to_string(state_), describe().c_str());
     return state_;
 }
 

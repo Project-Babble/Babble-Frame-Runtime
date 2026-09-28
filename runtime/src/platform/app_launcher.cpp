@@ -13,6 +13,10 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+namespace {
+const babble::log::Logger LOG("launcher");
+} // namespace
+
 extern char **environ;
 
 namespace babble {
@@ -43,7 +47,7 @@ bool AppLauncher::running() {
         return false;
     int status = 0;
     if (waitpid(pid_, &status, WNOHANG) == pid_) {
-        LOG_INFO("launcher: %s (pid %d) exited", argv_[0].c_str(), int(pid_));
+        LOG.info("launcher: %s (pid %d) exited", argv_[0].c_str(), int(pid_));
         pid_ = -1;
         return false;
     }
@@ -80,12 +84,17 @@ bool AppLauncher::start() {
     posix_spawn_file_actions_destroy(&fa);
     posix_spawnattr_destroy(&at);
     if (rc != 0) {
-        LOG_ERROR("launcher: starting %s failed: %s", argv_[0].c_str(), strerror(rc));
+        LOG.error("launcher: starting %s failed: %s", argv_[0].c_str(), strerror(rc));
         return false;
     }
     pid_ = pid;
-    LOG_INFO("launcher: started %s (pid %d, log %s)", argv_[0].c_str(), int(pid_), log_.c_str());
+    LOG.info("launcher: started %s (pid %d, log %s)", argv_[0].c_str(), int(pid_), log_.c_str());
     return true;
+}
+
+AppLauncher::~AppLauncher() {
+    if (running())
+        stop();
 }
 
 void AppLauncher::stop() {
@@ -93,7 +102,7 @@ void AppLauncher::stop() {
         return;
     // Its own session: the group holds the script and the app it exec'd or started.
     kill(-pid_, SIGTERM);
-    LOG_INFO("launcher: stopping %s (pid %d)", argv_[0].c_str(), int(pid_));
+    LOG.info("launcher: stopping %s (pid %d)", argv_[0].c_str(), int(pid_));
 }
 
 } // namespace babble

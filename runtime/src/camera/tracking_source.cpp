@@ -5,6 +5,10 @@
 #include "camera/usb/babble_usb_source.h"
 #include "core/log.h"
 
+namespace {
+const babble::log::Logger LOG("source");
+} // namespace
+
 namespace babble {
 
 std::unique_ptr<ITrackingSource> make_tracking_source(const nlohmann::json &cfg, SourceDeps deps) {
@@ -15,7 +19,7 @@ std::unique_ptr<ITrackingSource> make_tracking_source(const nlohmann::json &cfg,
         return std::make_unique<DspEyeSource>(cfg, std::move(deps));
     if (type == "babble_usb")
         return std::make_unique<BabbleUsbSource>(cfg, std::move(deps));
-    LOG_ERROR("source %s: unknown type '%s'", deps.name.c_str(), type.c_str());
+    LOG.error("source %s: unknown type '%s'", deps.name.c_str(), type.c_str());
     return nullptr;
 }
 

@@ -7,6 +7,10 @@
 #include <fstream>
 #include <sstream>
 
+namespace {
+const babble::log::Logger LOG("config");
+} // namespace
+
 namespace babble {
 
 std::optional<json> parse_json(const std::string &text, std::string *error) {
@@ -26,10 +30,68 @@ json merge_config(json defaults, const json &user) {
 
 namespace {
 
+const char *kind(const json &j) {
+    if (j.is_object()) return "object";
+    if (j.is_array()) return "array";
+    if (j.is_string()) return "string";
+    if (j.is_boolean()) return "boolean";
+    if (j.is_number()) return "number";
+    return "null";
+}
+
+// Options that legitimately take more than one type: gaze "ipd" ("auto" or
+// metres), the face pipeline's "one_euro" (settings or false).
+bool flexible(const std::string &key) { return key == "ipd" || key == "one_euro"; }
+
+void fix_types_at(json &cfg, const json &defaults, const std::string &path, std::vector<std::string> &fixed) {
+    for (auto it = defaults.begin(); it != defaults.end(); ++it) {
+        if (!cfg.contains(it.key()) || it.value().is_null() || flexible(it.key()))
+            continue;
+        json &v = cfg[it.key()];
+        const std::string p = path + "/" + it.key();
+        if (it.value().is_object() && v.is_object()) {
+            fix_types_at(v, it.value(), p, fixed);
+        } else if (std::string(kind(v)) != kind(it.value())) {
+            fixed.push_back(p + ": " + kind(v) + ", expected " + kind(it.value()));
+            v = it.value();
+        }
+    }
+}
+
+// Every leaf (non-object value) of a JSON object, as a pointer.
+void leaves(const json &j, const std::string &path, std::vector<std::string> &out) {
+    for (auto it = j.begin(); it != j.end(); ++it) {
+        const std::string p = path + "/" + it.key();
+        if (it.value().is_object() && !it.value().empty())
+            leaves(it.value(), p, out);
+        else
+            out.push_back(p);
+    }
+}
+
+} // namespace
+
+std::vector<std::string> fix_types(json &cfg, const json &defaults) {
+    std::vector<std::string> fixed;
+    if (cfg.is_object() && defaults.is_object())
+        fix_types_at(cfg, defaults, "", fixed);
+    return fixed;
+}
+
+const json &section(const json &cfg, const char *key) {
+    static const json empty = json::object();
+    if (!cfg.is_object())
+        return empty;
+    auto it = cfg.find(key);
+    return it != cfg.end() && it->is_object() ? *it : empty;
+}
+
+namespace {
+
 enum class Layer { Missing, Loaded, Broken };
 
-// Reads one user layer and merges it into config.
-Layer merge_layer(const std::filesystem::path &file, json &config, std::string *error) {
+// Reads one user layer and merges it into config; *layer_out gets the layer itself.
+Layer merge_layer(const std::filesystem::path &file, json &config, std::string *error, json *layer_out = nullptr) {
     std::ifstream in(file);
     if (!in)
         return Layer::Missing;
@@ -43,6 +105,8 @@ Layer merge_layer(const std::filesystem::path &file, json &config, std::string *
         return Layer::Broken;
     }
     config = merge_config(std::move(config), *user);
+    if (layer_out)
+        *layer_out = std::move(*user);
     return Layer::Loaded;
 }
 
@@ -58,9 +122,19 @@ bool save_setting(const std::filesystem::path &settings_file, const json::json_p
         if (in) {
             std::stringstream ss;
             ss << in.rdbuf();
-            auto parsed = parse_json(ss.str(), error);
-            if (parsed && parsed->is_object())
-                doc = std::move(*parsed);   // a broken file is replaced rather than kept
+            std::string parse_error;
+            auto parsed = parse_json(ss.str(), &parse_error);
+            if (parsed && parsed->is_object()) {
+                doc = std::move(*parsed);
+            } else {
+                // Keep the broken file for inspection instead of silently losing every saved setting.
+                std::filesystem::path bad = settings_file;
+                bad += ".bad";
+                std::error_code ec;
+                std::filesystem::rename(settings_file, bad, ec);
+                LOG.warn("config: %s was unreadable (%s); moved it to %s and started a new one", settings_file.c_str(),
+                         parsed ? "top level is not an object" : parse_error.c_str(), bad.c_str());
+            }
         }
     }
     doc[where] = value;
@@ -89,7 +163,7 @@ ConfigLoad load_config(const std::optional<std::filesystem::path> &user_file_ove
     auto defaults = parse_json(kDefaultsJson, &err);
     if (!defaults) {
         // The defaults are compiled in; failing to parse them is a build bug.
-        LOG_ERROR("built-in defaults.json is invalid: %s", err.c_str());
+        LOG.error("built-in defaults.json is invalid: %s", err.c_str());
         out.config = json::object();
     } else {
         out.config = std::move(*defaults);
@@ -98,7 +172,13 @@ ConfigLoad load_config(const std::optional<std::filesystem::path> &user_file_ove
     out.user_file = user_file_override ? *user_file_override : paths::config_dir() / "config.json";
     out.user_loaded = merge_layer(out.user_file, out.config, &out.error) == Layer::Loaded;
     out.settings_file = settings_file_override ? *settings_file_override : default_settings_file();
-    out.settings_loaded = merge_layer(out.settings_file, out.config, &out.settings_error) == Layer::Loaded;
+    json settings_layer;
+    out.settings_loaded =
+        merge_layer(out.settings_file, out.config, &out.settings_error, &settings_layer) == Layer::Loaded;
+    if (out.settings_loaded)
+        leaves(settings_layer, "", out.settings_overrides);
+    if (defaults)
+        out.type_fixes = fix_types(out.config, *defaults);
     return out;
 }
 

@@ -11,6 +11,10 @@
 #include <sys/un.h>
 #include <unistd.h>
 
+namespace {
+const babble::log::Logger LOG("eye");
+} // namespace
+
 namespace babble {
 
 namespace {
@@ -27,7 +31,7 @@ bool DspClient::connect(uint32_t version) {
     disconnect();
     sock_ = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if (sock_ < 0) {
-        LOG_WARN("dsp: socket failed: %s", strerror(errno));
+        LOG.warn("dsp: socket failed: %s", strerror(errno));
         return false;
     }
     sockaddr_un addr{};
@@ -36,7 +40,7 @@ bool DspClient::connect(uint32_t version) {
     memcpy(addr.sun_path, kName, sizeof(kName) - 1);
     socklen_t len = socklen_t(offsetof(sockaddr_un, sun_path) + sizeof(kName) - 1);
     if (::connect(sock_, reinterpret_cast<sockaddr *>(&addr), len) != 0) {
-        LOG_WARN("dsp: connect to dsp_service failed: %s", strerror(errno));
+        LOG.warn("dsp: connect to dsp_service failed: %s", strerror(errno));
         disconnect();
         return false;
     }
@@ -53,7 +57,7 @@ bool DspClient::connect(uint32_t version) {
     msg.msg_control = cbuf;
     msg.msg_controllen = sizeof(cbuf);
     if (recvmsg(sock_, &msg, MSG_CMSG_CLOEXEC) < 0) {
-        LOG_WARN("dsp: recvmsg failed: %s", strerror(errno));
+        LOG.warn("dsp: recvmsg failed: %s", strerror(errno));
         disconnect();
         return false;
     }
@@ -70,26 +74,26 @@ bool DspClient::connect(uint32_t version) {
         }
     }
     if (shm_fd_ < 0) {
-        LOG_WARN("dsp: dsp_service sent no shared-memory fd");
+        LOG.warn("dsp: dsp_service sent no shared-memory fd");
         disconnect();
         return false;
     }
     if (send(sock_, &version, sizeof(version), MSG_NOSIGNAL) != sizeof(version)) {
-        LOG_WARN("dsp: sending version failed: %s", strerror(errno));
+        LOG.warn("dsp: sending version failed: %s", strerror(errno));
         disconnect();
         return false;
     }
 
     void *d = mmap(nullptr, kRegionBytes, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd_, 0);
     if (d == MAP_FAILED) {
-        LOG_WARN("dsp: mmap data region failed: %s", strerror(errno));
+        LOG.warn("dsp: mmap data region failed: %s", strerror(errno));
         disconnect();
         return false;
     }
     data_ = static_cast<uint8_t *>(d);
     void *c = mmap(nullptr, kRegionBytes, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd_, kCtrlOffset);
     if (c == MAP_FAILED) {
-        LOG_WARN("dsp: mmap control region failed: %s", strerror(errno));
+        LOG.warn("dsp: mmap control region failed: %s", strerror(errno));
         disconnect();
         return false;
     }
@@ -224,7 +228,7 @@ void DspClient::restore_fps(const Layout &l) {
     store32(l.ctrl_base + l.fps, *saved_fps_bits_);
     float fps;
     memcpy(&fps, &*saved_fps_bits_, sizeof(fps));
-    LOG_INFO("dsp: restored eye camera rate %.1f fps", fps);
+    LOG.info("dsp: restored eye camera rate %.1f fps", fps);
     saved_fps_bits_.reset();
 }
 

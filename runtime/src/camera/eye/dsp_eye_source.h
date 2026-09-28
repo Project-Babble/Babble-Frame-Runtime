@@ -85,7 +85,10 @@ private:
     bool logged_gap_ = false;
 
     RateStat frames_, processed_;
-    Counter layout_faults_, restarts_, pool_exhausted_, late_detect_;
+    Counter layout_faults_, restarts_, pool_exhausted_, late_detect_;   // stats: lifetime totals
+    // Bad index reads in a row (capture thread while streaming, read by tick
+    // after the thread stopped): kMaxLayoutFaults of them disable the source.
+    uint32_t consecutive_faults_ = 0;
     LatencyStat copy_time_;
 };
 

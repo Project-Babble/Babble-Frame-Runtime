@@ -7,6 +7,10 @@
 
 #include <algorithm>
 
+namespace {
+const babble::log::Logger LOG("pipe.mouth");
+} // namespace
+
 namespace babble {
 
 namespace {
@@ -29,7 +33,7 @@ bool FusionNetMouth::init() {
     flip_r_ = flip.find('r') != std::string::npos;
     int rot = cfg_.value("rotate", 0);
     if (rot != 0 && rot != 90 && rot != 180 && rot != 270) {
-        LOG_ERROR("pipeline %s: rotate must be 0/90/180/270, got %d", name_.c_str(), rot);
+        LOG.error("pipeline %s: rotate must be 0/90/180/270, got %d", name_.c_str(), rot);
         return false;
     }
     quarter_turns_ = rot / 90;
@@ -44,7 +48,7 @@ bool FusionNetMouth::init() {
     const size_t n_out = out.size() == 1 ? out[0].elements() : 0;
     if (in.size() != 2 || in[0].shape != want_in || in[1].shape != want_in || in[0].dtype != DType::F32 ||
         out.size() != 1 || out[0].dtype != DType::F32 || (n_out != mouth::kNumShapes && n_out != mouth::kNumChannels)) {
-        LOG_ERROR("pipeline %s: model does not match FusionNet's contract (2x[1,1,224,224] -> [1,43] or [1,44])",
+        LOG.error("pipeline %s: model does not match FusionNet's contract (2x[1,1,224,224] -> [1,43] or [1,44])",
                   name_.c_str());
         return false;
     }
@@ -53,7 +57,7 @@ bool FusionNetMouth::init() {
     const auto cal_cfg = cfg_.value("calibration", nlohmann::json::object());
     mouth::CalibMode mode = mouth::CalibMode::Manual;
     if (!mouth::parse_mode(cal_cfg.value("mode", "auto"), &mode)) {
-        LOG_ERROR("pipeline %s: unknown calibration mode", name_.c_str());
+        LOG.error("pipeline %s: unknown calibration mode", name_.c_str());
         return false;
     }
     const std::string file = cal_cfg.value("file", "calibration_mouth.json");
@@ -64,7 +68,7 @@ bool FusionNetMouth::init() {
     std::string err;
     mouth::Calibration cal = mouth::Calibration::load(cal_path, &err);
     if (!err.empty())
-        LOG_WARN("pipeline %s: ignoring calibration %s: %s", name_.c_str(), cal_path.c_str(), err.c_str());
+        LOG.warn("pipeline %s: ignoring calibration %s: %s", name_.c_str(), cal_path.c_str(), err.c_str());
 
     post_ = std::make_unique<mouth::Post>(cfg_.value("ema", 0.5f), mode, std::move(cal));
 
@@ -79,9 +83,9 @@ bool FusionNetMouth::init() {
     in1_.resize(kSize * kSize);
     probe_left_ = probe_total_ = cfg_.value("probe_orientation", 0);
     if (probe_total_ > 0)
-        LOG_INFO("pipeline %s: probing orientation over %d frames (wear the headset, face neutral)", name_.c_str(),
+        LOG.info("pipeline %s: probing orientation over %d frames (wear the headset, face neutral)", name_.c_str(),
                  probe_total_);
-    LOG_INFO("pipeline %s: FusionNet on %s (swap=%d flip=%s%s rotate=%d interp=%s calibration=%s from %s)",
+    LOG.info("pipeline %s: FusionNet on %s (swap=%d flip=%s%s rotate=%d interp=%s calibration=%s from %s)",
              name_.c_str(), source_.c_str(), int(swap_), flip_l_ ? "l" : "", flip_r_ ? "r" : "", rot,
              area_ ? "area" : "linear", cal_cfg.value("mode", "auto").c_str(), cal_path.c_str());
     return true;
@@ -98,6 +102,11 @@ void FusionNetMouth::prepare(const StereoFrame &sf, float *view0, float *view1) 
     for (int v = 0; v < 2; v++) {
         img::View cur = view_of(*frames[v]);
         const uint32_t w = cur.width, h = cur.height;
+        // Scratch sized by the frame (the configured format may be larger than the default 400x400).
+        if (tmp_a_.size() < size_t(w) * h) {
+            tmp_a_.resize(size_t(w) * h);
+            tmp_b_.resize(size_t(w) * h);
+        }
         if (flips[v]) {
             img::flip_horizontal(cur, {tmp_a_.data(), w, h, w});
             cur = {tmp_a_.data(), w, h, w};
@@ -123,7 +132,7 @@ void FusionNetMouth::probe(const StereoFrame &sf) {
     // Try every rotate x swap combination with the configured flip; rank by the
     // model's UserPresent output (only meaningful for models that have it).
     if (runner_->outputs()[0].elements() != mouth::kNumChannels) {
-        LOG_WARN("pipeline %s: orientation probe needs a model with a UserPresent output", name_.c_str());
+        LOG.warn("pipeline %s: orientation probe needs a model with a UserPresent output", name_.c_str());
         probe_left_ = 0;
         return;
     }
@@ -147,23 +156,18 @@ void FusionNetMouth::probe(const StereoFrame &sf) {
         return;
     std::array<int, 8> order{0, 1, 2, 3, 4, 5, 6, 7};
     std::sort(order.begin(), order.end(), [&](int a, int b) { return probe_sum_[a] > probe_sum_[b]; });
-    LOG_INFO("pipeline %s: orientation probe over %d frames (mean UserPresent, best first):", name_.c_str(), probe_total_);
+    LOG.info("pipeline %s: orientation probe over %d frames (mean UserPresent, best first):", name_.c_str(), probe_total_);
     for (int c : order)
-        LOG_INFO("  swap=%-5s rotate=%3d  presence %.3f%s", c >= 4 ? "true" : "false", (c % 4) * 90,
+        LOG.info("  swap=%-5s rotate=%3d  presence %.3f%s", c >= 4 ? "true" : "false", (c % 4) * 90,
                  probe_sum_[c] / probe_total_, (c >= 4) == swap_ && c % 4 == quarter_turns_ ? "   <- configured" : "");
 }
 
-void FusionNetMouth::on_presence(bool worn) {
-    if (worn)
-        return;
-    // Headset off: neutral face once (the cameras pause, so nothing follows),
-    // and start the next session from fresh filter / gate / calibration state.
+std::vector<std::pair<SignalId, Signal>> FusionNetMouth::neutral(uint64_t now) const {
+    // A relaxed face (the cameras pause, so nothing follows).
     std::vector<std::pair<SignalId, Signal>> updates;
-    const uint64_t now = mono_ns();
     for (size_t i = 0; i < mouth::kNumShapes; i++)
         updates.emplace_back(ids_[i], Signal{0.0f, 0.0f, now});
-    deps_.state.update(updates);
-    reset_pending_ = true;
+    return updates;
 }
 
 void FusionNetMouth::process(const StereoFrame &sf) {
@@ -189,7 +193,7 @@ void FusionNetMouth::process(const StereoFrame &sf) {
     updates.reserve(mouth::kNumShapes);
     for (size_t i = 0; i < mouth::kNumShapes; i++)
         updates.emplace_back(ids_[i], Signal{norm[i], 1.0f, sf.capture_ns});
-    deps_.state.update(updates);
+    publish(updates);
 
     preprocess_.add(t1 - t0);
     inference_.add(t2 - t1);

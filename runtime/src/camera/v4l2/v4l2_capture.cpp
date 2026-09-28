@@ -14,6 +14,10 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
+namespace {
+const babble::log::Logger LOG("v4l2");
+} // namespace
+
 namespace babble {
 
 namespace {
@@ -44,7 +48,7 @@ void V4l2Capture::fail(const char *fmt, ...) {
     vsnprintf(buf, sizeof(buf), fmt, args);
     va_end(args);
     error_ = buf;
-    LOG_WARN("%s: %s", params_.node.c_str(), buf);
+    LOG.warn("%s: %s", params_.node.c_str(), buf);
     release_device();
     state_ = SourceState::Unavailable;
 }
@@ -148,7 +152,7 @@ bool V4l2Capture::open() {
         });
     generation_++;
     state_ = SourceState::Opened;
-    LOG_INFO("%s: opened %ux%u %s stride %u, %u buffers", params_.node.c_str(), params_.width, params_.height,
+    LOG.info("%s: opened %ux%u %s stride %u, %u buffers", params_.node.c_str(), params_.width, params_.height,
              fourcc_str(params_.fourcc).c_str(), stride_, req.count);
     return true;
 }
@@ -197,14 +201,14 @@ void V4l2Capture::requeue_released() {
         uint32_t idx = uint32_t(__builtin_ctzll(mask));
         mask &= mask - 1;
         if (!queue(idx))
-            LOG_WARN("%s: re-QBUF(%u) failed: %s", params_.node.c_str(), idx, strerror(errno));
+            LOG.warn("%s: re-QBUF(%u) failed: %s", params_.node.c_str(), idx, strerror(errno));
     }
 }
 
 void V4l2Capture::lost(const std::string &reason) {
     error_ = reason;
     state_ = SourceState::Lost;
-    LOG_WARN("%s: lost: %s", params_.node.c_str(), reason.c_str());
+    LOG.warn("%s: lost: %s", params_.node.c_str(), reason.c_str());
     if (sink_.on_lost)
         sink_.on_lost(reason);
 }
@@ -285,7 +289,7 @@ void V4l2Capture::run() {
             else
                 ts_clock_ = TsClock::Arrival;
             static const char *names[] = {"CLOCK_MONOTONIC", "CLOCK_MONOTONIC_RAW (converted)", "arrival time"};
-            LOG_INFO("%s: timestamps %s, source %s", params_.node.c_str(), names[int(ts_clock_)],
+            LOG.info("%s: timestamps %s, source %s", params_.node.c_str(), names[int(ts_clock_)],
                      (buf.flags & V4L2_BUF_FLAG_TSTAMP_SRC_MASK) == V4L2_BUF_FLAG_TSTAMP_SRC_SOE ? "start of exposure"
                                                                                                 : "end of frame");
             logged_ts = true;

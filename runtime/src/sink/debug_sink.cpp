@@ -8,6 +8,10 @@
 #include <cstring>
 #include <vector>
 
+namespace {
+const babble::log::Logger LOG("debug");
+} // namespace
+
 namespace babble {
 
 DebugSink::DebugSink(const nlohmann::json &cfg, SinkDeps deps)
@@ -22,7 +26,7 @@ DebugSink::DebugSink(const nlohmann::json &cfg, SinkDeps deps)
     if (dump_count_ > 0) {
         std::error_code ec;
         std::filesystem::create_directories(dump_dir_, ec);
-        LOG_INFO("%s: dumping %d stereo frames per source to %s", name_.c_str(), dump_count_, dump_dir_.c_str());
+        LOG.info("%s: dumping %d stereo frames per source to %s", name_.c_str(), dump_count_, dump_dir_.c_str());
     }
 }
 
@@ -78,12 +82,12 @@ void DebugSink::write_pgm(const std::string &source, Channel &ch, const StereoFr
         fwrite(img.data(), 1, img.size(), f);
         fclose(f);
     } else {
-        LOG_WARN("%s: cannot write %s", name_.c_str(), path.c_str());
+        LOG.warn("%s: cannot write %s", name_.c_str(), path.c_str());
     }
     ch.written++;
     if (ch.remaining.fetch_sub(1) == 1) {
         pending_--;
-        LOG_INFO("%s: wrote %d %s frames to %s", name_.c_str(), ch.written, source.c_str(), dump_dir_.c_str());
+        LOG.info("%s: wrote %d %s frames to %s", name_.c_str(), ch.written, source.c_str(), dump_dir_.c_str());
     }
 }
 
@@ -105,7 +109,7 @@ void DebugSink::run() {
         }
 
         uint64_t now = mono_ns();
-        if (now >= next_log && log::level() <= log::Level::Debug) {
+        if (now >= next_log && LOG.debug_enabled()) {
             auto snap = state_.snapshot();
             std::string line;
             char buf[64];
@@ -113,7 +117,7 @@ void DebugSink::run() {
                 snprintf(buf, sizeof(buf), "%s%s=%.2f", i ? " " : "", snap.names[i].c_str(), snap.signals[i].value);
                 line += buf;
             }
-            LOG_DEBUG("signals: %s", line.c_str());
+            LOG.debug("signals: %s", line.c_str());
             next_log = now + period;
         }
         // Poll quickly only while dumps are pending (or may start); otherwise the log rate.

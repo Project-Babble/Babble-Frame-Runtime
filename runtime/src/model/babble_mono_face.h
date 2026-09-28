@@ -43,13 +43,14 @@ class BabbleMonoFace : public PipelineBase {
 public:
     BabbleMonoFace(const nlohmann::json &cfg, PipelineDeps deps) : PipelineBase(cfg, std::move(deps), "infM") {}
     bool init() override;
-    void on_presence(bool worn) override;
 
     // Preprocess one camera image into the model input (exposed for tests).
     void prepare(const Frame &f, float *input);
 
 private:
     void process(const StereoFrame &frames) override;
+    std::vector<std::pair<SignalId, Signal>> neutral(uint64_t now_ns) const override;
+    void reset_session() override { reset_pending_ = true; }
 
     struct Roi {
         uint32_t x = 0, y = 0, w = 0, h = 0;

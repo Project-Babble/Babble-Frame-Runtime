@@ -235,7 +235,12 @@ private:
             Log("Babble: pipe2 failed: %s\n", strerror(errno));
             return false;
         }
-        int logFd = open(logPath_.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
+        // The child's stderr: the runtime writes (and rotates) runtime.log itself,
+        // so this only catches what comes before its logger is up (a crash at
+        // start, a missing library). Trimmed when it passes 1 MB.
+        struct stat logStat{};
+        const bool trim = stat(logPath_.c_str(), &logStat) == 0 && logStat.st_size > (1 << 20);
+        int logFd = open(logPath_.c_str(), O_WRONLY | O_CREAT | O_CLOEXEC | (trim ? O_TRUNC : O_APPEND), 0644);
 
         // Everything the child needs is prepared before fork(): vrserver is
         // multithreaded, so the child may only make async-signal-safe calls.
@@ -345,7 +350,7 @@ public:
     vr::EVRInitError Init(vr::IVRDriverContext *context) override {
         VR_INIT_SERVER_DRIVER_CONTEXT(context);
         std::string exe = ModuleDir() + "/babble-runtime";
-        std::string log = StateDir() + "/runtime.log";
+        std::string log = StateDir() + "/shim.log";   // the runtime's early stderr; it writes runtime.log itself
         Log("Babble: driver shim " BABBLE_VERSION_DISPLAY " loaded\n");
         // Failing to start the runtime is not fatal to SteamVR; stay loaded
         // and report it rather than returning an init error.

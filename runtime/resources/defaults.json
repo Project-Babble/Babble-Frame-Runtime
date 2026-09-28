@@ -1,7 +1,10 @@
 {
   "version": 1,
   "log_level": "info",
+  "log_levels": {},
+  "log_file": { "max_mb": 8, "keep": 3, "stats_max_mb": 4 },
   "stats_interval_s": 5,
+  "stats_summary_s": 60,
   "mouth_source": "frunk",
   "threads": {
     "main": {

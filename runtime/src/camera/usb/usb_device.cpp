@@ -61,6 +61,10 @@ std::vector<Found> find(uint16_t vendor, uint16_t product) {
     });
 }
 
+std::vector<Found> list_all() {
+    return scan([](const std::filesystem::path &, const Found &) { return true; });
+}
+
 std::vector<Found> list_uvc() {
     namespace fs = std::filesystem;
     return scan([](const fs::path &dev, const Found &) {

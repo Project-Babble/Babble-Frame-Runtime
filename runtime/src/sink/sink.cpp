@@ -6,6 +6,10 @@
 #include "sink/osc_sink.h"
 #include "sink/plugin_sink.h"
 
+namespace {
+const babble::log::Logger LOG("sink");
+} // namespace
+
 namespace babble {
 
 std::unique_ptr<ISink> make_sink(const nlohmann::json &cfg, SinkDeps deps) {
@@ -18,7 +22,7 @@ std::unique_ptr<ISink> make_sink(const nlohmann::json &cfg, SinkDeps deps) {
         return std::make_unique<LinkSink>(cfg, std::move(deps));
     if (type == "plugin")
         return std::make_unique<PluginSink>(cfg, std::move(deps));
-    LOG_ERROR("sink %s: unknown type '%s'", deps.name.c_str(), type.c_str());
+    LOG.error("sink %s: unknown type '%s'", deps.name.c_str(), type.c_str());
     return nullptr;
 }
 

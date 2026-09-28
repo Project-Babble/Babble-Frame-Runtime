@@ -27,6 +27,8 @@ std::vector<Found> find(uint16_t vendor, uint16_t product);
 
 // Every connected USB video (UVC) camera: devices with a video streaming interface.
 std::vector<Found> list_uvc();
+// Every connected USB device (for diagnostics).
+std::vector<Found> list_all();
 
 // A stable name for a device across replugging: "vvvv:pppp:serial" (or
 // "vvvv:pppp@port" for a device without a serial number).
