@@ -70,12 +70,16 @@ jobs:
         with:
           version: ${{ github.event.inputs.version-number }}
 
-      # The tarball unpacks to babble/, the SteamVR driver folder:
+      # The tarball unpacks to babble/, the SteamVR driver folder, next to the
+      # scripts for installing it by hand (one-off builds; Steam gets babble/ only):
       #   babble/driver.vrdrivermanifest
-      #   babble/bin/linuxarm64/{driver_babble.so,babble-runtime,libopenvr_api.so}
+      #   babble/bin/linuxarm64/{driver_babble.so,babble-runtime,babble-setup,libopenvr_api.so}
       #   babble/resources/...
+      #   install.sh, uninstall.sh
       - name: Package driver folder
-        run: tar -C build -cJf "${ARTIFACT}" babble
+        run: |
+          cp tools/install.sh tools/uninstall.sh build/
+          tar -C build -cJf "${ARTIFACT}" babble install.sh uninstall.sh
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
