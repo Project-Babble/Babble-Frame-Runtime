@@ -15,7 +15,7 @@ on:
         type: boolean
         default: false
       version-number:
-        description: 'Version Number for Release, "Vx.x-Stage" (Stage: Alpha, Beta, RC, Release)'
+        description: 'Version Number for Release, "Vx.x-Stage[-N]" (Stage: Alpha, Beta, RC, Release; e.g. V0.1-Alpha-2)'
         type: string
       release-name-info:
         description: 'Additional info to put at the end of the release name'

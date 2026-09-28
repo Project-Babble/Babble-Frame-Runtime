@@ -11,8 +11,8 @@ inputs:
     default: Release
   version:
     description: >-
-      Release version, "Vx.x Stage" or "Vx.x-Stage" (Stage: Alpha, Beta, RC,
-      Release). Empty builds the VERSION file's version, marked as a dev build.
+      Release version, "Vx.x Stage [N]" or "Vx.x-Stage[-N]" (Stage: Alpha, Beta,
+      RC, Release; N optional, e.g. V0.1-Alpha-2). Empty builds the VERSION file's version, marked as a dev build.
     required: false
     default: ''
 
