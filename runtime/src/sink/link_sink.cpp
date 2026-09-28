@@ -20,6 +20,10 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+namespace {
+const babble::log::Logger LOG("link");
+} // namespace
+
 namespace babble {
 
 namespace link {
@@ -149,7 +153,7 @@ LinkSink::LinkSink(const nlohmann::json &cfg, SinkDeps deps)
         if (inet_pton(AF_INET, h.c_str(), &a) == 1)
             hosts_.push_back(ntohl(a.s_addr));
         else
-            LOG_WARN("%s: ignoring host '%s' (not an IPv4 address)", name_.c_str(), h.c_str());
+            LOG.warn("%s: ignoring host '%s' (not an IPv4 address)", name_.c_str(), h.c_str());
     }
     const auto beacon_s = cfg.value("beacon_s", std::vector<double>{2, 5});
     if (beacon_s.size() == 2) {
@@ -186,7 +190,7 @@ bool LinkSink::start() {
     if (listen_sock_ < 0 || bind(listen_sock_, reinterpret_cast<const sockaddr *>(&any), sizeof(any)) != 0) {
         // Not fatal: the module still finds us through our beacons, just not
         // as quickly after it starts.
-        LOG_WARN("%s: cannot listen on udp %u for module queries: %s", name_.c_str(), control_port_, strerror(errno));
+        LOG.warn("%s: cannot listen on udp %u for module queries: %s", name_.c_str(), control_port_, strerror(errno));
         if (listen_sock_ >= 0)
             close(listen_sock_);
         listen_sock_ = -1;
@@ -195,7 +199,7 @@ bool LinkSink::start() {
         return false;
     stop_ = false;
     thread_ = start_thread(thread_spec_, [this] { run(); });
-    LOG_INFO("%s: looking for the VRCFT module (control port %u, paths %s)", name_.c_str(), control_port_,
+    LOG.info("%s: looking for the VRCFT module (control port %u, paths %s)", name_.c_str(), control_port_,
              [&] {
                  std::string s;
                  for (const auto &k : path_order_)
@@ -241,6 +245,8 @@ link::Message LinkSink::base(const std::string &type) const {
 
 void LinkSink::send(int fd, const sockaddr_in &to, const link::Message &m) {
     const std::string text = link::encode(m);
+    if (LOG.debug_enabled() && m.type != "ping")   // pings: 1 Hz per path, see the pong
+        LOG.debug("%s: -> %s:%u %s", name_.c_str(), ip_string(to).c_str(), ntohs(to.sin_port), text.c_str());
     sendto(fd, text.data(), text.size(), MSG_DONTWAIT | MSG_NOSIGNAL, reinterpret_cast<const sockaddr *>(&to),
            sizeof(to));
 }
@@ -266,7 +272,7 @@ void LinkSink::rescan(uint64_t now) {
             ++it;
             continue;
         }
-        LOG_INFO("%s: interface %s (%s) is gone", name_.c_str(), p.iface.name.c_str(), p.kind.c_str());
+        LOG.info("%s: interface %s (%s) is gone", name_.c_str(), p.iface.name.c_str(), p.kind.c_str());
         if (active_ == it->get())
             active_ = nullptr;
         close(p.sock);
@@ -287,12 +293,12 @@ void LinkSink::rescan(uint64_t now) {
         setsockopt(p->sock, SOL_SOCKET, SO_BROADCAST, &one, sizeof(one));
         const sockaddr_in local = endpoint(f.address, 0);
         if (p->sock < 0 || bind(p->sock, reinterpret_cast<const sockaddr *>(&local), sizeof(local)) != 0) {
-            LOG_WARN("%s: cannot use interface %s: %s", name_.c_str(), f.name.c_str(), strerror(errno));
+            LOG.warn("%s: cannot use interface %s: %s", name_.c_str(), f.name.c_str(), strerror(errno));
             if (p->sock >= 0)
                 close(p->sock);
             continue;
         }
-        LOG_INFO("%s: interface %s (%s, %s)", name_.c_str(), f.name.c_str(), p->kind.c_str(),
+        LOG.info("%s: interface %s (%s, %s)", name_.c_str(), f.name.c_str(), p->kind.c_str(),
                  ip_string(local).c_str());
         paths_.push_back(std::move(p));
         next_beacon_ns_ = now;   // announce ourselves on the new path now
@@ -353,7 +359,7 @@ void LinkSink::handle(Path *path, const link::Message &m, const sockaddr_in &fro
         if (m.mid.empty() || m.data_port <= 0 || m.data_port > 65535)
             return;
         if (m.busy) {
-            LOG_DEBUG("%s: module %s at %s is busy with another headset", name_.c_str(), m.name.c_str(),
+            LOG.debug("%s: module %s at %s is busy with another headset", name_.c_str(), m.name.c_str(),
                       ip_string(from).c_str());
             return;
         }
@@ -365,7 +371,7 @@ void LinkSink::handle(Path *path, const link::Message &m, const sockaddr_in &fro
                 return;
             module_mid_ = m.mid;
             module_name_ = m.name;
-            LOG_INFO("%s: found VRCFT module \"%s\" at %s via %s", name_.c_str(), m.name.c_str(),
+            LOG.info("%s: found VRCFT module \"%s\" at %s via %s", name_.c_str(), m.name.c_str(),
                      ip_string(from).c_str(), path->kind.c_str());
         }
         const bool fresh = !path->has_peer || path->mid != m.mid || path->peer.sin_addr.s_addr != from.sin_addr.s_addr;
@@ -393,7 +399,7 @@ void LinkSink::handle(Path *path, const link::Message &m, const sockaddr_in &fro
         path->pings.erase(it);
         if (m.mid != path->mid) {
             // The module restarted (a new instance answers at the same address).
-            LOG_INFO("%s: VRCFT module restarted", name_.c_str());
+            LOG.info("%s: VRCFT module restarted", name_.c_str());
             for (auto &p : paths_)
                 if (p->mid == module_mid_)
                     p->mid = m.mid;
@@ -409,7 +415,7 @@ void LinkSink::handle(Path *path, const link::Message &m, const sockaddr_in &fro
         return;
     }
     if (m.type == "bye" && m.mid == module_mid_) {
-        LOG_INFO("%s: VRCFT module \"%s\" closed", name_.c_str(), module_name_.c_str());
+        LOG.info("%s: VRCFT module \"%s\" closed", name_.c_str(), module_name_.c_str());
         for (auto &p : paths_)
             p->has_peer = false;
         choose(now);
@@ -424,8 +430,12 @@ void LinkSink::receive(Path *path, int fd, uint64_t now) {
         const ssize_t n = recvfrom(fd, buf, sizeof(buf), 0, reinterpret_cast<sockaddr *>(&from), &len);
         if (n <= 0)
             return;
-        if (auto m = link::decode(buf, size_t(n)))
+        if (auto m = link::decode(buf, size_t(n))) {
+            if (LOG.debug_enabled() && m->type != "beacon")   // our own beacons loop back to the listener
+                LOG.debug("%s: <- %s:%u (%s) %.*s", name_.c_str(), ip_string(from).c_str(), ntohs(from.sin_port),
+                          path ? path->kind.c_str() : "listener", int(n), buf);
             handle(path, *m, from, now);
+        }
     }
 }
 
@@ -450,7 +460,7 @@ void LinkSink::choose(uint64_t now) {
     if (active_) {
         destination_->set(endpoint(ntohl(active_->peer.sin_addr.s_addr), uint16_t(active_->data_port)));
         status = active_->kind;
-        LOG_INFO("%s: %s \"%s\" via %s (%s, %s:%d)", name_.c_str(), previous ? "switched to" : "linked to",
+        LOG.info("%s: %s \"%s\" via %s (%s, %s:%d)", name_.c_str(), previous ? "switched to" : "linked to",
                  module_name_.c_str(), active_->kind.c_str(), active_->iface.name.c_str(),
                  ip_string(active_->peer).c_str(), active_->data_port);
         if (previous)
@@ -458,7 +468,7 @@ void LinkSink::choose(uint64_t now) {
         next_beacon_ns_ = std::min(next_beacon_ns_, now + beacon_connected_ns_);
     } else {
         destination_->clear();
-        LOG_INFO("%s: link to \"%s\" lost; searching", name_.c_str(), module_name_.c_str());
+        LOG.info("%s: link to \"%s\" lost; searching", name_.c_str(), module_name_.c_str());
         next_beacon_ns_ = now;
     }
     std::lock_guard lock(status_mutex_);

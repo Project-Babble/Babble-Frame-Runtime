@@ -4,6 +4,10 @@
 
 #include <array>
 
+namespace {
+const babble::log::Logger LOG("mouth");
+} // namespace
+
 namespace babble {
 
 FrameStats compute_frame_stats(const Frame &frame, uint32_t step) {
@@ -42,7 +46,7 @@ FrameStats compute_frame_stats(const Frame &frame, uint32_t step) {
 std::unique_ptr<IExposureController> make_exposure_controller(const nlohmann::json &cfg) {
     std::string mode = cfg.value("mode", "fixed");
     if (mode != "fixed")
-        LOG_WARN("auto_exposure mode '%s' not implemented yet, using fixed", mode.c_str());
+        LOG.warn("auto_exposure mode '%s' not implemented yet, using fixed", mode.c_str());
     return std::make_unique<FixedExposure>();
 }
 

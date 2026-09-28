@@ -9,6 +9,7 @@
 #include "camera/usb/babble_usb_source.h"
 #include "core/clock.h"
 #include "core/config.h"
+#include "core/crash.h"
 #include "core/lifecycle.h"
 #include "core/log.h"
 #include "core/metrics.h"
@@ -17,6 +18,7 @@
 #include "model/executorch_runner.h"
 #include "model/pipeline.h"
 #include "platform/app_launcher.h"
+#include "platform/diagnostics.h"
 #include "platform/camera_arbiter_client.h"
 #include "platform/eye_server_client.h"
 #include "platform/steamvr_client.h"
@@ -31,11 +33,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <algorithm>
 #include <chrono>
 #include <map>
 #include <memory>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <thread>
 
@@ -43,6 +47,10 @@
 #include <sys/signalfd.h>
 #include <sys/timerfd.h>
 #include <unistd.h>
+
+namespace {
+const babble::log::Logger LOG("main");
+} // namespace
 
 using namespace babble;
 
@@ -89,9 +97,21 @@ bool parse_args(int argc, char **argv, Options *o) {
 json load(const Options &opt) {
     ConfigLoad cl = load_config(opt.config);
     if (!cl.error.empty())
-        LOG_ERROR("config: ignoring %s: %s", cl.user_file.c_str(), cl.error.c_str());
+        LOG.error("config: ignoring %s: %s", cl.user_file.c_str(), cl.error.c_str());
     else if (cl.user_loaded)
-        LOG_INFO("config: loaded %s", cl.user_file.c_str());
+        LOG.info("config: loaded %s", cl.user_file.c_str());
+    if (!cl.settings_error.empty())
+        LOG.error("config: ignoring %s: %s (it will be moved aside on the next settings change)",
+                  cl.settings_file.c_str(), cl.settings_error.c_str());
+    else if (cl.settings_loaded) {
+        std::string keys;
+        for (const auto &k : cl.settings_overrides)
+            keys += (keys.empty() ? "" : ", ") + k;
+        LOG.info("config: loaded %s (saved settings, override config.json): %s", cl.settings_file.c_str(),
+                 keys.empty() ? "nothing" : keys.c_str());
+    }
+    for (const auto &fix : cl.type_fixes)
+        LOG.warn("config: %s; using the default", fix.c_str());
     json &c = cl.config;
     if (opt.no_eye && c["sources"].contains("eye")) c["sources"]["eye"]["enabled"] = false;
     if (opt.no_mouth && c["sources"].contains("mouth")) c["sources"]["mouth"]["enabled"] = false;
@@ -111,11 +131,63 @@ json load(const Options &opt) {
     return cl.config;
 }
 
+// log_level (the default) and log_levels ({"usb": "debug", ...} per module).
 void apply_log_level(const json &c) {
     log::Level lvl;
     std::string name = c.value("log_level", "info");
     if (log::parse_level(name.c_str(), &lvl))
         log::set_level(lvl);
+    log::clear_module_levels();
+    for (const auto &[module, value] : section(c, "log_levels").items()) {
+        if (value.is_string() && log::parse_level(value.get<std::string>().c_str(), &lvl))
+            log::set_module_level(module, lvl);
+        else
+            LOG.warn("log_levels: ignoring %s = %s", module.c_str(), value.dump().c_str());
+    }
+}
+
+// One line from the stats JSON for the log: per pipeline the rate and
+// inference time (this interval), plus any counter that isn't zero among the
+// ones that mean trouble (drops, errors, restarts).
+std::string stats_summary(const std::string &stats_json) {
+    std::string err;
+    auto j = parse_json(stats_json, &err);
+    if (!j || !j->is_object())
+        return "(no stats)";
+    std::string out, trouble;
+    for (auto it = j->begin(); it != j->end(); ++it) {
+        const std::string &k = it.key();
+        if (k.rfind("pipe.", 0) == 0 && k.size() > 4 && k.ends_with(".fps")) {
+            const std::string name = k.substr(5, k.size() - 9);
+            const auto inf = j->value("pipe." + name + ".inference", json::object());
+            char buf[128];
+            snprintf(buf, sizeof(buf), "%s %.1f/s", name.c_str(), it.value().is_number() ? it.value().get<double>() : 0.0);
+            out += (out.empty() ? "" : ", ") + std::string(buf);
+            if (inf.value("n", 0) > 0) {
+                snprintf(buf, sizeof(buf), " (%.1f/%.1f ms)", inf.value("p50_us", 0) / 1000.0, inf.value("p99_us", 0) / 1000.0);
+                out += buf;
+            }
+        } else if (it.value().is_number_integer() && it.value().get<int64_t>() > 0 &&
+                   (k.find("exhausted") != std::string::npos || k.find("error") != std::string::npos ||
+                    k.find("dropped") != std::string::npos || k.find("restarts") != std::string::npos ||
+                    k.find("undecodable") != std::string::npos || k.find("faults") != std::string::npos ||
+                    k.find("timeouts") != std::string::npos)) {
+            trouble += (trouble.empty() ? "" : ", ") + k + " " + std::to_string(it.value().get<int64_t>());
+        }
+    }
+    return (out.empty() ? std::string("no pipelines") : out) + " (inference p50/p99)" +
+           (trouble.empty() ? "" : "; counters: " + trouble);
+}
+
+// The log file: runtime.log in the state dir under the shim (standalone runs
+// get their own file, so they don't interleave with the supervised runtime).
+void open_log_file(const json &c, bool supervised) {
+    const json f = section(c, "log_file");
+    const double max_mb = f.value("max_mb", 8.0);
+    const int keep = f.value("keep", 3);
+    const auto path = paths::state_dir() / (supervised ? "runtime.log" : "runtime-standalone.log");
+    if (!log::open_file(path, size_t(std::max(0.5, max_mb) * 1024 * 1024), keep))
+        LOG.warn("cannot write %s: %s; logging to stderr only", path.c_str(), strerror(errno));
 }
 
 // The settings panel's rows (config["dashboard"]["settings"]), with the
@@ -123,14 +195,14 @@ void apply_log_level(const json &c) {
 // source that isn't configured) are left out.
 std::vector<ui::Choice> dashboard_choices(const json &cfg) {
     std::vector<ui::Choice> out;
-    for (const json &row : cfg["dashboard"].value("settings", json::array())) {
+    for (const json &row : section(cfg, "dashboard").value("settings", json::array())) {
         ui::Choice c;
         c.id = row.value("id", "");
         json::json_pointer ptr;
         try {
             ptr = json::json_pointer(c.id);
         } catch (const json::exception &) {
-            LOG_WARN("dashboard: ignoring setting with a bad id '%s'", c.id.c_str());
+            LOG.warn("dashboard: ignoring setting with a bad id '%s'", c.id.c_str());
             continue;
         }
         if (!cfg.contains(ptr) || !cfg[ptr].is_number())
@@ -159,31 +231,35 @@ int main(int argc, char **argv) {
     if (!parse_args(argc, argv, &opt))
         return 2;
     setvbuf(stderr, nullptr, _IOLBF, 0);
+    crash::install();
 
     json cfg = load(opt);
+    open_log_file(cfg, ShimLink::present());
     apply_log_level(cfg);
     const json threads = cfg.value("threads", json::object());
     apply_thread_spec(thread_spec(threads, "main", "babble-runtime"));
 
     const bool shim = ShimLink::present();
-    LOG_INFO("babble-runtime %s starting (pid %d, %s, state dir %s)", BABBLE_VERSION_DISPLAY, getpid(),
+    LOG.info("babble-runtime %s starting (pid %d, %s, state dir %s)", BABBLE_VERSION_DISPLAY, getpid(),
              shim ? "supervised by driver shim" : "standalone", paths::state_dir().c_str());
     if (!shim && !opt.standalone)
-        LOG_WARN("no shim link on fd 3; running unsupervised (use --standalone to silence this)");
+        LOG.warn("no shim link on fd 3; running unsupervised (use --standalone to silence this)");
+    for (const auto &line : diag::session_info(cfg, paths::resource_dir() / "models"))
+        LOG.info("session: %s", line.c_str());
 
     int sfd = make_signalfd();
     int ep = epoll_create1(EPOLL_CLOEXEC);
     int tfd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC);
     if (sfd < 0 || ep < 0 || tfd < 0) {
-        LOG_ERROR("event setup failed: %s", strerror(errno));
+        LOG.error("event setup failed: %s", strerror(errno));
         return 1;
     }
     itimerspec its{{0, 100000000}, {0, 100000000}};   // 10 Hz housekeeping tick
-    timerfd_settime(tfd, 0, &its, nullptr);
-    add_epoll(ep, sfd);
-    add_epoll(ep, tfd);
-    if (shim)
-        add_epoll(ep, ShimLink::kFd);
+    if (timerfd_settime(tfd, 0, &its, nullptr) != 0 || add_epoll(ep, sfd) != 0 || add_epoll(ep, tfd) != 0 ||
+        (shim && add_epoll(ep, ShimLink::kFd) != 0)) {
+        LOG.error("event setup failed: %s", strerror(errno));
+        return 1;
+    }
 
     StatsRegistry stats;
     ExpressionState state;
@@ -226,7 +302,7 @@ int main(int argc, char **argv) {
     const json kcfg = cfg.value("sinks", json::object());
     for (auto it = kcfg.begin(); it != kcfg.end(); ++it) {
         if (!it.value().value("enabled", true)) {
-            LOG_INFO("sink %s: disabled", it.key().c_str());
+            LOG.info("sink %s: disabled", it.key().c_str());
             continue;
         }
         auto sink = make_sink(it.value(), SinkDeps{it.key(), threads, state, stats});
@@ -250,7 +326,7 @@ int main(int argc, char **argv) {
     const json pcfg = cfg.value("pipelines", json::object());
     for (auto it = pcfg.begin(); it != pcfg.end(); ++it) {
         if (!it.value().value("enabled", true)) {
-            LOG_INFO("pipeline %s: disabled", it.key().c_str());
+            LOG.info("pipeline %s: disabled", it.key().c_str());
             continue;
         }
         auto p = make_pipeline(it.value(),
@@ -259,17 +335,18 @@ int main(int argc, char **argv) {
         if (p && p->init())
             pipelines.push_back(std::move(p));
         else
-            LOG_ERROR("pipeline %s: not started", it.key().c_str());
+            LOG.error("pipeline %s: not started", it.key().c_str());
     }
 
     struct SourceEntry {
         std::string name;
         std::unique_ptr<ITrackingSource> src;
+        std::string last_state{};   // for logging state changes
     };
     std::vector<SourceEntry> sources;
     for (auto it = scfg.begin(); it != scfg.end(); ++it) {
         if (!it.value().value("enabled", true)) {
-            LOG_INFO("source %s: disabled", it.key().c_str());
+            LOG.info("source %s: disabled", it.key().c_str());
             continue;
         }
         auto src = make_tracking_source(it.value(), SourceDeps{it.key(), threads, *slots[it.key()], stats, arbiter, &steamvr});
@@ -282,7 +359,7 @@ int main(int argc, char **argv) {
             ++it;
             continue;
         }
-        LOG_ERROR("sink %s: failed to start; dropping it", it->name.c_str());
+        LOG.error("sink %s: failed to start; dropping it", it->name.c_str());
         std::erase(frame_taps, it->sink.get());
         it = sinks.erase(it);
     }
@@ -312,13 +389,30 @@ int main(int argc, char **argv) {
     // "mouth"), or a USB camera such as a Babble face tracker (source "face"),
     // per "mouth_source". The Mouth Tracking switch (/sources/mouth/tracking)
     // turns whichever it is on or off; the other one stays off.
-    auto mouth_from_usb = [&] { return cfg.value("mouth_source", "frunk") == "usb"; };
+    auto setting_at = [&](const char *pointer, const json &fallback) {
+        const json::json_pointer ptr(pointer);
+        return cfg.contains(ptr) && std::string(cfg[ptr].type_name()) == fallback.type_name() ? cfg[ptr] : fallback;
+    };
+    auto mouth_from_usb = [&] { return setting_at("/mouth_source", "frunk") == "usb"; };
     auto route_mouth = [&] {
-        const bool on = cfg.value(json::json_pointer("/sources/mouth/tracking"), true);
+        const bool on = setting_at("/sources/mouth/tracking", true).get<bool>();
         set_feed_tracking("mouth", on && !mouth_from_usb());
         set_feed_tracking("face", on && mouth_from_usb());
     };
     route_mouth();
+    // The Mouth tracking rate applies to the USB camera too, capped at its own
+    // process_fps (the mono face model is costly: 30 by default).
+    ITrackingSource *face_source = nullptr;
+    for (auto &s : sources)
+        if (s.name == "face")
+            face_source = s.src.get();
+    auto usb_mouth_rate = [&] {
+        const double rate = setting_at("/sources/mouth/process_fps", 0.0).get<double>();
+        const double cap = setting_at("/sources/face/process_fps", 30.0).get<double>();
+        return rate > 0 ? std::min(rate, cap) : cap;
+    };
+    if (face_source)
+        face_source->set_process_fps(usb_mouth_rate());
 
     // The USB camera source, and the camera list the debug overlay shows
     // (read at start and whenever the overlay asks for a refresh).
@@ -359,7 +453,7 @@ int main(int argc, char **argv) {
         } else {
             dashboard->stop();
         }
-        LOG_INFO("dashboard: debug overlay %s", on ? "on" : "off");
+        LOG.info("dashboard: debug overlay %s", on ? "on" : "off");
     };
     set_dashboard(dcfg.value("enabled", false));
     // The tracking visualizer the debug overlay can start.
@@ -368,7 +462,7 @@ int main(int argc, char **argv) {
     const std::filesystem::path settings_file = default_settings_file();
 
     // The driver's "Expression Tracking" section in SteamVR Settings.
-    SteamVrSettingsBridge steamvr_settings(steamvr, cfg["steamvr_settings"].value("section", "driver_babble"),
+    SteamVrSettingsBridge steamvr_settings(steamvr, section(cfg, "steamvr_settings").value("section", "driver_babble"),
                                            SteamVrSettingsBridge::entries_from_config(cfg));
 
     // One path for every live setting change: the Babble tab, SteamVR
@@ -376,16 +470,36 @@ int main(int argc, char **argv) {
     // have it). Applies it, keeps cfg current, saves panel/SteamVR changes to
     // settings.json, and shows the new value in the other places.
     enum class Origin { Dashboard, SteamVr, Reload };
-    auto apply_setting = [&](const std::string &id, const json &value, Origin origin) {
+    auto origin_name = [](Origin o) {
+        return o == Origin::Dashboard ? "the Babble tab" : o == Origin::SteamVr ? "SteamVR Settings" : "config reload";
+    };
+    auto apply_setting_unchecked = [&](const std::string &id, const json &value, Origin origin) {
         const json::json_pointer ptr(id);
         if (cfg.contains(ptr) && cfg[ptr] == value)
             return;
+        LOG.debug("settings: %s = %s from %s (was %s)", id.c_str(), value.dump().c_str(), origin_name(origin),
+                  cfg.contains(ptr) ? cfg[ptr].dump().c_str() : "unset");
         bool applied = false;
+        if (id == "/sources/face/tracking") {
+            // The USB camera follows Mouth Tracking and Mouth Source; switching it
+            // on by itself would run two mouth trackers at once.
+            LOG.warn("settings: ignoring %s: set /sources/mouth/tracking and /mouth_source instead", id.c_str());
+            return;
+        }
         const bool mouth_routing = (id == "/sources/mouth/tracking" && value.is_boolean()) ||
-                                   (id == "/mouth_source" && (value == "frunk" || value == "usb"));
+                                   (id == "/mouth_source" && (value == "frunk" || value == "usb")) ||
+                                   (id == "/sources/mouth/process_fps" && value.is_number() && value.get<double>() > 0);
         if (mouth_routing) {
             cfg[ptr] = value;
-            route_mouth();
+            if (id == "/sources/mouth/process_fps") {
+                for (auto &s : sources)
+                    if (s.name == "mouth")
+                        s.src->set_process_fps(value.get<double>());
+                if (face_source)
+                    face_source->set_process_fps(usb_mouth_rate());
+            } else {
+                route_mouth();
+            }
             applied = true;
         }
         for (auto &s : sources) {
@@ -412,22 +526,35 @@ int main(int argc, char **argv) {
             applied = true;
         }
         if (!applied) {
-            LOG_WARN("settings: ignoring %s = %s", id.c_str(), value.dump().c_str());
+            LOG.warn("settings: ignoring %s = %s", id.c_str(), value.dump().c_str());
+            // SteamVR already shows the rejected value: put ours back.
+            if (origin == Origin::SteamVr && cfg.contains(ptr))
+                steamvr_settings.push(id, cfg[ptr]);
             return;
         }
         cfg[ptr] = value;
+        if (origin == Origin::Reload)
+            LOG.info("settings: %s = %s (config reload)", id.c_str(), value.dump().c_str());
         if (origin != Origin::Reload) {
             std::string err;
             if (save_setting(settings_file, ptr, value, &err))
-                LOG_INFO("settings: %s = %s from %s (saved to %s)", id.c_str(), value.dump().c_str(),
+                LOG.info("settings: %s = %s from %s (saved to %s)", id.c_str(), value.dump().c_str(),
                          origin == Origin::Dashboard ? "the Babble tab" : "SteamVR Settings", settings_file.c_str());
             else
-                LOG_ERROR("settings: saving %s failed: %s", id.c_str(), err.c_str());
+                LOG.error("settings: saving %s failed: %s", id.c_str(), err.c_str());
         }
         if (dashboard->started() && value.is_number())
             dashboard->set_choice(id, value.get<double>());   // feed switches follow the source's state
         if (origin != Origin::SteamVr)
             steamvr_settings.push(id, value);
+    };
+    // A malformed id or a value of the wrong type is logged, never fatal.
+    auto apply_setting = [&](const std::string &id, const json &value, Origin origin) {
+        try {
+            apply_setting_unchecked(id, value, origin);
+        } catch (const json::exception &e) {
+            LOG.warn("settings: ignoring %s = %s: %s", id.c_str(), value.dump().c_str(), e.what());
+        }
     };
 
     // Tracking rate per source: frames its pipelines processed per second.
@@ -462,9 +589,79 @@ int main(int argc, char **argv) {
         return f;
     };
 
-    const auto poll_cfg = cfg["arbiter"].value("poll_interval_ms", json::object());
+    const auto poll_cfg = section(cfg, "arbiter").value("poll_interval_ms", json::object());
     const uint64_t arbiter_idle_ns = uint64_t(poll_cfg.value("idle", 1000)) * 1000000ull;
     const uint64_t arbiter_streaming_ns = uint64_t(poll_cfg.value("streaming", 5000)) * 1000000ull;
+    // Diagnostics file (SIGUSR1, the Babble tab): everything needed to look
+    // into a problem report without the headset.
+    std::string last_stats = "{}";   // the latest stats render (JSON)
+    std::string last_diagnostics;    // the last diagnostics file written
+    auto diagnostics_text = [&] {
+        std::ostringstream o;
+        const time_t wall = time(nullptr);
+        char when[64];
+        strftime(when, sizeof(when), "%Y-%m-%d %H:%M:%S %Z", localtime(&wall));
+        o << "Babble Frame Runtime diagnostics, " << when << "\n\n== session\n";
+        for (const auto &line : diag::session_info(cfg, paths::resource_dir() / "models"))
+            o << line << "\n";
+        o << "\n== status\narbiter " << to_string(arbiter.state()) << ", headset " << to_string(steamvr.worn())
+          << ", steamvr " << (steamvr.connected() ? "connected" : "not connected") << ", mouth source "
+          << (mouth_from_usb() ? "usb" : "frunk") << "\n";
+        for (auto &src : sources)
+            o << "source " << src.name << ": " << src.src->state_name() << (src.src->tracking() ? "" : " (tracking off)")
+              << (src.src->last_error().empty() ? "" : ", last error: " + src.src->last_error()) << "\n";
+        for (auto &p : pipelines)
+            o << "pipeline " << p->name() << ": source " << p->source() << ", " << p->processed() << " frames\n";
+        for (auto &k : sinks)
+            o << "output " << k.name << "\n";
+        if (pc_link) {
+            const auto ls = pc_link->status();
+            o << "pc link: " << (ls.linked ? "linked to \"" + ls.module + "\" via " + ls.path + " (" + ls.address + ")"
+                                           : std::string("searching"))
+              << (ls.rtt_ms >= 0 ? ", rtt " + std::to_string(ls.rtt_ms) + " ms" : "") << "\n";
+        }
+        for (const auto &c : usb_cameras)
+            o << "usb camera: " << c.label << " (" << c.id << ")"
+              << (usb_source && usb_source->active_camera() == c.id ? " streaming" : "") << "\n";
+        o << "\n== signals (value, age)\n";
+        const auto snap = state.snapshot();
+        const uint64_t now_ns = mono_ns();
+        for (size_t i = 0; i < snap.names.size(); i++) {
+            const auto &sig = snap.signals[i];
+            char line[160];
+            snprintf(line, sizeof(line), "%-24s %8.4f  %s\n", snap.names[i].c_str(), sig.value,
+                     sig.t_ns ? (std::to_string((now_ns - sig.t_ns) / 1000000) + " ms").c_str() : "never set");
+            o << line;
+        }
+        o << "\n== threads\n";
+        for (const auto &line : diag::thread_report())
+            o << line << "\n";
+        o << "\n== stats (last interval)\n" << last_stats << "\n\n== effective config\n" << cfg.dump(2)
+          << "\n\n== recent log\n";
+        for (const auto &line : log::recent(300))
+            o << line;
+        return o.str();
+    };
+    auto write_diagnostics = [&](const char *why) {
+        const auto path = diag::write_file(paths::state_dir(), diagnostics_text());
+        if (path.empty())
+            LOG.error("diagnostics: cannot write to %s", paths::state_dir().c_str());
+        else
+            LOG.info("diagnostics written to %s (%s)", path.c_str(), why);
+        return path;
+    };
+
+    // Stats: the full set to stats.jsonl every interval; in the log, the status
+    // line when it changes and a short summary every summary_s.
+    log::RotatingFile stats_file;
+    {
+        const json sf = section(cfg, "log_file");
+        stats_file.open(paths::state_dir() / "stats.jsonl", size_t(sf.value("stats_max_mb", 4.0) * 1024 * 1024),
+                        sf.value("keep", 3));
+    }
+    const uint64_t summary_ns = uint64_t(std::max(5, cfg.value("stats_summary_s", 60))) * 1000000000ull;
+    uint64_t next_summary = mono_ns() + summary_ns;
+    std::string last_status;
     const uint64_t stats_ns = uint64_t(std::max(1, cfg.value("stats_interval_s", 5))) * 1000000000ull;
     uint64_t next_arbiter = 0, next_stats = mono_ns() + stats_ns;
     bool running = true;
@@ -475,7 +672,7 @@ int main(int argc, char **argv) {
         epoll_event evs[4];
         int n = epoll_wait(ep, evs, 4, 1000);
         if (n < 0 && errno != EINTR) {
-            LOG_ERROR("epoll_wait: %s", strerror(errno));
+            LOG.error("epoll_wait: %s", strerror(errno));
             break;
         }
         for (int i = 0; i < n; i++) {
@@ -483,21 +680,27 @@ int main(int argc, char **argv) {
             if (fd == sfd) {
                 signalfd_siginfo si{};
                 while (read(sfd, &si, sizeof(si)) == sizeof(si)) {
-                    if (si.ssi_signo == SIGHUP) {
-                        json fresh = load(opt);
-                        apply_log_level(fresh);
-                        for (auto &s : sources)
-                            for (const char *key : {"process_fps", "tracking"}) {
-                                const json::json_pointer ptr("/sources/" + s.name + "/" + key);
+                    if (si.ssi_signo == SIGUSR1) {
+                        write_diagnostics("SIGUSR1");
+                    } else if (si.ssi_signo == SIGHUP) {
+                        try {
+                            json fresh = load(opt);
+                            apply_log_level(fresh);
+                            for (auto &s : sources)
+                                for (const char *key : {"process_fps", "tracking"}) {
+                                    const json::json_pointer ptr("/sources/" + s.name + "/" + key);
+                                    if (fresh.contains(ptr))
+                                        apply_setting(ptr.to_string(), fresh[ptr], Origin::Reload);
+                                }
+                            for (const char *id :
+                                 {"/pipelines/eye/openness_source", "/pipelines/gaze/gaze_source", "/dashboard/enabled",
+                                  "/mouth_source"}) {
+                                const json::json_pointer ptr(id);
                                 if (fresh.contains(ptr))
-                                    apply_setting(ptr.to_string(), fresh[ptr], Origin::Reload);
+                                    apply_setting(id, fresh[ptr], Origin::Reload);
                             }
-                        for (const char *id :
-                             {"/pipelines/eye/openness_source", "/pipelines/gaze/gaze_source", "/dashboard/enabled",
-                              "/mouth_source"}) {
-                            const json::json_pointer ptr(id);
-                            if (fresh.contains(ptr))
-                                apply_setting(id, fresh[ptr], Origin::Reload);
+                        } catch (const json::exception &e) {
+                            LOG.error("config: reload failed: %s", e.what());
                         }
                     } else {
                         exit_reason = si.ssi_signo == SIGTERM ? "SIGTERM" : "SIGINT";
@@ -537,6 +740,13 @@ int main(int argc, char **argv) {
         for (auto &s : sources) {
             bool was = s.src->streaming();
             s.src->tick(now);
+            // Every state change, one uniform line (with the reason when there is one).
+            if (const char *st_now = s.src->state_name(); s.last_state != st_now) {
+                LOG.info("source %s: %s -> %s%s", s.name.c_str(), s.last_state.empty() ? "(start)" : s.last_state.c_str(),
+                         st_now,
+                         s.src->last_error().empty() ? "" : (" (" + s.src->last_error() + ")").c_str());
+                s.last_state = st_now;
+            }
             if (was && !s.src->streaming())
                 next_arbiter = now;   // capture trouble: re-check the platform right away
         }
@@ -560,8 +770,16 @@ int main(int argc, char **argv) {
                 apply_setting(id, value, Origin::Dashboard);
             if (dashboard->take_camera_refresh_request())
                 refresh_usb_cameras();
+            if (const int v = dashboard->take_verbose_request(); v >= 0) {
+                log::verbose_until(v ? mono_ns() + 10ull * 60 * 1000000000ull : 0);
+                LOG.info("verbose logging %s from the Babble tab", v ? "on for 10 minutes" : "off");
+            }
+            if (dashboard->take_diagnostics_request())
+                last_diagnostics = write_diagnostics("the Babble tab").string();
             if (dashboard->take_restart_request()) {
                 // A clean exit: the driver shim starts the runtime again.
+                if (!shim)
+                    LOG.warn("restart requested, but no driver shim is supervising this runtime: it will just exit");
                 exit_reason = "restart requested from the Babble tab";
                 running = false;
             }
@@ -580,6 +798,11 @@ int main(int argc, char **argv) {
                             : visualizer.running()  ? ui::AppState::Running
                                                     : ui::AppState::Stopped;
             st.mouth_source = mouth_from_usb() ? "usb" : "frunk";
+            if (const uint64_t until = log::verbose_until(); until > now)
+                st.verbose_minutes_left = int((until - now) / 60000000000ull) + 1;
+            st.last_diagnostics = last_diagnostics;
+            st.log_file = log::file_path().string();
+            st.stats_file = stats_file.path().string();
             st.cameras = usb_cameras;
             if (usb_source) {
                 st.camera = usb_source->camera();
@@ -592,23 +815,43 @@ int main(int argc, char **argv) {
             dashboard->set_status(st);
         }
 
+        if (const uint64_t until = log::verbose_until(); until && now >= until) {
+            log::verbose_until(0);
+            LOG.info("verbose logging ended");
+        }
         if (now >= next_stats) {
             std::string line = std::string("arbiter=") + to_string(arbiter.state()) +
                                " headset=" + to_string(steamvr.worn());
             for (auto &s : sources)
                 line += " " + s.name + "=" + s.src->state_name();
-            LOG_INFO("status: %s", line.c_str());
-            LOG_INFO("stats: %s", stats.render().c_str());
+            last_stats = stats.render();
+            {
+                const time_t wall = time(nullptr);
+                char when[32];
+                strftime(when, sizeof(when), "%Y-%m-%dT%H:%M:%S", localtime(&wall));
+                stats_file.write(std::string("{\"time\":\"") + when + "\",\"status\":\"" + line + "\",\"stats\":" +
+                                 last_stats + "}\n");
+            }
+            const bool summary = now >= next_summary;
+            if (line != last_status || summary)
+                LOG.info("status: %s", line.c_str());
+            last_status = line;
+            if (summary) {
+                LOG.info("summary: %s", stats_summary(last_stats).c_str());
+                next_summary = now + summary_ns;
+            }
             next_stats = now + stats_ns;
         }
     }
 
-    LOG_INFO("shutting down: %s", exit_reason);
+    LOG.info("shutting down: %s", exit_reason);
     // Shutdown has a few seconds: if something hangs (SteamVR's VR_Shutdown has
     // been seen to), exit anyway so the shim can start a fresh runtime.
     std::thread([] {
         std::this_thread::sleep_for(std::chrono::seconds(5));
-        LOG_ERROR("shutdown is stuck after 5 s; exiting now");
+        LOG.error("shutdown is stuck after 5 s; exiting now. Threads:");
+        for (const auto &line : diag::thread_report())
+            LOG.error("  %s", line.c_str());
         _exit(1);
     }).detach();
     dashboard->stop();
@@ -624,6 +867,6 @@ int main(int argc, char **argv) {
     eye_server.stop();
     steamvr.stop();
     dashboard->release_gpu();   // OpenVR wants its Vulkan objects to outlive the connection
-    LOG_INFO("stopped");
+    LOG.info("stopped");
     return 0;
 }

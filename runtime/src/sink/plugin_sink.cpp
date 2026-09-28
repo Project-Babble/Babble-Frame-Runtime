@@ -8,6 +8,10 @@
 
 #include <dlfcn.h>
 
+namespace {
+const babble::log::Logger LOG("plugin");
+} // namespace
+
 namespace babble {
 
 std::filesystem::path PluginSink::plugin_dir() { return paths::exe_path().parent_path() / "plugins"; }
@@ -40,35 +44,35 @@ PluginSink::~PluginSink() {
 
 bool PluginSink::start() {
     if (cfg_.value("library", "").empty()) {
-        LOG_ERROR("sink %s: plugin needs a \"library\"", name_.c_str());
+        LOG.error("sink %s: plugin needs a \"library\"", name_.c_str());
         return false;
     }
     handle_ = dlopen(library_.c_str(), RTLD_NOW | RTLD_LOCAL);
     if (!handle_) {
-        LOG_ERROR("sink %s: cannot load %s: %s", name_.c_str(), library_.c_str(), dlerror());
+        LOG.error("sink %s: cannot load %s: %s", name_.c_str(), library_.c_str(), dlerror());
         return false;
     }
     auto entry = reinterpret_cast<babble_output_plugin_v1_fn>(dlsym(handle_, BABBLE_OUTPUT_PLUGIN_ENTRY));
     api_ = entry ? entry() : nullptr;
     if (!api_ || api_->abi != BABBLE_OUTPUT_ABI || !api_->create || !api_->start || !api_->stop || !api_->destroy) {
-        LOG_ERROR("sink %s: %s is not an ABI %d output plugin", name_.c_str(), library_.c_str(), BABBLE_OUTPUT_ABI);
+        LOG.error("sink %s: %s is not an ABI %d output plugin", name_.c_str(), library_.c_str(), BABBLE_OUTPUT_ABI);
         api_ = nullptr;
         return false;
     }
     const std::string config = cfg_.value("config", nlohmann::json::object()).dump();
     instance_ = api_->create(&host_, name_.c_str(), config.c_str());
     if (!instance_) {
-        LOG_ERROR("sink %s: plugin %s refused its config", name_.c_str(), api_->name ? api_->name : "?");
+        LOG.error("sink %s: plugin %s refused its config", name_.c_str(), api_->name ? api_->name : "?");
         return false;
     }
     if (api_->start(instance_) != 0) {
-        LOG_ERROR("sink %s: plugin %s failed to start", name_.c_str(), api_->name ? api_->name : "?");
+        LOG.error("sink %s: plugin %s failed to start", name_.c_str(), api_->name ? api_->name : "?");
         api_->destroy(instance_);
         instance_ = nullptr;
         return false;
     }
     started_ = true;
-    LOG_INFO("sink %s: plugin %s %s loaded from %s", name_.c_str(), api_->name ? api_->name : "?",
+    LOG.info("sink %s: plugin %s %s loaded from %s", name_.c_str(), api_->name ? api_->name : "?",
              api_->version ? api_->version : "", library_.c_str());
     return true;
 }
@@ -137,10 +141,10 @@ void PluginSink::host_log(void *ctx, int level, const char *message) {
     auto *self = static_cast<PluginSink *>(ctx);
     const char *m = message ? message : "";
     switch (level) {
-    case BABBLE_LOG_DEBUG: LOG_DEBUG("%s: %s", self->name_.c_str(), m); break;
-    case BABBLE_LOG_WARN: LOG_WARN("%s: %s", self->name_.c_str(), m); break;
-    case BABBLE_LOG_ERROR: LOG_ERROR("%s: %s", self->name_.c_str(), m); break;
-    default: LOG_INFO("%s: %s", self->name_.c_str(), m); break;
+    case BABBLE_LOG_DEBUG: LOG.debug("%s: %s", self->name_.c_str(), m); break;
+    case BABBLE_LOG_WARN: LOG.warn("%s: %s", self->name_.c_str(), m); break;
+    case BABBLE_LOG_ERROR: LOG.error("%s: %s", self->name_.c_str(), m); break;
+    default: LOG.info("%s: %s", self->name_.c_str(), m); break;
     }
 }
 

@@ -12,6 +12,10 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 
+namespace {
+const babble::log::Logger LOG("v4l2");
+} // namespace
+
 namespace babble {
 
 namespace {
@@ -46,7 +50,7 @@ bool V4l2Controls::open(const std::string &node) {
     close();
     int fd = ::open(node.c_str(), O_RDWR | O_CLOEXEC);
     if (fd < 0) {
-        LOG_WARN("controls: cannot open %s: %s", node.c_str(), strerror(errno));
+        LOG.warn("controls: cannot open %s: %s", node.c_str(), strerror(errno));
         return false;
     }
     std::lock_guard<std::mutex> lock(mutex_);
@@ -63,7 +67,7 @@ bool V4l2Controls::open(const std::string &node) {
         }
         q.id |= V4L2_CTRL_FLAG_NEXT_CTRL | V4L2_CTRL_FLAG_NEXT_COMPOUND;
     }
-    LOG_INFO("controls: %s has %zu controls", node.c_str(), controls_.size());
+    LOG.info("controls: %s has %zu controls", node.c_str(), controls_.size());
     return true;
 }
 
@@ -121,12 +125,12 @@ bool V4l2Controls::set(std::string_view name, int64_t value) {
     std::lock_guard<std::mutex> lock(mutex_);
     const Info *info = find(name);
     if (!info || fd_ < 0) {
-        LOG_WARN("controls: %s has no control '%.*s'", node_.c_str(), int(name.size()), name.data());
+        LOG.warn("controls: %s has no control '%.*s'", node_.c_str(), int(name.size()), name.data());
         return false;
     }
     int64_t v = std::clamp(value, info->range.min, info->range.max);
     if (v != value)
-        LOG_WARN("controls: %.*s=%lld clamped to %lld", int(name.size()), name.data(), (long long)value,
+        LOG.warn("controls: %.*s=%lld clamped to %lld", int(name.size()), name.data(), (long long)value,
                  (long long)v);
     v4l2_ext_control c{};
     c.id = info->id;
@@ -139,7 +143,7 @@ bool V4l2Controls::set(std::string_view name, int64_t value) {
     cs.count = 1;
     cs.controls = &c;
     if (xioctl(fd_, VIDIOC_S_EXT_CTRLS, &cs) != 0) {
-        LOG_WARN("controls: set %.*s=%lld failed: %s", int(name.size()), name.data(), (long long)v, strerror(errno));
+        LOG.warn("controls: set %.*s=%lld failed: %s", int(name.size()), name.data(), (long long)v, strerror(errno));
         return false;
     }
     return true;

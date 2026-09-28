@@ -62,7 +62,6 @@ public:
     BabbleEye(const nlohmann::json &cfg, PipelineDeps deps) : PipelineBase(cfg, std::move(deps), "infE") {}
     ~BabbleEye() override;
     bool init() override;
-    void on_presence(bool worn) override;
     void set_tracking(bool on) override;
     bool set_option(const std::string &key, const nlohmann::json &value) override;
 
@@ -95,7 +94,9 @@ private:
     eye::OpennessCalibrator::Params openness_params() const;
     std::vector<eye::PupilTracker> trackers_;
     std::array<std::optional<double>, 2> smoothed_{};
-    void reset_session();
+    void start_session();   // pipeline thread: fresh calibration, filters, pupil trackers
+    std::vector<std::pair<SignalId, Signal>> neutral(uint64_t now_ns) const override;
+    void reset_session() override { reset_pending_ = true; }
     // Update rate: measured from frame times; the filters are tuned for tuned_.hz.
     void retune(double hz);
     void set_pupil_windows();

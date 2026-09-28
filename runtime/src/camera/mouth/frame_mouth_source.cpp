@@ -2,11 +2,16 @@
 
 #include "camera/v4l2/v4l2_subdev.h"
 #include "core/clock.h"
+#include "core/config.h"
 #include "core/log.h"
 #include "platform/camera_arbiter_client.h"
 #include "platform/steamvr_client.h"
 
 #include <cstdlib>
+
+namespace {
+const babble::log::Logger LOG("mouth");
+} // namespace
 
 namespace babble {
 
@@ -36,10 +41,10 @@ FrameMouthSource::FrameMouthSource(const nlohmann::json &cfg, SourceDeps deps)
 
     auto make = [&](const char *side, FrameOrigin origin, const char *thread_key, const char *thread_name) {
         V4l2Capture::Params p;
-        p.node = cfg_["nodes"].value(side, "");
-        p.width = cfg_["format"].value("width", 400);
-        p.height = cfg_["format"].value("height", 400);
-        p.fourcc = fourcc_from(cfg_["format"].value("fourcc", "BA81"));
+        p.node = section(cfg_, "nodes").value(side, "");
+        p.width = section(cfg_, "format").value("width", 400);
+        p.height = section(cfg_, "format").value("height", 400);
+        p.fourcc = fourcc_from(section(cfg_, "format").value("fourcc", "BA81"));
         p.buffers = cfg_.value("buffers", 6);
         p.origin = origin;
         p.thread = thread_spec(threads_cfg, thread_key, thread_name);
@@ -70,7 +75,7 @@ FrameMouthSource::~FrameMouthSource() {
 
 void FrameMouthSource::set_tracking(bool on) {
     if (on != tracking_)
-        LOG_INFO("%s: tracking turned %s", name_.c_str(), on ? "on" : "off");
+        LOG.info("%s: tracking turned %s", name_.c_str(), on ? "on" : "off");
     tracking_ = on;
 }
 
@@ -98,7 +103,7 @@ const char *FrameMouthSource::state_name() const {
 
 void FrameMouthSource::set_process_fps(double fps) {
     limiter_.set_fps(fps);
-    LOG_INFO("%s: process rate %.1f fps", name_.c_str(), fps);
+    LOG.info("%s: process rate %.1f fps", name_.c_str(), fps);
 }
 
 void FrameMouthSource::apply_control_set(const char *label, const nlohmann::json &set) {
@@ -110,7 +115,7 @@ void FrameMouthSource::apply_control_set(const char *label, const nlohmann::json
             values.emplace_back(it.key(), it.value().is_boolean() ? int64_t(it.value().get<bool>())
                                                                   : it.value().get<int64_t>());
     if (!controls_.set_many(values))
-        LOG_WARN("mouth: some %s controls were not applied", label);
+        LOG.warn("mouth: some %s controls were not applied", label);
 }
 
 bool FrameMouthSource::start() {
@@ -122,16 +127,16 @@ bool FrameMouthSource::start() {
     std::string entity;
     if (auto node = find_subdev_by_name(prefixes, &entity)) {
         if (controls_.open(*node))
-            LOG_INFO("mouth: controls via %s (%s)", node->c_str(), entity.c_str());
+            LOG.info("mouth: controls via %s (%s)", node->c_str(), entity.c_str());
     } else {
-        LOG_WARN("mouth: no sensor subdev matching the configured names; running without controls");
+        LOG.warn("mouth: no sensor subdev matching the configured names; running without controls");
     }
     apply_control_set("start", cfg_.value("controls_on_start", nlohmann::json::object()));
     // Remember what the strobe set overwrites so stop() can put it back.
     // Some of these pins double as sensor enables (pwm_pad_mode on the
     // primary powers the secondary sensor), so nothing may stay changed.
     saved_strobe_.clear();
-    const auto strobe_on = cfg_["strobe"].value("on", nlohmann::json::object());
+    const auto strobe_on = section(cfg_, "strobe").value("on", nlohmann::json::object());
     for (auto it = strobe_on.begin(); it != strobe_on.end(); ++it)
         if (auto v = controls_.get(it.key()))
             saved_strobe_.emplace_back(it.key(), *v);
@@ -151,7 +156,7 @@ bool FrameMouthSource::start() {
         return false;
     }
     last_error_.clear();
-    LOG_INFO("mouth: streaming (process %.1f fps)", limiter_.fps());
+    LOG.info("mouth: streaming (process %.1f fps)", limiter_.fps());
     return true;
 }
 
@@ -160,11 +165,11 @@ void FrameMouthSource::stop(const char *why) {
     right_->stop();
     pairer_.reset();
     if (controls_.is_open() && !saved_strobe_.empty() && !controls_.set_many(saved_strobe_))
-        LOG_WARN("mouth: could not restore all strobe controls");
+        LOG.warn("mouth: could not restore all strobe controls");
     saved_strobe_.clear();
-    apply_control_set("strobe off", cfg_["strobe"].value("off", nlohmann::json::object()));
+    apply_control_set("strobe off", section(cfg_, "strobe").value("off", nlohmann::json::object()));
     controls_.close();
-    LOG_INFO("mouth: stopped (%s)", why);
+    LOG.info("mouth: stopped (%s)", why);
 }
 
 void FrameMouthSource::tick(uint64_t now) {
@@ -195,7 +200,7 @@ void FrameMouthSource::tick(uint64_t now) {
         return;
     case State::Paused:
         if (!hold) {
-            LOG_INFO("%s: resuming", name_.c_str());
+            LOG.info("%s: resuming", name_.c_str());
             state_ = State::WaitingForRoute;
             retry_at_ns_ = 0;
         }

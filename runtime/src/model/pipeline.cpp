@@ -11,6 +11,10 @@
 
 #include <chrono>
 
+namespace {
+const babble::log::Logger LOG("pipeline");
+} // namespace
+
 namespace babble {
 
 const std::string &IPipeline::source() const {
@@ -30,7 +34,7 @@ std::unique_ptr<IPipeline> make_pipeline(const nlohmann::json &cfg, PipelineDeps
         return std::make_unique<SteamVrGaze>(cfg, std::move(deps));
     if (type == "null")
         return std::make_unique<NullPipeline>(cfg, std::move(deps));
-    LOG_ERROR("pipeline %s: unknown type '%s'", deps.name.c_str(), type.c_str());
+    LOG.error("pipeline %s: unknown type '%s'", deps.name.c_str(), type.c_str());
     return nullptr;
 }
 
@@ -52,7 +56,7 @@ bool PipelineBase::bind_input() {
         source_ = cfg_["inputs"][0].value("from", "");
     input_ = deps_.slot ? deps_.slot(source_) : nullptr;
     if (!input_) {
-        LOG_ERROR("pipeline %s: input source '%s' is not configured", name_.c_str(), source_.c_str());
+        LOG.error("pipeline %s: input source '%s' is not configured", name_.c_str(), source_.c_str());
         return false;
     }
     const std::string p = "pipe." + name_ + ".";
@@ -67,6 +71,28 @@ bool PipelineBase::bind_input() {
 std::filesystem::path PipelineBase::model_path(const std::string &key) const {
     std::filesystem::path p = cfg_.value(key, "");
     return p.is_absolute() ? p : deps_.models_dir / p;
+}
+
+void PipelineBase::hold(Hold reason, bool on) {
+    std::lock_guard lock(publish_mutex_);
+    const uint8_t before = held_;
+    held_ = on ? uint8_t(held_ | reason) : uint8_t(held_ & ~reason);
+    if (on && !(before & reason)) {
+        const auto values = neutral(mono_ns());
+        if (!values.empty())
+            deps_.state.update(values);
+        reset_session();
+    }
+}
+
+void PipelineBase::on_presence(bool worn) { hold(kHeadsetOff, !worn); }
+
+void PipelineBase::set_tracking(bool on) { hold(kFeedOff, !on); }
+
+void PipelineBase::publish(std::span<const std::pair<SignalId, Signal>> updates) {
+    std::lock_guard lock(publish_mutex_);
+    if (!held_)
+        deps_.state.update(updates);
 }
 
 void PipelineBase::start() {

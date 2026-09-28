@@ -19,6 +19,7 @@ namespace babble {
 class AppLauncher {
 public:
     AppLauncher(const nlohmann::json &cfg, std::string default_log);
+    ~AppLauncher();   // stops the app: it must not outlive the runtime (a restart would start a second one)
 
     bool available() const;   // the command exists and is executable
     bool running();           // also reaps the child once it exits

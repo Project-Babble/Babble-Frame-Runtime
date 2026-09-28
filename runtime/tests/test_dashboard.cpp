@@ -197,6 +197,31 @@ TEST_CASE("the settings page switches the mouth source and picks a USB camera on
     CHECK(view.page() == DashboardView::Page::Settings);
 }
 
+TEST_CASE("the diagnostics page switches verbose logging and asks for a file") {
+    DashboardView view;
+    REQUIRE(view.load_fonts(kFonts));
+    Canvas c(DashboardView::kWidth, DashboardView::kHeight);
+    Status s{true, Worn::Yes, on(Health::Working, 120), on(Health::Working, 90)};
+    view.set_page(DashboardView::Page::Settings);
+    view.render(c, s, rates(), std::nullopt);
+    view.click({DashboardView::kWidth - 56.f - 60, 74});   // Diagnostics, top right
+    REQUIRE(view.page() == DashboardView::Page::Diagnostics);
+
+    view.render(c, s, rates(), std::nullopt);
+    auto r = view.click({DashboardView::kWidth - 56.f - 46, 160 + 62});   // the verbose switch
+    REQUIRE(r.verbose);
+    CHECK(*r.verbose);
+    s.verbose_minutes_left = 9;
+    view.render(c, s, rates(), std::nullopt);
+    r = view.click({DashboardView::kWidth - 56.f - 46, 160 + 62});
+    REQUIRE(r.verbose);
+    CHECK_FALSE(*r.verbose);   // on: the same switch turns it off
+    CHECK(view.click({DashboardView::kWidth - 56.f - 60, 284 + 62}).write_diagnostics);
+
+    view.click({60, 70});   // back to Settings
+    CHECK(view.page() == DashboardView::Page::Settings);
+}
+
 TEST_CASE("the restart button on the settings page needs a second click") {
     DashboardView view;
     REQUIRE(view.load_fonts(kFonts));

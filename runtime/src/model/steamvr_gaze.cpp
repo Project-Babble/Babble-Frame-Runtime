@@ -12,6 +12,10 @@
 #include <cmath>
 #include <fstream>
 
+namespace {
+const babble::log::Logger LOG("pipe.gaze");
+} // namespace
+
 namespace babble {
 
 namespace gaze {
@@ -98,19 +102,19 @@ std::optional<bool> parse_gaze_source(const nlohmann::json &v) {
 
 bool SteamVrGaze::init() {
     if (!deps_.steamvr) {
-        LOG_ERROR("pipeline %s: needs the SteamVR client", name_.c_str());
+        LOG.error("pipeline %s: needs the SteamVR client", name_.c_str());
         return false;
     }
     if (cfg_.contains("ipd") && cfg_["ipd"].is_number())
         ipd_override_ = cfg_["ipd"].get<double>();
     const std::string scaling = cfg_.value("scaling", "tangent");
     if (scaling != "tangent" && scaling != "angle") {
-        LOG_ERROR("pipeline %s: scaling must be tangent or angle", name_.c_str());
+        LOG.error("pipeline %s: scaling must be tangent or angle", name_.c_str());
         return false;
     }
     auto source = parse_gaze_source(cfg_.value("gaze_source", nlohmann::json("independent")));
     if (!source) {
-        LOG_ERROR("pipeline %s: gaze_source must be independent or combined", name_.c_str());
+        LOG.error("pipeline %s: gaze_source must be independent or combined", name_.c_str());
         return false;
     }
     independent_ = *source;
@@ -129,7 +133,7 @@ bool SteamVrGaze::init() {
     deps_.stats.add(p + "reconnects", &reconnects_);
     deps_.stats.add(p + "fallback", &fallback_);
     stats_registered_ = true;
-    LOG_INFO("pipeline %s: SteamVR eye gaze at %.0f Hz, %s, %s scaling", name_.c_str(), cfg_.value("rate_hz", 90.0),
+    LOG.info("pipeline %s: SteamVR eye gaze at %.0f Hz, %s, %s scaling", name_.c_str(), cfg_.value("rate_hz", 90.0),
              independent_ ? "independent per-eye" : "combined", scaling.c_str());
     return true;
 }
@@ -141,7 +145,7 @@ bool SteamVrGaze::set_option(const std::string &key, const nlohmann::json &value
     if (!source)
         return false;
     if (*source != independent_.exchange(*source))
-        LOG_INFO("pipeline %s: gaze source %s", name_.c_str(), *source ? "independent per-eye" : "combined");
+        LOG.info("pipeline %s: gaze source %s", name_.c_str(), *source ? "independent per-eye" : "combined");
     return true;
 }
 
@@ -261,7 +265,7 @@ void SteamVrGaze::run() {
 
         if (used != Using::None) {
             if (used != using_ && independent_)
-                LOG_INFO("pipeline %s: %s", name_.c_str(),
+                LOG.info("pipeline %s: %s", name_.c_str(),
                          used == Using::Independent ? "independent per-eye gaze"
                                                     : "independent gaze unavailable; using SteamVR's combined gaze");
             using_ = used;

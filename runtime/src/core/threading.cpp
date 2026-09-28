@@ -10,6 +10,10 @@
 #include <sys/resource.h>
 #include <unistd.h>
 
+namespace {
+const babble::log::Logger LOG("core");
+} // namespace
+
 namespace babble {
 
 ThreadSpec thread_spec(const nlohmann::json &threads_cfg, const std::string &key, const char *default_name) {
@@ -41,7 +45,7 @@ void apply_thread_spec(const ThreadSpec &spec) {
             if (c >= 0 && c < CPU_SETSIZE)
                 CPU_SET(c, &set);
         if (sched_setaffinity(0, sizeof(set), &set) != 0)
-            LOG_WARN("%s: sched_setaffinity failed: %s", name.c_str(), strerror(errno));
+            LOG.warn("%s: sched_setaffinity failed: %s", name.c_str(), strerror(errno));
     }
     if (spec.nice < 0) {
         // SteamVR's service grants a hard RLIMIT_NICE above the soft one;
@@ -55,7 +59,7 @@ void apply_thread_spec(const ThreadSpec &spec) {
     if (spec.nice != 0) {
         // Per-thread nice: PRIO_PROCESS with the kernel tid affects only this thread.
         if (setpriority(PRIO_PROCESS, gettid(), spec.nice) != 0)
-            LOG_WARN("%s: setpriority(%d) refused: %s", name.c_str(), spec.nice, strerror(errno));
+            LOG.warn("%s: setpriority(%d) refused: %s", name.c_str(), spec.nice, strerror(errno));
     }
 }
 

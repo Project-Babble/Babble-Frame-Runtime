@@ -85,6 +85,7 @@ private:
     std::thread thread_;
     std::atomic<bool> stop_{false};
     std::atomic<bool> failed_{false};
+    std::atomic<bool> opened_{false};   // the thread opened the camera (Streaming until then means "opening")
     std::string thread_error_;   // written by the thread before failed_
 
     State state_ = State::Disabled;

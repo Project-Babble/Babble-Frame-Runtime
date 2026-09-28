@@ -13,6 +13,10 @@
 #include <cmath>
 #include <mutex>
 
+namespace {
+const babble::log::Logger LOG("steamvr");
+} // namespace
+
 namespace babble {
 
 SteamVrClient::~SteamVrClient() { stop(); }
@@ -51,7 +55,7 @@ bool SteamVrClient::connect() {
                                                             vr::Prop_ContainsProximitySensor_Bool, &perr);
     connected_ = true;
     connection_++;
-    LOG_INFO("steamvr: connected (headset %s a proximity sensor)", has_prox_ ? "has" : "reports no");
+    LOG.info("steamvr: connected (headset %s a proximity sensor)", has_prox_ ? "has" : "reports no");
     return true;
 }
 
@@ -101,7 +105,7 @@ bool SteamVrClient::setup_input() {
         prox_action_ = prox;
         gaze_action_ = gaze;
     });
-    LOG_INFO("steamvr: input manifest %s", ok ? "ready (proximity + eye tracking)" : "setup FAILED");
+    LOG.info("steamvr: input manifest %s", ok ? "ready (proximity + eye tracking)" : "setup FAILED");
     return ok;
 }
 
@@ -121,7 +125,7 @@ std::optional<bool> SteamVrClient::read_proximity() {
             out = d.bState;
     });
     if (out && !prox_reported_) {
-        LOG_INFO("steamvr: using the raw proximity sensor for presence");
+        LOG.info("steamvr: using the raw proximity sensor for presence");
         prox_reported_ = true;
     }
     return out;
@@ -150,7 +154,7 @@ void SteamVrClient::refresh_activity() {
     }
     Worn prev = worn_.exchange(w);
     if (prev != w)
-        LOG_INFO("steamvr: headset %s (activity level %d)", to_string(w), int(level));
+        LOG.info("steamvr: headset %s (activity level %d)", to_string(w), int(level));
 }
 
 void SteamVrClient::refresh_ipd() {
@@ -164,7 +168,7 @@ void SteamVrClient::refresh_ipd() {
     if (err != vr::TrackedProp_Success || !(v > 0.045f && v < 0.085f))
         return;
     if (std::fabs(v - ipd_.load()) > 1e-5)
-        LOG_INFO("steamvr: IPD %.1f mm", v * 1000.0);
+        LOG.info("steamvr: IPD %.1f mm", v * 1000.0);
     ipd_ = v;
 }
 
@@ -207,7 +211,7 @@ void SteamVrClient::run() {
                 vr::VRSystem()->AcknowledgeQuit_Exiting();
         });
         if (quit) {
-            LOG_INFO("steamvr: SteamVR is quitting; disconnecting");
+            LOG.info("steamvr: SteamVR is quitting; disconnecting");
             disconnect();
             continue;
         }

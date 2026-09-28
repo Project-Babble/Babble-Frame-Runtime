@@ -29,6 +29,7 @@ find_package(executorch CONFIG REQUIRED
 
 add_library(babble_core STATIC
     src/core/config.cpp
+    src/core/crash.cpp
     src/core/lifecycle.cpp
     src/core/log.cpp
     src/core/metrics.cpp
@@ -50,6 +51,7 @@ add_library(babble_core STATIC
     src/camera/usb/uvc.cpp
     src/camera/usb/uvc_camera.cpp
     src/platform/app_launcher.cpp
+    src/platform/diagnostics.cpp
     src/platform/camera_arbiter_client.cpp
     src/platform/eye_server_client.cpp
     src/platform/media_graph.cpp
@@ -104,7 +106,8 @@ target_link_libraries(babble_runtime PRIVATE babble_core)
 # libopenvr_api.so (SteamVR client, for eye gaze) ships next to the binary.
 set_target_properties(babble_runtime PROPERTIES OUTPUT_NAME babble-runtime
     BUILD_RPATH "${THIRD_PARTY}/openvr/lib/linuxarm64" INSTALL_RPATH "$ORIGIN")
-target_link_options(babble_runtime PRIVATE "-Wl,-rpath,$ORIGIN")
+target_link_options(babble_runtime PRIVATE "-Wl,-rpath,$ORIGIN"
+    -rdynamic)   # function names in crash backtraces (core/crash.cpp)
 if(NOT BABBLE_ASAN)
     # Ships inside a Steam depot: no dependency on the OS's libstdc++.
     target_link_options(babble_runtime PRIVATE -static-libstdc++ -static-libgcc)
@@ -146,6 +149,8 @@ if(BABBLE_TESTS)
         tests/test_plugin_sink.cpp
         tests/test_link_sink.cpp
         tests/test_babble_tracker.cpp
+        tests/test_pipeline_base.cpp
+        tests/test_log.cpp
     )
     target_link_libraries(babble_tests PRIVATE babble_core)
     set_target_properties(babble_tests PROPERTIES BUILD_RPATH "${THIRD_PARTY}/openvr/lib/linuxarm64")

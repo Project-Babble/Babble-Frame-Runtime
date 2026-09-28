@@ -32,13 +32,14 @@ class FusionNetMouth : public PipelineBase {
 public:
     FusionNetMouth(const nlohmann::json &cfg, PipelineDeps deps) : PipelineBase(cfg, std::move(deps), "infM") {}
     bool init() override;
-    void on_presence(bool worn) override;
 
     // Preprocess one stereo pair into the two model inputs (exposed for tests).
     void prepare(const StereoFrame &sf, float *view0, float *view1);
 
 private:
     void process(const StereoFrame &frames) override;
+    std::vector<std::pair<SignalId, Signal>> neutral(uint64_t now_ns) const override;
+    void reset_session() override { reset_pending_ = true; }
 
     bool swap_ = false, flip_l_ = false, flip_r_ = true, area_ = false;
     int quarter_turns_ = 0;

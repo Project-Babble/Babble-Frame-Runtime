@@ -5,6 +5,10 @@
 #include "model/null_model_runner.h"
 #include "model/preprocess.h"
 
+namespace {
+const babble::log::Logger LOG("pipeline");
+} // namespace
+
 namespace babble {
 
 bool NullPipeline::init() {
@@ -29,7 +33,7 @@ bool NullPipeline::init() {
         in_buffers_.emplace_back(s.bytes());
     for (const auto &s : runner_->outputs())
         out_buffers_.emplace_back(s.bytes());
-    LOG_INFO("pipeline %s: null runner on source %s", name_.c_str(), source_.c_str());
+    LOG.info("pipeline %s: null runner on source %s", name_.c_str(), source_.c_str());
     return true;
 }
 
@@ -56,7 +60,7 @@ void NullPipeline::process(const StereoFrame &sf) {
         for (size_t k = 0; k < out_signals_[o].size(); k++)
             updates.emplace_back(out_signals_[o][k], Signal{vals[k], 1.0f, sf.capture_ns});
     }
-    deps_.state.update(updates);
+    publish(updates);
 }
 
 } // namespace babble

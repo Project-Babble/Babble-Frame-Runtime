@@ -114,6 +114,14 @@ int main(int argc, char **argv) {
     none.active_camera.clear();
     view.render(c, none, choices, std::nullopt);
     save(c, "cameras_none");
+    Status diag = tracking;
+    diag.verbose_minutes_left = 7;
+    diag.last_diagnostics = "/home/steamos/.local/state/babble-frame-runtime/diag-20260927-191502.txt";
+    diag.log_file = "/home/steamos/.local/state/babble-frame-runtime/runtime.log";
+    diag.stats_file = "/home/steamos/.local/state/babble-frame-runtime/stats.jsonl";
+    view.set_page(DashboardView::Page::Diagnostics);
+    view.render(c, diag, choices, std::nullopt);
+    save(c, "diagnostics");
 
     // Render cost (what the dashboard thread pays per redraw).
     {

@@ -14,6 +14,10 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+namespace {
+const babble::log::Logger LOG("osc");
+} // namespace
+
 namespace babble {
 
 void OscDestination::set(const sockaddr_in &to) {
@@ -64,18 +68,18 @@ bool OscSink::start() {
     dest_.sin_family = AF_INET;
     dest_.sin_port = htons(uint16_t(port_));
     if (!destination_ && inet_pton(AF_INET, host_.c_str(), &dest_.sin_addr) != 1) {
-        LOG_ERROR("%s: '%s' is not an IPv4 address", name_.c_str(), host_.c_str());
+        LOG.error("%s: '%s' is not an IPv4 address", name_.c_str(), host_.c_str());
         return false;
     }
     sock_ = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
     if (sock_ < 0) {
-        LOG_ERROR("%s: socket failed: %s", name_.c_str(), strerror(errno));
+        LOG.error("%s: socket failed: %s", name_.c_str(), strerror(errno));
         return false;
     }
     stop_ = false;
     thread_ = start_thread(thread_spec_, [this] { run(); });
     if (!destination_)
-        LOG_INFO("%s: sending OSC to %s:%d%s%s", name_.c_str(), host_.c_str(), port_,
+        LOG.info("%s: sending OSC to %s:%d%s%s", name_.c_str(), host_.c_str(), port_,
                  prefix_.empty() ? "" : (" prefix " + prefix_).c_str(), test_pattern_ ? " (TEST PATTERN)" : "");
     return true;
 }
@@ -105,7 +109,7 @@ void OscSink::send(const std::string &address, float value) {
     if (now - last_error_log_ns_ > 5000000000ull) {
         char ip[INET_ADDRSTRLEN] = "?";
         inet_ntop(AF_INET, &dest_.sin_addr, ip, sizeof(ip));
-        LOG_WARN("%s: send to %s:%d failed: %s", name_.c_str(), ip, ntohs(dest_.sin_port), strerror(errno));
+        LOG.warn("%s: send to %s:%d failed: %s", name_.c_str(), ip, ntohs(dest_.sin_port), strerror(errno));
         last_error_log_ns_ = now;
     }
 }
