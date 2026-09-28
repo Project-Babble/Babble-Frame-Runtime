@@ -1,11 +1,12 @@
 cmake_minimum_required(VERSION 3.16)
 project(babble_frame_runtime CXX)
 
-# Version: "V<feature/major>.<bugfix/incremental> <Alpha|Beta|RC|Release>",
-# e.g. "V0.1 Alpha". Release builds pass it in (-DBABBLE_VERSION="V0.2 Beta";
-# "V0.2-Beta" also works, for use as a git tag). Otherwise it comes from the
+# Version: "V<feature/major>.<bugfix/incremental> <Alpha|Beta|RC|Release> [N]",
+# e.g. "V0.1 Alpha" or "V0.1 Alpha 2" (the Nth build of that stage). Release
+# builds pass it in (-DBABBLE_VERSION="V0.2 Beta 1"; hyphens instead of spaces,
+# "V0.2-Beta-1", also work, for use as a git tag). Otherwise it comes from the
 # VERSION file and the build is marked as a dev build with its commit.
-set(BABBLE_VERSION "" CACHE STRING "Release version, \"Vx.x Stage\"; empty = VERSION file, dev build")
+set(BABBLE_VERSION "" CACHE STRING "Release version, \"Vx.x Stage [N]\"; empty = VERSION file, dev build")
 if(BABBLE_VERSION)
     set(babble_version "${BABBLE_VERSION}")
     set(babble_dev OFF)
@@ -15,9 +16,10 @@ else()
     set(babble_dev ON)
 endif()
 string(STRIP "${babble_version}" babble_version)
-string(REGEX REPLACE "^(V[0-9]+\\.[0-9]+)-" "\\1 " babble_version "${babble_version}")
-if(NOT babble_version MATCHES "^V[0-9]+\\.[0-9]+ (Alpha|Beta|RC|Release)$")
-    message(FATAL_ERROR "Version \"${babble_version}\" is not \"Vx.x Stage\" (Stage: Alpha, Beta, RC or Release)")
+string(REPLACE "-" " " babble_version "${babble_version}")   # the git-tag spelling
+if(NOT babble_version MATCHES "^V[0-9]+\\.[0-9]+ (Alpha|Beta|RC|Release)( [0-9]+)?$")
+    message(FATAL_ERROR "Version \"${babble_version}\" is not \"Vx.x Stage [N]\" "
+                        "(Stage: Alpha, Beta, RC or Release; N optional, e.g. \"V0.1 Alpha 2\")")
 endif()
 message(STATUS "Babble version: ${babble_version}")
 
