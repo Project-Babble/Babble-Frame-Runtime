@@ -18,21 +18,33 @@ namespace babble {
 
 class ExpressionState;
 
+// A UDP socket shared between threads; closed when the last owner lets go.
+struct SharedSocket {
+    explicit SharedSocket(int f) : fd(f) {}
+    ~SharedSocket();
+    SharedSocket(const SharedSocket &) = delete;
+    SharedSocket &operator=(const SharedSocket &) = delete;
+    int fd = -1;
+};
+
 // A destination that changes while an OscSink runs (set by the PC link,
 // sink/link_sink.h). Unset means: send nothing. Every set() starts a new
 // generation, after which the sink resends every signal's current value, so a
-// new receiver (or one reached over a new path) gets the full state.
+// new receiver (or one reached over a new path) gets the full state. With a
+// socket, the sink sends from it (the link's path socket, so the data shares
+// the firewall-approved pair its pings use) instead of its own.
 class OscDestination {
 public:
-    void set(const sockaddr_in &to);
+    void set(const sockaddr_in &to, std::shared_ptr<SharedSocket> via = nullptr);
     void clear();
-    // False while unset; otherwise the address and its generation.
-    bool get(sockaddr_in *to, uint64_t *generation) const;
+    // False while unset; otherwise the address, its generation and the socket to send from (may be null).
+    bool get(sockaddr_in *to, uint64_t *generation, std::shared_ptr<SharedSocket> *via = nullptr) const;
 
 private:
     mutable std::mutex mutex_;
     bool valid_ = false;
     sockaddr_in to_{};
+    std::shared_ptr<SharedSocket> via_;
     uint64_t generation_ = 0;
 };
 
@@ -53,6 +65,8 @@ private:
 //   exclude           ["signalName", ...] never sent (nor are internal
 //                     signals, whose names start with '_')
 //   max_rate_hz       cap on send batches per second (0 = every update)
+//   bundle            pack each batch into OSC bundles of up to ~1400 bytes
+//                     instead of a datagram per signal (the PC link does)
 //   test_pattern      true: send slowly moving values for every signal
 //                     instead of tracking data (to test the receiving end)
 class OscSink : public ISink {
@@ -65,9 +79,13 @@ public:
     bool start() override;
     void stop() override;
 
+    uint64_t sent() const { return messages_.total(); }   // values sent so far
+
 private:
     void run();
     void send(const std::string &address, float value);
+    void send_datagram(const uint8_t *data, size_t n, size_t values);
+    void flush();   // the pending bundle
 
     std::string name_;
     ThreadSpec thread_spec_;
@@ -80,10 +98,14 @@ private:
     std::vector<std::string> exclude_;
     double max_rate_hz_ = 0;
     bool test_pattern_ = false;
+    bool bundle_ = false;
+    std::vector<uint8_t> pending_;   // the bundle being filled
+    size_t pending_values_ = 0;
 
     int sock_ = -1;
     sockaddr_in dest_{};
     std::shared_ptr<OscDestination> destination_;   // dynamic target, or null for host/port
+    std::shared_ptr<SharedSocket> via_;             // the destination's socket for this batch, if any
     std::thread thread_;
     std::atomic<bool> stop_{false};
 

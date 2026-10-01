@@ -82,6 +82,7 @@ TEST_CASE("the SteamVR Settings section maps to live runtime settings") {
     std::map<std::string, std::pair<std::string, Type>> want = {
         {"mouthTracking", {"/sources/mouth/tracking", Type::Bool}},
         {"mouthSource", {"/mouth_source", Type::String}},
+        {"output", {"/output", Type::String}},
         {"mouthRate", {"/sources/mouth/process_fps", Type::Int}},
         {"eyeTracking", {"/sources/eye/tracking", Type::Bool}},
         {"eyeRate", {"/sources/eye/process_fps", Type::Int}},
@@ -102,6 +103,7 @@ TEST_CASE("the SteamVR Settings section maps to live runtime settings") {
     CHECK((*d)["pipelines"]["gaze"]["gaze_source"] == "independent");
     CHECK((*d)["dashboard"]["enabled"] == false);   // the debug overlay is opt-in
     CHECK((*d)["mouth_source"] == "frunk");         // the Frame's own mouth cameras unless USB is chosen
+    CHECK((*d)["output"] == "vrcft");               // VRCFaceTracking unless VRChat Native is chosen
 
     // An id that isn't a bool/number/string setting is dropped rather than mirrored.
     json cfg = *d;

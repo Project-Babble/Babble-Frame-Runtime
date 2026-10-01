@@ -297,3 +297,36 @@ TEST_CASE("the logo becomes the tab thumbnail, with a badge fallback") {
     CHECK(centre[1] > centre[0]);   // the logo's green background
     CHECK(centre[1] > centre[2]);
 }
+
+TEST_CASE("an on/off setting shows as a switch that reports the flipped value") {
+    DashboardView view;
+    REQUIRE(view.load_fonts(kFonts));
+    Canvas c(DashboardView::kWidth, DashboardView::kHeight);
+    auto choices = rates();
+    Choice force{"/sinks/camera_stream/active", "Camera stream", "", "", {0, 1}, 0};
+    force.boolean = true;
+    force.diagnostics = true;
+    choices.push_back(force);
+    Status s{true, Worn::Yes, on(Health::Working, 120), on(Health::Working, 90)};
+    view.render(c, s, choices, std::nullopt);
+    view.click(cog());
+    view.render(c, s, choices, std::nullopt);
+    // Not on the Settings page: its third row is Mouth source.
+    const Point sw{DashboardView::kWidth - 56.f - 46, 160 + 2 * 124 + 62};
+    CHECK_FALSE(view.click(sw).setting);
+
+    // On Diagnostics, after verbose logging and the file row.
+    view.click({DashboardView::kWidth - 56.f - 60, 74});
+    view.render(c, s, choices, std::nullopt);
+    REQUIRE(view.page() == DashboardView::Page::Diagnostics);
+    auto r = view.click(sw);
+    REQUIRE(r.setting);
+    CHECK(r.setting->first == 2);
+    CHECK(r.setting->second == 1);
+
+    choices[2].value = 1;
+    view.render(c, s, choices, std::nullopt);
+    r = view.click(sw);
+    REQUIRE(r.setting);
+    CHECK(r.setting->second == 0);
+}

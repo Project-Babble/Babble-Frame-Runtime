@@ -76,6 +76,16 @@
 				"requires" : { "/settings/driver_babble/eyeTracking" : true }
 			},
 			{
+				"name" : "/settings/driver_babble/output",
+				"control" : "segment",
+				"label" : "Output",
+				"text" : "Where tracking goes. VRCFaceTracking: the Babble module in VRCFaceTracking on your PC. VRChat Native: straight into VRChat's own face tracking, on the PC you stream from or on the Frame.",
+				"options" : [
+					{ "value" : "vrcft", "label" : "VRCFaceTracking" },
+					{ "value" : "vrc_native", "label" : "VRChat Native" }
+				]
+			},
+			{
 				"name" : "/settings/driver_babble/debugOverlay",
 				"control" : "toggle",
 				"label" : "Debug Overlay",

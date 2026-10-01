@@ -4,6 +4,7 @@
 		"mouthTracking" : true,
 		"mouthSource" : "frunk",
 		"mouthRate" : 120,
+		"output" : "vrcft",
 		"eyeTracking" : true,
 		"eyeRate" : 90,
 		"opennessSource" : "model",
