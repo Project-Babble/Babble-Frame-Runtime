@@ -44,10 +44,11 @@ inline constexpr size_t kOpenness = 0x79;        // f32[2]
 
 using Vec3 = std::array<float, 3>;
 
-// Per-eye arrays follow the eye cameras' order, like the DSP eye source:
-// index 0 is the wearer's RIGHT eye, 1 the left (seen on hardware with the
-// independent gaze; frameeyeosc assumes left, right).
-inline constexpr int kRightEye = 0, kLeftEye = 1;
+// Per-eye arrays: index 0 is the wearer's left eye, 1 the right, as
+// frameeyeosc reads them ("left, right"). Confirmed in VRChat for gaze
+// (convergence) and closed eyes. The mirrored visualizer shows the sides
+// swapped; judge sides in game, not there.
+inline constexpr int kLeftEye = 0, kRightEye = 1;
 
 // One eye-service sample; per-eye arrays indexed kRightEye / kLeftEye.
 // Directions: +x right, +y up, -z forward (head space).

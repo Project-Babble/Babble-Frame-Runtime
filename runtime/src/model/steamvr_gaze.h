@@ -17,28 +17,32 @@ struct Offsets {
     double roll_deg = 0, yaw_deg = 0, pitch_deg = 0;
 };
 
+// Angles, as frameeyeosc's gaze_angles() takes them (konsti219/frameeyeosc,
+// src/main.rs): yaw = atan2(x, -z) and pitch = atan2(y, -z), each axis on its
+// own (pitch is the vertical angle in the y-z plane, not the elevation).
+//
 // How angles become the values sent to the Baballonia module (which copies
 // them into VRCFT's Eye.Gaze):
-//  Tangent: tan(angle). VRCFT reads Gaze as tangents (Vector2.ToYaw =
-//           atan(x), ToPitch = -atan(y), VRCFaceTracking.Core/Types/Vector2.cs),
-//           so this is the documented meaning. Default.
-//  Angle:   angle / max_deg, as eye_osc_pc.py sends it; VRCFT then over-reads
-//           mid-range angles by up to ~4 deg (30 deg arrives as 33.7).
+//  Angle:   angle / max_deg, so +-45 deg is +-1: gaze_angles() and Steam
+//           Link's own OSC sender. Default.
+//  Tangent: tan(angle), what VRCFT's Vector2.ToYaw/ToPitch strictly assume
+//           (atan(x) / -atan(y)); with these angles that is x/z and y/z.
 enum class Scaling { Tangent, Angle };
 
 // eye_osc_pc.py SteamLinkGaze.convert: head-local look point (+x right, +y
 // up, forward along -z in OpenVR, length = distance in m) -> (left yaw,
 // right yaw, pitch); positive = right / up. Each eye sits ipd/2 from the head
-// centre and gets its own yaw towards the point. Angles are limited to
-// +-max_deg, then scaled per `scaling`. nullopt for a degenerate vector.
+// centre and gets its own yaw towards the point; pitch as gaze_angles().
+// Angles are limited to +-max_deg, then scaled per `scaling`. nullopt for a
+// degenerate vector.
 std::optional<std::array<double, 3>> convert(double x, double y, double z, double ipd, double max_deg, bool flip_y,
-                                             const Offsets &off, Scaling scaling = Scaling::Tangent);
+                                             const Offsets &off, Scaling scaling = Scaling::Angle);
 
 // One eye's own gaze direction (head space, +x right, +y up, forward along
-// -z) -> (yaw, pitch) for that eye, limited and scaled like convert().
-// nullopt for a degenerate vector.
+// -z) -> (yaw, pitch) for that eye: gaze_angles(), limited and scaled like
+// convert(). nullopt for a degenerate vector.
 std::optional<std::array<double, 2>> from_direction(double x, double y, double z, double max_deg, bool flip_y,
-                                                    const Offsets &off, Scaling scaling = Scaling::Tangent);
+                                                    const Offsets &off, Scaling scaling = Scaling::Angle);
 
 } // namespace gaze
 
@@ -56,7 +60,7 @@ std::optional<std::array<double, 2>> from_direction(double x, double y, double z
 // SteamVR (the shared client re-reads it on VREvent_IpdChanged).
 //
 // Config: thread, rate_hz (90), ipd ("auto" = from SteamVR, or metres to
-// override; 0.063 is the fallback), scaling ("tangent" | "angle"),
+// override; 0.063 is the fallback), scaling ("angle" | "tangent"),
 // max_deg (45), flip_y (false),
 // yaw_offset/pitch_offset/roll_offset (deg), stale_s (0.5), feed ("eye":
 // the eye feed's on/off also switches gaze), gaze_source (live option):
@@ -106,7 +110,7 @@ private:
     Counter invalid_, reconnects_, fallback_;
     double max_deg_ = 45, stale_ns_ = 5e8;
     bool flip_y_ = false;
-    gaze::Scaling scaling_ = gaze::Scaling::Tangent;
+    gaze::Scaling scaling_ = gaze::Scaling::Angle;
     gaze::Offsets off_;
     bool stats_registered_ = false;
 };

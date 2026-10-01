@@ -57,7 +57,7 @@ std::optional<std::array<double, 3>> convert(double x, double y, double z, doubl
     const double half_ipd = ipd / 2;
     return std::array<double, 3>{scale(std::atan2(x + half_ipd, z), max_deg, scaling),
                                  scale(std::atan2(x - half_ipd, z), max_deg, scaling),
-                                 scale(std::atan2(y, std::hypot(x, z)), max_deg, scaling)};
+                                 scale(std::atan2(y, z), max_deg, scaling)};
 }
 
 std::optional<std::array<double, 2>> from_direction(double x, double y, double z, double max_deg, bool flip_y,
@@ -68,8 +68,7 @@ std::optional<std::array<double, 2>> from_direction(double x, double y, double z
     if (flip_y)
         y = -y;
     rotate(x, y, z, off);
-    return std::array<double, 2>{scale(std::atan2(x, z), max_deg, scaling),
-                                 scale(std::atan2(y, std::hypot(x, z)), max_deg, scaling)};
+    return std::array<double, 2>{scale(std::atan2(x, z), max_deg, scaling), scale(std::atan2(y, z), max_deg, scaling)};
 }
 
 } // namespace gaze
@@ -107,7 +106,7 @@ bool SteamVrGaze::init() {
     }
     if (cfg_.contains("ipd") && cfg_["ipd"].is_number())
         ipd_override_ = cfg_["ipd"].get<double>();
-    const std::string scaling = cfg_.value("scaling", "tangent");
+    const std::string scaling = cfg_.value("scaling", "angle");
     if (scaling != "tangent" && scaling != "angle") {
         LOG.error("pipeline %s: scaling must be tangent or angle", name_.c_str());
         return false;
@@ -118,7 +117,7 @@ bool SteamVrGaze::init() {
         return false;
     }
     independent_ = *source;
-    scaling_ = scaling == "angle" ? gaze::Scaling::Angle : gaze::Scaling::Tangent;
+    scaling_ = scaling == "tangent" ? gaze::Scaling::Tangent : gaze::Scaling::Angle;
     max_deg_ = cfg_.value("max_deg", 45.0);
     flip_y_ = cfg_.value("flip_y", false);
     stale_ns_ = cfg_.value("stale_s", 0.5) * 1e9;

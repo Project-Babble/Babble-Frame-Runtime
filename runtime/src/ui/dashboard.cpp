@@ -164,8 +164,10 @@ std::array<EyeReading, 2> Dashboard::read_eyes() const {
                      &dil = s[7];
         EyeReading &r = out[e];
         r.gaze = recent(x) || recent(y);
-        r.yaw_deg = std::atan(x.value) * 180 / M_PI;   // the gaze outputs are tan(angle)
-        r.pitch_deg = std::atan(y.value) * 180 / M_PI;
+        // The gaze outputs are angles scaled so +-45 deg is +-1 (the gaze
+        // pipeline's default "angle" scaling, as frameeyeosc's gaze_angles()).
+        r.yaw_deg = double(x.value) * 45;
+        r.pitch_deg = double(y.value) * 45;
         r.lid = recent(lid);
         r.openness = lid.value;
         r.widen = widen.value;
