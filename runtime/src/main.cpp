@@ -24,6 +24,7 @@
 #include "platform/steamvr_client.h"
 #include "platform/steamvr_settings.h"
 #include "sink/link_sink.h"
+#include "sink/vrc_native_sink.h"
 #include "sink/sink.h"
 #include "state/expression_state.h"
 #include "ui/dashboard.h"
@@ -37,6 +38,7 @@
 #include <algorithm>
 #include <chrono>
 #include <map>
+#include <set>
 #include <memory>
 #include <optional>
 #include <sstream>
@@ -193,6 +195,16 @@ void open_log_file(const json &c, bool supervised) {
 // The settings panel's rows (config["dashboard"]["settings"]), with the
 // current values from the config. Rows whose setting doesn't exist (e.g. a
 // source that isn't configured) are left out.
+// Settings the debug overlay changes for this run only ("persist": false):
+// never written to settings.json.
+std::set<std::string> unsaved_settings(const json &cfg) {
+    std::set<std::string> out;
+    for (const json &row : section(cfg, "dashboard").value("settings", json::array()))
+        if (!row.value("persist", true))
+            out.insert(row.value("id", ""));
+    return out;
+}
+
 std::vector<ui::Choice> dashboard_choices(const json &cfg) {
     std::vector<ui::Choice> out;
     for (const json &row : section(cfg, "dashboard").value("settings", json::array())) {
@@ -205,13 +217,15 @@ std::vector<ui::Choice> dashboard_choices(const json &cfg) {
             LOG.warn("dashboard: ignoring setting with a bad id '%s'", c.id.c_str());
             continue;
         }
-        if (!cfg.contains(ptr) || !cfg[ptr].is_number())
+        if (!cfg.contains(ptr) || !(cfg[ptr].is_number() || cfg[ptr].is_boolean()))
             continue;
         c.label = row.value("label", c.id);
         c.hint = row.value("hint", "");
         c.unit = row.value("unit", "");
-        c.options = row.value("options", std::vector<double>{});
-        c.value = cfg[ptr].get<double>();
+        c.boolean = cfg[ptr].is_boolean();
+        c.diagnostics = row.value("page", "settings") == "diagnostics";
+        c.options = c.boolean ? std::vector<double>{0, 1} : row.value("options", std::vector<double>{});
+        c.value = c.boolean ? double(cfg[ptr].get<bool>()) : cfg[ptr].get<double>();
         out.push_back(std::move(c));
     }
     return out;
@@ -293,9 +307,13 @@ int main(int argc, char **argv) {
         slots[it.key()] = std::make_unique<LatestSlot<StereoFrame>>();
 
     // Output modules, built from config["sinks"] by type.
+    // Sinks with an "output" role ("vrcft", "vrc_native") run only while the
+    // Output setting (/output) picks that role; the rest always run.
     struct SinkEntry {
         std::string name;
         std::unique_ptr<ISink> sink;
+        std::string output{};
+        bool running = false;
     };
     std::vector<SinkEntry> sinks;
     std::vector<ISink *> frame_taps;
@@ -310,7 +328,7 @@ int main(int argc, char **argv) {
             continue;
         if (sink->wants_frames())
             frame_taps.push_back(sink.get());
-        sinks.push_back({it.key(), std::move(sink)});
+        sinks.push_back({it.key(), std::move(sink), it.value().value("output", "")});
     }
 
     // Model pipelines, built from config["pipelines"] by type. XNNPACK's
@@ -354,8 +372,18 @@ int main(int argc, char **argv) {
             sources.push_back({it.key(), std::move(src)});
     }
 
+    // Where tracking goes: VRCFaceTracking (the PC link) or VRChat itself.
+    auto output_choice = [&] {
+        const json &o = cfg.value("output", json("vrcft"));
+        return o.is_string() ? o.get<std::string>() : std::string("vrcft");
+    };
     for (auto it = sinks.begin(); it != sinks.end();) {
+        if (!it->output.empty() && it->output != output_choice()) {
+            ++it;   // started when the Output setting picks it
+            continue;
+        }
         if (it->sink->start()) {
+            it->running = true;
             ++it;
             continue;
         }
@@ -363,11 +391,34 @@ int main(int argc, char **argv) {
         std::erase(frame_taps, it->sink.get());
         it = sinks.erase(it);
     }
-    // The PC link, for the debug overlay's status line (the first one, if any).
+    LOG.info("output: %s", output_choice() == "vrc_native" ? "VRChat native" : "VRCFaceTracking");
+    auto route_output = [&] {
+        const std::string want = output_choice();
+        for (auto &k : sinks) {
+            if (k.output.empty())
+                continue;
+            if (k.output == want && !k.running) {
+                k.running = k.sink->start();
+                if (!k.running)
+                    LOG.error("sink %s: failed to start", k.name.c_str());
+            } else if (k.output != want && k.running) {
+                k.sink->stop();
+                k.running = false;
+                LOG.info("sink %s: stopped (output is %s)", k.name.c_str(), want.c_str());
+            }
+        }
+    };
+    // For the debug overlay's status line: the PC link and the native sender (the first of each).
     LinkSink *pc_link = nullptr;
-    for (auto &k : sinks)
-        if (!pc_link)
-            pc_link = dynamic_cast<LinkSink *>(k.sink.get());
+    VrcNativeSink *vrc_native = nullptr;
+    const SinkEntry *pc_link_entry = nullptr, *vrc_native_entry = nullptr;
+    uint64_t native_sent_last = 0;   // blobs sent at the last status refresh
+    for (auto &k : sinks) {
+        if (!pc_link && (pc_link = dynamic_cast<LinkSink *>(k.sink.get())))
+            pc_link_entry = &k;
+        if (!vrc_native && (vrc_native = dynamic_cast<VrcNativeSink *>(k.sink.get())))
+            vrc_native_entry = &k;
+    }
     for (auto &p : pipelines)
         p->start();
 
@@ -473,6 +524,7 @@ int main(int argc, char **argv) {
     auto origin_name = [](Origin o) {
         return o == Origin::Dashboard ? "the Babble tab" : o == Origin::SteamVr ? "SteamVR Settings" : "config reload";
     };
+    const std::set<std::string> unsaved = unsaved_settings(cfg);
     auto apply_setting_unchecked = [&](const std::string &id, const json &value, Origin origin) {
         const json::json_pointer ptr(id);
         if (cfg.contains(ptr) && cfg[ptr] == value)
@@ -521,6 +573,17 @@ int main(int argc, char **argv) {
             if (id.starts_with(prefix) && p->set_option(id.substr(prefix.size()), value))
                 applied = true;
         }
+        for (auto &k : sinks) {
+            const std::string prefix = "/sinks/" + k.name + "/";
+            if (id.starts_with(prefix) && k.sink->set_option(id.substr(prefix.size()), value))
+                applied = true;
+        }
+        if (id == "/output" && (value == "vrcft" || value == "vrc_native")) {
+            cfg[ptr] = value;
+            route_output();
+            LOG.info("output: %s", value == "vrc_native" ? "VRChat native" : "VRCFaceTracking");
+            applied = true;
+        }
         if (id == "/dashboard/enabled" && value.is_boolean()) {
             set_dashboard(value.get<bool>());
             applied = true;
@@ -535,7 +598,9 @@ int main(int argc, char **argv) {
         cfg[ptr] = value;
         if (origin == Origin::Reload)
             LOG.info("settings: %s = %s (config reload)", id.c_str(), value.dump().c_str());
-        if (origin != Origin::Reload) {
+        if (origin != Origin::Reload && unsaved.count(id)) {
+            LOG.info("settings: %s = %s from %s (this run only)", id.c_str(), value.dump().c_str(), origin_name(origin));
+        } else if (origin != Origin::Reload) {
             std::string err;
             if (save_setting(settings_file, ptr, value, &err))
                 LOG.info("settings: %s = %s from %s (saved to %s)", id.c_str(), value.dump().c_str(),
@@ -543,8 +608,8 @@ int main(int argc, char **argv) {
             else
                 LOG.error("settings: saving %s failed: %s", id.c_str(), err.c_str());
         }
-        if (dashboard->started() && value.is_number())
-            dashboard->set_choice(id, value.get<double>());   // feed switches follow the source's state
+        if (dashboard->started() && (value.is_number() || value.is_boolean()))
+            dashboard->set_choice(id, value.is_boolean() ? double(value.get<bool>()) : value.get<double>());   // feed switches follow the source's state
         if (origin != Origin::SteamVr)
             steamvr_settings.push(id, value);
     };
@@ -618,7 +683,10 @@ int main(int argc, char **argv) {
             const auto ls = pc_link->status();
             o << "pc link: " << (ls.linked ? "linked to \"" + ls.module + "\" via " + ls.path + " (" + ls.address + ")"
                                            : std::string("searching"))
-              << (ls.rtt_ms >= 0 ? ", rtt " + std::to_string(ls.rtt_ms) + " ms" : "") << "\n";
+              << (ls.rtt_ms >= 0 ? ", rtt " + std::to_string(ls.rtt_ms) + " ms" : "")
+              << (ls.data == LinkSink::Data::Arriving ? ", data arriving"
+                  : ls.data == LinkSink::Data::Missing ? ", DATA NOT ARRIVING" : "")
+              << "\n";
         }
         for (const auto &c : usb_cameras)
             o << "usb camera: " << c.label << " (" << c.id << ")"
@@ -808,9 +876,19 @@ int main(int argc, char **argv) {
                 st.camera = usb_source->camera();
                 st.active_camera = usb_source->active_camera();
             }
-            if (pc_link) {
+            if (pc_link && pc_link_entry->running) {
                 const auto ls = pc_link->status();
                 st.link = {true, ls.linked, ls.path, ls.module, ls.address, ls.rtt_ms};
+                st.link.no_data = ls.data == LinkSink::Data::Missing;
+            } else if (vrc_native && vrc_native_entry->running) {
+                // Native: where the blob goes; "linked" while blobs are going out.
+                const auto ns = vrc_native->status();
+                st.link.available = true;
+                st.link.native = true;
+                st.link.linked = !ns.kind.empty() && ns.sent != native_sent_last;
+                st.link.path = ns.kind;
+                st.link.address = ns.address;
+                native_sent_last = ns.sent;
             }
             dashboard->set_status(st);
         }

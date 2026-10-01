@@ -77,6 +77,8 @@ add_library(babble_core STATIC
     src/sink/osc_sink.cpp
     src/sink/link_sink.cpp
     src/sink/plugin_sink.cpp
+    src/sink/vrc_native_sink.cpp
+    src/sink/camera_stream_sink.cpp
     src/ui/canvas.cpp
     src/ui/font.cpp
     src/ui/image.cpp
@@ -151,6 +153,8 @@ if(BABBLE_TESTS)
         tests/test_babble_tracker.cpp
         tests/test_pipeline_base.cpp
         tests/test_log.cpp
+        tests/test_vrc_native.cpp
+        tests/test_camera_stream.cpp
     )
     target_link_libraries(babble_tests PRIVATE babble_core)
     set_target_properties(babble_tests PROPERTIES BUILD_RPATH "${THIRD_PARTY}/openvr/lib/linuxarm64")

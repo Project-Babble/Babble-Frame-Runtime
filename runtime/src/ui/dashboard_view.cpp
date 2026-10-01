@@ -105,7 +105,7 @@ void DashboardView::render(Canvas &c, const Status &status, const std::vector<Ch
     } else if (page_ == Page::Cameras) {
         render_cameras(c, status);
     } else if (page_ == Page::Diagnostics) {
-        render_diagnostics(c, status);
+        render_diagnostics(c, choices, status);
     } else {
         render_settings(c, choices, status);
     }
@@ -295,21 +295,34 @@ void DashboardView::render_restart_button(Canvas &c) {
     hits_.push_back({Hit::Restart, r});
 }
 
-// The PC link on one line, between the cog and the visualizer button:
-// "PC  ChadBox via LAN · 192.168.0.149 · 4 ms", or searching.
+// The output on one line, between the cog and the visualizer button:
+// "PC  ChadBox via LAN · 192.168.0.149 · 4 ms", or searching; or
+// "VRChat  native, on the PC · 10.35.78.25".
 void DashboardView::render_link(Canvas &c, const LinkReading &link, float right) {
     if (!link.available)
         return;
     const float x = 150, y = float(c.height()) - 84, px = 26, dot_r = 9;
-    c.fill_circle(x + dot_r, y, dot_r, link.linked ? kGreen : kAmber);
+    c.fill_circle(x + dot_r, y, dot_r, link.linked && !link.no_data ? kGreen : kAmber);
     const float label_x = x + 2 * dot_r + 14;
     const float base = y + medium_.cap_height(px) / 2;
-    medium_.draw(c, label_x, base, "PC", px, kText);
+    const char *label = link.native ? "VRChat" : "PC";
+    medium_.draw(c, label_x, base, label, px, kText);
     std::string text;
-    if (link.linked) {
+    if (link.native) {
+        const std::string where = link.path == "pc"      ? "native, on the PC  \u00b7  " + link.address
+                                  : link.path == "frame" ? std::string("native, on this headset")
+                                  : link.path.empty()    ? std::string("native, waiting for Steam Link")
+                                                         : "native  \u00b7  " + link.address;
+        text = link.linked || link.path.empty() ? where : where + "  \u00b7  no data";
+    } else if (link.linked) {
         const std::string path = link.path == "lan" ? "LAN" : link.path == "usb" ? "USB" : link.path;
-        text = (link.pc.empty() ? std::string("VRCFaceTracking") : link.pc) + " via " + path + "  \u00b7  " + link.address;
-        if (link.rtt_ms >= 0) {
+        text = (link.pc.empty() ? std::string("VRCFaceTracking") : link.pc) + " via " + path + "  \u00b7  ";
+        if (link.no_data) {
+            text += "no data reaching it";   // instead of the address: the line has no room for both
+        } else {
+            text += link.address;
+        }
+        if (!link.no_data && link.rtt_ms >= 0) {
             char ms[32];
             snprintf(ms, sizeof(ms), "  \u00b7  %.0f ms", link.rtt_ms);
             text += ms;
@@ -317,7 +330,7 @@ void DashboardView::render_link(Canvas &c, const LinkReading &link, float right)
     } else {
         text = "Searching for VRCFaceTracking\u2026";
     }
-    const float text_x = label_x + medium_.measure("PC", px) + 16;
+    const float text_x = label_x + medium_.measure(label, px) + 16;
     regular_.draw(c, text_x, base, fit(regular_, text, px, right - text_x), px, link.linked ? kText : kMuted);
 }
 
@@ -369,11 +382,20 @@ void DashboardView::render_settings(Canvas &c, const std::vector<Choice> &choice
     hits_.push_back({Hit::OpenDiagnostics, render_pill(c, W - kMargin, 42, "Diagnostics", false)});
 
     float y = 160;
+    bool first = true;
     for (size_t i = 0; i < choices.size(); i++) {
         const Choice &ch = choices[i];
+        if (ch.diagnostics)
+            continue;
         const float row_h = 124;
-        if (i > 0)
+        if (!first)
             c.fill_rect({kMargin, y, W - 2 * kMargin, 2}, kLine);
+        first = false;
+        if (ch.boolean) {
+            render_switch_row(c, y, i, ch);
+            y += row_h;
+            continue;
+        }
         // Segmented control, right-aligned.
         const float seg_w = 128, seg_h = 64, pad = 4;
         const float ctl_w = seg_w * float(ch.options.size()) + 2 * pad;
@@ -447,7 +469,20 @@ Rect DashboardView::render_pill(Canvas &c, float right, float y, const std::stri
 
 // Diagnostics: verbose logging for a while, a diagnostics file on demand, and
 // where the logs are (what a tester sends with a problem report).
-void DashboardView::render_diagnostics(Canvas &c, const Status &s) {
+// An on/off setting: label and hint, a switch at the right; a click anywhere
+// near the switch flips it.
+void DashboardView::render_switch_row(Canvas &c, float y, size_t index, const Choice &ch) {
+    const float W = float(c.width());
+    const bool on = ch.value != 0;
+    const Rect sw{W - kMargin - 92, y + 36, 92, 52};
+    const Rect hit{sw.x - 24, y, W - kMargin - (sw.x - 24), 124};
+    render_switch(c, sw, on, hovered(hit));
+    hits_.push_back({Hit::Option, hit, index, on ? 0.0 : 1.0});
+    medium_.draw(c, kMargin, y + 56, fit(medium_, ch.label, 32, hit.x - kMargin - 24), 32, kText);
+    regular_.draw(c, kMargin, y + 94, fit(regular_, ch.hint, 25, hit.x - kMargin - 24), 25, kMuted);
+}
+
+void DashboardView::render_diagnostics(Canvas &c, const std::vector<Choice> &choices, const Status &s) {
     const float W = float(c.width());
     render_back(c, "Diagnostics");
     float y = 160;
@@ -473,6 +508,13 @@ void DashboardView::render_diagnostics(Canvas &c, const Status &s) {
         const std::string hint = s.last_diagnostics.empty() ? "A report of the current state, to send with a problem."
                                                             : "Saved " + s.last_diagnostics;
         regular_.draw(c, kMargin, y + 94, fit(regular_, hint, 25, b.x - kMargin - 24), 25, kMuted);
+        y += 124;
+    }
+    for (size_t i = 0; i < choices.size(); i++) {   // testing switches
+        if (!choices[i].diagnostics || !choices[i].boolean)
+            continue;
+        c.fill_rect({kMargin, y, W - 2 * kMargin, 2}, kLine);
+        render_switch_row(c, y, i, choices[i]);
         y += 124;
     }
     c.fill_rect({kMargin, y, W - 2 * kMargin, 2}, kLine);

@@ -6,6 +6,7 @@
   "stats_interval_s": 5,
   "stats_summary_s": 60,
   "mouth_source": "frunk",
+  "output": "vrcft",
   "threads": {
     "main": {
       "name": "babble-runtime",
@@ -195,6 +196,17 @@
   },
   "sinks": {
     "debug": { "type": "debug", "enabled": true, "thread": "sink", "rate_hz": 2, "dump_dir": null, "dump_count": 0 },
+    "camera_stream": {
+      "type": "camera_stream",
+      "enabled": true,
+      "thread": "sink",
+      "active": false,
+      "port": 9099,
+      "views": ["face_l", "face_r", "eye_l", "eye_r"],
+      "fps": 60,
+      "quality": 80,
+      "max_clients": 4
+    },
     "vrcft": {
       "type": "osc",
       "enabled": true,
@@ -209,6 +221,7 @@
     "pc": {
       "type": "vrcft_link",
       "enabled": true,
+      "output": "vrcft",
       "thread": "osc",
       "control_port": 6767,
       "path_order": ["dongle", "usb", "lan"],
@@ -221,6 +234,17 @@
       "prefix": "",
       "max_rate_hz": 0,
       "exclude": []
+    },
+    "vrc_native": {
+      "type": "vrc_native",
+      "enabled": true,
+      "output": "vrc_native",
+      "thread": "osc",
+      "target": "auto",
+      "host": "",
+      "port": 9000,
+      "steam_link_log": "",
+      "max_rate_hz": 0
     }
   },
   "arbiter": {
@@ -251,6 +275,7 @@
     "values": [
       { "key": "mouthTracking", "id": "/sources/mouth/tracking" },
       { "key": "mouthSource", "id": "/mouth_source" },
+      { "key": "output", "id": "/output" },
       { "key": "mouthRate", "id": "/sources/mouth/process_fps" },
       { "key": "eyeTracking", "id": "/sources/eye/tracking" },
       { "key": "eyeRate", "id": "/sources/eye/process_fps" },
@@ -276,6 +301,13 @@
         "hint": "Updates per second. Lower rates save battery.",
         "unit": "Hz",
         "options": [30, 45, 60, 90]
+      },
+      {
+        "id": "/sinks/camera_stream/active",
+        "page": "diagnostics",
+        "persist": false,
+        "label": "Camera stream",
+        "hint": "MJPEG on TCP 9099 for infer.py (net:<headset>:9099). Off after a restart."
       }
     ]
   }

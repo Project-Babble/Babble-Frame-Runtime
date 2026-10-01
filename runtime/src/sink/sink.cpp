@@ -1,10 +1,12 @@
 #include "sink/sink.h"
 
 #include "core/log.h"
+#include "sink/camera_stream_sink.h"
 #include "sink/debug_sink.h"
 #include "sink/link_sink.h"
 #include "sink/osc_sink.h"
 #include "sink/plugin_sink.h"
+#include "sink/vrc_native_sink.h"
 
 namespace {
 const babble::log::Logger LOG("sink");
@@ -22,6 +24,10 @@ std::unique_ptr<ISink> make_sink(const nlohmann::json &cfg, SinkDeps deps) {
         return std::make_unique<LinkSink>(cfg, std::move(deps));
     if (type == "plugin")
         return std::make_unique<PluginSink>(cfg, std::move(deps));
+    if (type == "camera_stream")
+        return std::make_unique<CameraStreamSink>(cfg, std::move(deps));
+    if (type == "vrc_native")
+        return std::make_unique<VrcNativeSink>(cfg, std::move(deps));
     LOG.error("sink %s: unknown type '%s'", deps.name.c_str(), type.c_str());
     return nullptr;
 }

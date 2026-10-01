@@ -47,12 +47,17 @@ struct EyeReading {
     double dilation = 0;                 // the Dilation output, 0..1 (0.5 = the person's baseline)
 };
 
-// The PC link (sink/link_sink.h), for the front page's status line.
+// The output, for the front page's status line: the PC link
+// (sink/link_sink.h), or with native set, VRChat's native face tracking
+// (sink/vrc_native_sink.h; path is where VRChat runs: "pc" or "frame",
+// linked while blobs are going out).
 struct LinkReading {
-    bool available = false;   // a link output is running; false hides the line
+    bool available = false;   // an output is running; false hides the line
     bool linked = false;
     std::string path, pc, address;
     double rtt_ms = -1;       // -1: not measured yet
+    bool native = false;
+    bool no_data = false;     // linked, but the PC reports none of our data arriving
 };
 
 // A USB camera the mouth can use (the settings page's camera list).
@@ -88,12 +93,16 @@ struct Headline {
 };
 Headline headline(const Status &s);
 
-// A user-facing setting shown as a row of choices. id is the setting's JSON
-// pointer in the config ("/sources/mouth/process_fps").
+// A user-facing setting shown as a row of choices, or as a switch for an
+// on/off setting (boolean: value 0 or 1). id is the setting's JSON pointer in
+// the config ("/sources/mouth/process_fps"). Rows go on the Settings page, or
+// with diagnostics set, on the Diagnostics page (testing switches).
 struct Choice {
     std::string id, label, hint, unit;
     std::vector<double> options;
     double value = 0;
+    bool boolean = false;
+    bool diagnostics = false;
 };
 
 struct Point {
@@ -153,7 +162,8 @@ private:
     void render_home(Canvas &c, const Status &s);
     void render_settings(Canvas &c, const std::vector<Choice> &choices, const Status &s);
     void render_cameras(Canvas &c, const Status &s);
-    void render_diagnostics(Canvas &c, const Status &s);
+    void render_diagnostics(Canvas &c, const std::vector<Choice> &choices, const Status &s);
+    void render_switch_row(Canvas &c, float y, size_t index, const Choice &ch);   // one 124 px row
     Rect render_pill(Canvas &c, float right, float y, const std::string &text, bool primary);   // -> its rect
     void render_back(Canvas &c, const char *title);
     float render_segments(Canvas &c, float right, float y, const std::vector<std::string> &labels, int selected,

@@ -49,6 +49,8 @@ int main(int argc, char **argv) {
          {30, 60, 90, 120}, 120},
         {"/sources/eye/process_fps", "Eye tracking rate", "Updates per second. Lower rates save battery.", "Hz",
          {30, 45, 60, 90}, 90},
+        {"/sinks/camera_stream/active", "Camera stream",
+         "MJPEG on TCP 9099 for infer.py (net:<headset>:9099). Off after a restart.", "", {0, 1}, 1, true, true},
     };
     auto feed = [](Health h, double hz = 0, std::string detail = "", bool tracking = true) {
         FeedStatus f;
@@ -76,6 +78,15 @@ int main(int argc, char **argv) {
 
     view.render(c, tracking, choices, std::nullopt);
     save(c, "home_tracking");
+    // VRChat Native: on the PC Steam Link streams from, and on this headset with no data yet.
+    Status native_pc = tracking;
+    native_pc.link = {true, true, "pc", "", "10.35.78.25", -1, true};
+    view.render(c, native_pc, choices, std::nullopt);
+    save(c, "home_native_pc");
+    Status native_frame = tracking;
+    native_frame.link = {true, false, "frame", "", "127.0.0.1", -1, true};
+    view.render(c, native_frame, choices, std::nullopt);
+    save(c, "home_native_frame");
     view.render(c, tracking, choices, Point{84, DashboardView::kHeight - 84.f});
     save(c, "home_cog_hover");
     view.render(c, paused, choices, std::nullopt);

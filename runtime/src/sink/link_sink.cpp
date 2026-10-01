@@ -38,10 +38,10 @@ std::string encode(const Message &m) {
         j["seq"] = m.seq;
     if (m.type == "ping")
         j["active"] = m.active;
-    if (m.type == "offer") {
-        j["data_port"] = m.data_port;
+    if (m.type == "pong" && m.rx)
+        j["rx"] = *m.rx;
+    if (m.type == "offer")
         j["busy"] = m.busy;
-    }
     return j.dump();
 }
 
@@ -59,7 +59,8 @@ std::optional<Message> decode(const char *data, size_t size) {
         m.version = j.value("version", "");
         m.path = j.value("path", "");
         m.seq = j.value("seq", uint64_t(0));
-        m.data_port = j.value("data_port", 0);
+        if (j.contains("rx"))
+            m.rx = j["rx"].get<uint64_t>();
         m.busy = j.value("busy", false);
         m.active = j.value("active", false);
     } catch (const nlohmann::json::exception &) {
@@ -144,7 +145,10 @@ LinkSink::LinkSink(const nlohmann::json &cfg, SinkDeps deps)
       stats_(deps.stats), destination_(std::make_shared<OscDestination>()),
       control_port_(uint16_t(cfg.value("control_port", 6767))), sid_(random_id()),
       interfaces_fn_(link::system_interfaces) {
-    data_ = std::make_unique<OscSink>(cfg, deps, destination_);
+    // Data: the osc sink's values, bundled, sent from the active path's socket.
+    nlohmann::json data_cfg = cfg;
+    data_cfg["bundle"] = true;
+    data_ = std::make_unique<OscSink>(data_cfg, deps, destination_);
 
     path_order_ = cfg.value("path_order", std::vector<std::string>{"dongle", "usb", "lan"});
     interface_kinds_ = cfg.value("interfaces", std::map<std::string, std::string>{{"wlanap", "dongle"}, {"usb0", "usb"}});
@@ -216,14 +220,20 @@ void LinkSink::stop() {
         thread_.join();
     if (data_)
         data_->stop();
-    for (auto &p : paths_)
-        if (p->sock >= 0)
-            close(p->sock);
-    paths_.clear();
+    paths_.clear();   // the sockets close with their last owner
     active_ = nullptr;
+    destination_->clear();
     if (listen_sock_ >= 0)
         close(listen_sock_);
     listen_sock_ = -1;
+    // Stopped (the Output setting moved away): nothing linked, and a start
+    // begins a fresh search.
+    next_scan_ns_ = next_beacon_ns_ = next_ping_ns_ = 0;
+    rx_last_.reset();
+    data_state_ = Data::Unknown;
+    std::lock_guard lock(status_mutex_);
+    active_name_.clear();
+    status_ = {};
 }
 
 std::string LinkSink::active_path() const {
@@ -275,7 +285,6 @@ void LinkSink::rescan(uint64_t now) {
         LOG.info("%s: interface %s (%s) is gone", name_.c_str(), p.iface.name.c_str(), p.kind.c_str());
         if (active_ == it->get())
             active_ = nullptr;
-        close(p.sock);
         it = paths_.erase(it);
     }
     for (const auto &f : found) {
@@ -288,14 +297,12 @@ void LinkSink::rescan(uint64_t now) {
         p->iface = f;
         auto kind = interface_kinds_.find(f.name);
         p->kind = kind != interface_kinds_.end() ? kind->second : "lan";
-        p->sock = socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
+        p->sock = std::make_shared<SharedSocket>(socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0));
         int one = 1;
-        setsockopt(p->sock, SOL_SOCKET, SO_BROADCAST, &one, sizeof(one));
+        setsockopt(p->sock->fd, SOL_SOCKET, SO_BROADCAST, &one, sizeof(one));
         const sockaddr_in local = endpoint(f.address, 0);
-        if (p->sock < 0 || bind(p->sock, reinterpret_cast<const sockaddr *>(&local), sizeof(local)) != 0) {
+        if (p->sock->fd < 0 || bind(p->sock->fd, reinterpret_cast<const sockaddr *>(&local), sizeof(local)) != 0) {
             LOG.warn("%s: cannot use interface %s: %s", name_.c_str(), f.name.c_str(), strerror(errno));
-            if (p->sock >= 0)
-                close(p->sock);
             continue;
         }
         LOG.info("%s: interface %s (%s, %s)", name_.c_str(), f.name.c_str(), p->kind.c_str(),
@@ -311,22 +318,22 @@ void LinkSink::beacon(uint64_t now) {
     m.name = display_name_;
     m.version = BABBLE_VERSION_DISPLAY;
     for (auto &p : paths_) {
-        send(p->sock, endpoint(p->iface.broadcast, control_port_), m);
+        send(p->sock->fd, endpoint(p->iface.broadcast, control_port_), m);
         if (p->kind == "dongle")
             for (uint32_t station : arp_neighbours(p->iface.name))
-                send(p->sock, endpoint(station, control_port_), m);
+                send(p->sock->fd, endpoint(station, control_port_), m);
     }
     // Manual hosts, from the path on their subnet (or every path).
     for (uint32_t host : hosts_) {
         bool sent = false;
         for (auto &p : paths_)
             if ((host & p->iface.netmask) == (p->iface.address & p->iface.netmask)) {
-                send(p->sock, endpoint(host, control_port_), m);
+                send(p->sock->fd, endpoint(host, control_port_), m);
                 sent = true;
             }
         if (!sent)
             for (auto &p : paths_)
-                send(p->sock, endpoint(host, control_port_), m);
+                send(p->sock->fd, endpoint(host, control_port_), m);
     }
     next_beacon_ns_ = now + (active_ ? beacon_connected_ns_ : beacon_searching_ns_);
 }
@@ -339,12 +346,40 @@ void LinkSink::ping(uint64_t now) {
         m.seq = ++seq_;
         m.path = p->kind;
         m.active = p.get() == active_;
-        send(p->sock, p->peer, m);
+        send(p->sock->fd, p->peer, m);
         p->pings[m.seq] = now;
         while (p->pings.size() > 16)   // unanswered pings: keep only the recent ones
             p->pings.erase(p->pings.begin());
     }
     next_ping_ns_ = now + ping_ns_;
+    check_data(now);
+}
+
+void LinkSink::check_data(uint64_t now) {
+    const uint64_t sent = data_->sent();
+    if (sent != sent_last_)
+        last_sent_ns_ = now;
+    sent_last_ = sent;
+    Data state = Data::Unknown;
+    const uint64_t grace = std::max<uint64_t>(3'000'000'000ull, 3 * ping_ns_);
+    if (active_ && rx_last_ && now - last_sent_ns_ < grace) {
+        // Sending: the module's count must have risen recently (after a
+        // grace period from linking, for the first pongs to report it).
+        if (now - rx_seen_ns_ < grace || now - linked_ns_ < grace)
+            state = Data::Arriving;
+        else
+            state = Data::Missing;
+    }
+    if (state != data_state_) {
+        if (state == Data::Missing)
+            LOG.warn("%s: sending to \"%s\", but none of it arrives (a firewall, or a network that drops it?)",
+                     name_.c_str(), module_name_.c_str());
+        else if (state == Data::Arriving && data_state_ == Data::Missing)
+            LOG.info("%s: data reaches \"%s\" again", name_.c_str(), module_name_.c_str());
+        data_state_ = state;
+    }
+    std::lock_guard lock(status_mutex_);
+    status_.data = active_ ? state : Data::Unknown;
 }
 
 void LinkSink::handle(Path *path, const link::Message &m, const sockaddr_in &from, uint64_t now) {
@@ -356,7 +391,7 @@ void LinkSink::handle(Path *path, const link::Message &m, const sockaddr_in &fro
         return;
     }
     if (m.type == "offer") {
-        if (m.mid.empty() || m.data_port <= 0 || m.data_port > 65535)
+        if (m.mid.empty())
             return;
         if (m.busy) {
             LOG.debug("%s: module %s at %s is busy with another headset", name_.c_str(), m.name.c_str(),
@@ -378,7 +413,6 @@ void LinkSink::handle(Path *path, const link::Message &m, const sockaddr_in &fro
         path->has_peer = true;
         path->peer = from;
         path->mid = m.mid;
-        path->data_port = m.data_port;
         if (fresh) {
             path->last_pong_ns = now;   // the offer is an answer too
             path->good_pongs = 0;
@@ -397,6 +431,12 @@ void LinkSink::handle(Path *path, const link::Message &m, const sockaddr_in &fro
             status_.rtt_ms = double(now - it->second) / 1e6;
         }
         path->pings.erase(it);
+        if (m.rx && path == active_) {
+            // The module's received-data count: rising means our data arrives.
+            if (!rx_last_ || *m.rx > *rx_last_)
+                rx_seen_ns_ = rx_last_ ? now : rx_seen_ns_;
+            rx_last_ = m.rx;
+        }
         if (m.mid != path->mid) {
             // The module restarted (a new instance answers at the same address).
             LOG.info("%s: VRCFT module restarted", name_.c_str());
@@ -404,8 +444,9 @@ void LinkSink::handle(Path *path, const link::Message &m, const sockaddr_in &fro
                 if (p->mid == module_mid_)
                     p->mid = m.mid;
             module_mid_ = m.mid;
+            rx_last_.reset();   // a new count
             if (active_ == path)
-                destination_->set(endpoint(ntohl(path->peer.sin_addr.s_addr), uint16_t(path->data_port)));
+                destination_->set(path->peer, path->sock);   // a new generation: resend everything
         }
         if (now - path->last_pong_ns >= timeout_ns_)
             path->good_pongs = 0;   // it was dead: start proving itself again
@@ -458,11 +499,12 @@ void LinkSink::choose(uint64_t now) {
     active_ = next;
     std::string status;
     if (active_) {
-        destination_->set(endpoint(ntohl(active_->peer.sin_addr.s_addr), uint16_t(active_->data_port)));
+        destination_->set(active_->peer, active_->sock);
         status = active_->kind;
+        linked_ns_ = now;
         LOG.info("%s: %s \"%s\" via %s (%s, %s:%d)", name_.c_str(), previous ? "switched to" : "linked to",
                  module_name_.c_str(), active_->kind.c_str(), active_->iface.name.c_str(),
-                 ip_string(active_->peer).c_str(), active_->data_port);
+                 ip_string(active_->peer).c_str(), ntohs(active_->peer.sin_port));
         if (previous)
             switches_.add();
         next_beacon_ns_ = std::min(next_beacon_ns_, now + beacon_connected_ns_);
@@ -503,7 +545,7 @@ void LinkSink::run() {
             owners.push_back(nullptr);
         }
         for (auto &p : paths_) {
-            fds.push_back({p->sock, POLLIN, 0});
+            fds.push_back({p->sock->fd, POLLIN, 0});
             owners.push_back(p.get());
         }
         const uint64_t next = std::min({next_scan_ns_, next_beacon_ns_, next_ping_ns_});
@@ -518,7 +560,7 @@ void LinkSink::run() {
     // Tell the module we're going, so it resets now rather than on timeout.
     if (active_) {
         link::Message bye = base("bye");
-        send(active_->sock, active_->peer, bye);
+        send(active_->sock->fd, active_->peer, bye);
     }
 }
 

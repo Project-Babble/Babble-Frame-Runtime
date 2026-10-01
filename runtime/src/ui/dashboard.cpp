@@ -289,7 +289,7 @@ void Dashboard::run() {
                 Choice &c = choices_[r.setting->first];
                 if (c.value != r.setting->second) {
                     c.value = r.setting->second;
-                    changes_.emplace_back(c.id, c.value);
+                    changes_.emplace_back(c.id, c.boolean ? nlohmann::json(c.value != 0) : nlohmann::json(c.value));
                 }
             }
             if (r.toggle) {

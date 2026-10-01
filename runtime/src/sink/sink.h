@@ -29,6 +29,10 @@ public:
     // frame off (e.g. into a LatestSlot), never block or do I/O.
     virtual bool wants_frames() const { return false; }
     virtual void offer_frames(const std::string &source, const StereoFrame &frames) {}
+
+    // A live setting under /sinks/<name>/ (key is the rest of the path); false
+    // if the module doesn't take it. Called on the main thread.
+    virtual bool set_option(const std::string &key, const nlohmann::json &value) { return false; }
 };
 
 // Everything a module may need from the runtime; all must outlive the module.

@@ -20,24 +20,37 @@ const babble::log::Logger LOG("osc");
 
 namespace babble {
 
-void OscDestination::set(const sockaddr_in &to) {
+namespace {
+constexpr size_t kMaxDatagram = 1400;   // under a typical 1500-byte MTU: never fragmented
+} // namespace
+
+SharedSocket::~SharedSocket() {
+    if (fd >= 0)
+        close(fd);
+}
+
+void OscDestination::set(const sockaddr_in &to, std::shared_ptr<SharedSocket> via) {
     std::lock_guard lock(mutex_);
     valid_ = true;
     to_ = to;
+    via_ = std::move(via);
     generation_++;
 }
 
 void OscDestination::clear() {
     std::lock_guard lock(mutex_);
     valid_ = false;
+    via_.reset();
 }
 
-bool OscDestination::get(sockaddr_in *to, uint64_t *generation) const {
+bool OscDestination::get(sockaddr_in *to, uint64_t *generation, std::shared_ptr<SharedSocket> *via) const {
     std::lock_guard lock(mutex_);
     if (!valid_)
         return false;
     *to = to_;
     *generation = generation_;
+    if (via)
+        *via = via_;
     return true;
 }
 
@@ -45,7 +58,8 @@ OscSink::OscSink(const nlohmann::json &cfg, SinkDeps deps, std::shared_ptr<OscDe
     : name_(deps.name), thread_spec_(thread_spec(deps.threads, cfg.value("thread", "osc"), "bbl-osc")),
       state_(deps.state), stats_(deps.stats), host_(cfg.value("host", "127.0.0.1")),
       prefix_(cfg.value("prefix", "")), port_(cfg.value("port", 8888)), max_rate_hz_(cfg.value("max_rate_hz", 0.0)),
-      test_pattern_(cfg.value("test_pattern", false)), destination_(std::move(destination)) {
+      test_pattern_(cfg.value("test_pattern", false)), bundle_(cfg.value("bundle", false)),
+      destination_(std::move(destination)) {
     if (cfg.contains("rename") && cfg["rename"].is_object())
         for (auto &[k, v] : cfg["rename"].items())
             if (v.is_string())
@@ -98,9 +112,35 @@ void OscSink::send(const std::string &address, float value) {
     size_t n = osc::encode_float(address, value, buf, sizeof(buf));
     if (!n)
         return;
-    if (sendto(sock_, buf, n, MSG_DONTWAIT | MSG_NOSIGNAL, reinterpret_cast<const sockaddr *>(&dest_),
-               sizeof(dest_)) == ssize_t(n)) {
-        messages_.tick();
+    if (!bundle_) {
+        send_datagram(buf, n, 1);
+        return;
+    }
+    if (!pending_.empty() && pending_.size() + 4 + n > kMaxDatagram)
+        flush();
+    if (pending_.empty()) {
+        pending_.resize(osc::kBundleHeaderSize);
+        osc::write_bundle_header(pending_.data());
+    }
+    const size_t at = pending_.size();
+    pending_.resize(at + 4 + n);
+    osc::write_element_size(pending_.data() + at, n);
+    memcpy(pending_.data() + at + 4, buf, n);
+    pending_values_++;
+}
+
+void OscSink::flush() {
+    if (pending_values_)
+        send_datagram(pending_.data(), pending_.size(), pending_values_);
+    pending_.clear();
+    pending_values_ = 0;
+}
+
+void OscSink::send_datagram(const uint8_t *buf, size_t n, size_t values) {
+    const int fd = via_ ? via_->fd : sock_;
+    if (sendto(fd, buf, n, MSG_DONTWAIT | MSG_NOSIGNAL, reinterpret_cast<const sockaddr *>(&dest_), sizeof(dest_)) ==
+        ssize_t(n)) {
+        messages_.tick(values);
         return;
     }
     // Nobody listening, or the socket buffer is full: drop it; the next update supersedes it.
@@ -137,7 +177,7 @@ void OscSink::run() {
         bool resend_all = false;
         if (destination_) {
             uint64_t g = 0;
-            if (!destination_->get(&dest_, &g))
+            if (!destination_->get(&dest_, &g, &via_))
                 continue;   // no receiver: send nothing
             resend_all = g != generation;
             generation = g;
@@ -180,6 +220,8 @@ void OscSink::run() {
             last_sent_t[i] = s.t_ns;
             send(addresses[i], s.value);
         }
+        flush();
+        via_.reset();   // don't keep a path's socket alive between batches
     }
 }
 

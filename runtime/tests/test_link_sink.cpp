@@ -44,16 +44,37 @@ uint16_t local_port(int fd) {
     return ntohs(a.sin_port);
 }
 
+// The addresses in an OSC packet: a message, or a bundle of them.
+void osc_addresses(const char *p, size_t n, std::set<std::string> *out, int *messages) {
+    if (n >= 16 && memcmp(p, "#bundle", 8) == 0) {
+        for (size_t at = 16; at + 4 <= n;) {
+            uint32_t size;
+            memcpy(&size, p + at, 4);
+            size = ntohl(size);
+            if (at + 4 + size > n)
+                return;
+            osc_addresses(p + at + 4, size, out, messages);
+            at += 4 + size;
+        }
+    } else if (n && p[0] == '/') {
+        out->insert(std::string(p, strnlen(p, n)));
+        (*messages)++;
+    }
+}
+
 // A stand-in for the VRCFT module: answers beacons with offers and pings
-// with pongs, and counts the OSC data that reaches its data port.
+// with pongs (with its received-data count), and collects the OSC data that
+// reaches its port; with drop_data it pretends a firewall eats the data.
 struct FakeModule {
     uint16_t control_port = 0;
-    int control = -1, data = -1;
+    int control = -1;
     std::string mid = "module-1";
-    std::atomic<bool> busy{false}, answer_beacons{true};
+    std::atomic<bool> busy{false}, answer_beacons{true}, drop_data{false};
     std::mutex mutex;
     std::set<std::string> silent_paths;   // ping paths to ignore
     std::set<std::string> data_addresses;
+    uint64_t rx = 0;                      // data datagrams received
+    int data_messages = 0;
     int beacons = 0;
     std::thread thread;
     std::atomic<bool> stop{false};
@@ -65,14 +86,12 @@ struct FakeModule {
         control_port = local_port(probe);
         close(probe);
         control = udp_socket(INADDR_LOOPBACK, control_port, true);
-        data = udp_socket(INADDR_LOOPBACK, 0);
         thread = std::thread([this] { run(); });
     }
     ~FakeModule() {
         stop = true;
         thread.join();
         close(control);
-        close(data);
     }
 
     void reply(const sockaddr_in &to, const link::Message &m) {
@@ -83,21 +102,20 @@ struct FakeModule {
     void run() {
         char buf[2048];
         while (!stop) {
-            pollfd fds[2] = {{control, POLLIN, 0}, {data, POLLIN, 0}};
-            if (poll(fds, 2, 20) <= 0)
-                continue;
-            if (fds[1].revents & POLLIN) {
-                const ssize_t n = recv(data, buf, sizeof(buf), 0);
-                if (n > 0) {
-                    std::lock_guard lock(mutex);
-                    data_addresses.insert(std::string(buf, strnlen(buf, size_t(n))));
-                }
-            }
-            if (!(fds[0].revents & POLLIN))
+            pollfd fds[1] = {{control, POLLIN, 0}};
+            if (poll(fds, 1, 20) <= 0)
                 continue;
             sockaddr_in from{};
             socklen_t len = sizeof(from);
             const ssize_t n = recvfrom(control, buf, sizeof(buf), 0, reinterpret_cast<sockaddr *>(&from), &len);
+            if (n > 0 && buf[0] != '{') {   // data: OSC on the same port
+                if (drop_data)
+                    continue;
+                std::lock_guard lock(mutex);
+                rx++;
+                osc_addresses(buf, size_t(n), &data_addresses, &data_messages);
+                continue;
+            }
             auto m = n > 0 ? link::decode(buf, size_t(n)) : std::nullopt;
             if (!m)
                 continue;
@@ -112,7 +130,6 @@ struct FakeModule {
                 offer.type = "offer";
                 offer.mid = mid;
                 offer.name = "Test PC";
-                offer.data_port = local_port(data);
                 offer.busy = busy;
                 reply(from, offer);
             } else if (m->type == "ping") {
@@ -123,6 +140,7 @@ struct FakeModule {
                 pong.type = "pong";
                 pong.mid = mid;
                 pong.seq = m->seq;
+                pong.rx = rx;
                 reply(from, pong);
             }
         }
@@ -190,13 +208,25 @@ TEST_CASE("link messages round trip and reject strangers") {
     link::Message offer;
     offer.type = "offer";
     offer.mid = "m";
-    offer.data_port = 8888;
     offer.busy = true;
     const std::string o = link::encode(offer);
     back = link::decode(o.data(), o.size());
     REQUIRE(back);
-    CHECK(back->data_port == 8888);
     CHECK(back->busy);
+
+    link::Message pong;
+    pong.type = "pong";
+    pong.seq = 7;
+    pong.rx = 12345;
+    const std::string pt = link::encode(pong);
+    back = link::decode(pt.data(), pt.size());
+    REQUIRE(back);
+    CHECK(back->rx == 12345u);
+    pong.rx.reset();   // an older module: no count
+    const std::string old = link::encode(pong);
+    back = link::decode(old.data(), old.size());
+    REQUIRE(back);
+    CHECK_FALSE(back->rx);
 
     for (const char *bad : {"", "not json", "/jawOpen", R"({"proto":"other","v":1,"type":"ping"})",
                             R"({"proto":"bfr-link","v":2,"type":"ping"})", R"({"proto":"bfr-link","v":1})",
@@ -218,7 +248,8 @@ TEST_CASE("link: finds the module, streams, fails over and back, and searches wh
     sink.set_interface_source(two_paths);
     REQUIRE(sink.start());
 
-    // Linked over the preferred path, and the current values are sent.
+    // Linked over the preferred path, and the current values are sent, as a
+    // bundle to the module's control port.
     CHECK(eventually([&] { return sink.active_path() == "dongle"; }));
     CHECK(eventually([&] { return module.got_data("/jawOpen"); }));
     CHECK_FALSE(module.got_data("/_internal"));
@@ -291,5 +322,47 @@ TEST_CASE("link: a module query gets an immediate beacon") {
     sendto(fd, text.data(), text.size(), 0, reinterpret_cast<const sockaddr *>(&to), sizeof(to));
     close(fd);
     CHECK(eventually([&] { return module.beacon_count() > before; }, 1000));
+    sink.stop();
+}
+
+TEST_CASE("link: data goes out bundled, and missing data shows in the status") {
+    FakeModule module;
+    ExpressionState state;
+    StatsRegistry stats;
+    const json threads = json::object();
+    std::vector<SignalId> ids;
+    for (int i = 0; i < 60; i++)   // more than one bundle's worth
+        ids.push_back(state.add_signal("signal" + std::to_string(i)));
+    LinkSink sink(fast_config(module.control_port), SinkDeps{"pc", threads, state, stats});
+    sink.set_interface_source(two_paths);
+    REQUIRE(sink.start());
+    REQUIRE(eventually([&] { return sink.active_path() == "dongle"; }));
+
+    std::atomic<bool> feeding{true};
+    std::thread feeder([&] {   // tracking at ~50 Hz
+        for (uint64_t t = 1; feeding; t++) {
+            std::vector<std::pair<SignalId, Signal>> u;
+            for (SignalId id : ids)
+                u.push_back({id, Signal{0.5f, 1.0f, t}});
+            state.update(std::span(u));
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+    });
+    CHECK(eventually([&] { return sink.status().data == LinkSink::Data::Arriving; }));
+    {
+        std::lock_guard lock(module.mutex);
+        CHECK(module.data_addresses.count("/signal59"));
+        // Bundles: far fewer datagrams than values.
+        CHECK(module.rx * 10 < uint64_t(module.data_messages));
+    }
+
+    // A firewall starts dropping the data: the pongs still come, the count stops.
+    module.drop_data = true;
+    CHECK(eventually([&] { return sink.status().data == LinkSink::Data::Missing; }, 8000));
+    CHECK(sink.active_path() == "dongle");   // still linked: control is fine
+    module.drop_data = false;
+    CHECK(eventually([&] { return sink.status().data == LinkSink::Data::Arriving; }, 8000));
+    feeding = false;
+    feeder.join();
     sink.stop();
 }

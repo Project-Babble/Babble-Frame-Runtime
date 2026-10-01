@@ -24,23 +24,29 @@ namespace babble {
 // tracked values (as the osc sink does) over the best live path.
 //
 // The Frame can reach a PC over the streaming dongle (its own AP, wlanap),
-// over USB (usb0) and over the home LAN (wlan0), in any combination. Control
-// messages are small JSON datagrams on UDP port 6767 (both sides):
+// over USB (usb0) and over the home LAN (wlan0), in any combination.
+// Everything travels as UDP datagrams to the module's port 6767: control
+// messages are small JSON objects, data is OSC.
 //
 //   beacon  headset -> broadcast + unicast   {sid, name, version}
 //   query   module  -> broadcast              {mid}        (answered by a beacon)
-//   offer   module  -> beacon's source        {mid, name, data_port, busy}
+//   offer   module  -> beacon's source        {mid, name, busy}
 //   ping    headset -> module, per path, 1 Hz {sid, seq, path, active}
-//   pong    module  -> ping's source          {mid, seq}
+//   pong    module  -> ping's source          {mid, seq, rx}
 //   bye     either side, on clean shutdown
+//   data    headset -> module, active path    OSC bundles of the osc sink's floats
 //
-// Every message also has "proto":"bfr-link","v":1 and "type". Beacons go out
-// of a socket bound to each interface, so the offer comes back on that path,
-// and the module's address is the offer's source address (never a field).
-// Data is the osc sink's OSC floats, sent to the module's data_port on the
-// active path. A path is dead after timeout_s without a pong; the best live
-// path in path_order is used, and switching back to a better path waits for
-// 3 good pongs.
+// Every control message also has "proto":"bfr-link","v":1 and "type"; the
+// module tells the two apart by the first byte ('{' or '#'/'/'). Beacons,
+// pings and data go out of one socket per interface, so the module's offers
+// and pongs come back on that path, and its address is their source address
+// (never a field). Data shares the pings' address pair on purpose: the
+// module's pongs keep that pair open in the PC's firewall, so data needs no
+// inbound rule there. rx in a pong counts the data datagrams the module has
+// received, which shows whether data actually arrives (status().data).
+// A path is dead after timeout_s without a pong; the best live path in
+// path_order is used, and switching back to a better path waits for 3 good
+// pongs.
 //
 // Config (sinks entry, type "vrcft_link"; also the osc sink's prefix, rename,
 // exclude, max_rate_hz, thread):
@@ -58,7 +64,7 @@ struct Message {
     std::string type;                 // beacon, query, offer, ping, pong, bye
     std::string sid, mid, name, version, path;
     uint64_t seq = 0;
-    int data_port = 0;
+    std::optional<uint64_t> rx;       // pong: data datagrams received (absent from older modules)
     bool busy = false, active = false;
 };
 std::string encode(const Message &m);
@@ -88,10 +94,12 @@ public:
     std::string active_path() const;
 
     // For the debug overlay.
+    enum class Data { Unknown, Arriving, Missing };   // Unknown: not sending, or the module doesn't say
     struct Status {
         bool linked = false;
         std::string path, module, address;   // while linked: path kind, PC name, PC address
         double rtt_ms = -1;                  // the active path's last round trip, -1 = none yet
+        Data data = Data::Unknown;
     };
     Status status() const;
 
@@ -99,11 +107,10 @@ private:
     struct Path {
         link::Interface iface;
         std::string kind;              // dongle / usb / lan
-        int sock = -1;
+        std::shared_ptr<SharedSocket> sock;   // shared with the data sender while active
         bool has_peer = false;
-        sockaddr_in peer{};            // the module's control address on this path
+        sockaddr_in peer{};            // the module's address on this path (control and data)
         std::string mid;
-        int data_port = 0;
         uint64_t last_pong_ns = 0;
         int good_pongs = 0;            // consecutive
         std::map<uint64_t, uint64_t> pings;   // seq -> sent time
@@ -117,6 +124,7 @@ private:
     void handle(Path *path, const link::Message &m, const sockaddr_in &from, uint64_t now);
     void choose(uint64_t now);
     void send(int fd, const sockaddr_in &to, const link::Message &m);
+    void check_data(uint64_t now);   // 1 Hz: are we sending, and does the module see it?
     link::Message base(const std::string &type) const;
     bool alive(const Path &p, uint64_t now) const;
     int rank(const std::string &kind) const;
@@ -144,6 +152,12 @@ private:
     std::string module_name_;
     Path *active_ = nullptr;
     uint64_t seq_ = 0, next_beacon_ns_ = 0, next_ping_ns_ = 0, next_scan_ns_ = 0, last_query_beacon_ns_ = 0;
+
+    // Data arriving at the module: its rx count rising while we send.
+    uint64_t sent_last_ = 0, last_sent_ns_ = 0, linked_ns_ = 0;
+    std::optional<uint64_t> rx_last_;
+    uint64_t rx_seen_ns_ = 0;
+    Data data_state_ = Data::Unknown;
 
     mutable std::mutex status_mutex_;
     std::string active_name_;
