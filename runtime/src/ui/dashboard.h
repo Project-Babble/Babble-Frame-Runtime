@@ -65,7 +65,7 @@ private:
     bool create_overlays();
     void destroy_overlays();
     void present();
-    // The eye panel's values from ExpressionState (tangent gaze -> degrees).
+    // The eye panel's values from ExpressionState (gaze at +-45 deg = +-1 -> degrees).
     std::array<EyeReading, 2> read_eyes() const;
     // Per eye (left, right): X, Y, Lid, Widen, raw lid, neutral, wide ceiling, dilation.
     static constexpr int kPerEye = 8;

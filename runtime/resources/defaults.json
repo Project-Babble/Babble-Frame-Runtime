@@ -172,7 +172,7 @@
       "thread": "gaze",
       "rate_hz": 90,
       "ipd": "auto",
-      "scaling": "tangent",
+      "scaling": "angle",
       "max_deg": 45,
       "flip_y": false,
       "yaw_offset": 0,
