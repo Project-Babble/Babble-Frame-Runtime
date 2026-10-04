@@ -356,6 +356,26 @@ TEST_CASE("link: data goes out bundled, and missing data shows in the status") {
         CHECK(module.rx * 10 < uint64_t(module.data_messages));
     }
 
+    // Tracking pauses (headset off) and resumes: no false "missing" while the
+    // first pongs after the pause catch up.
+    feeding = false;
+    feeder.join();
+    std::this_thread::sleep_for(std::chrono::milliseconds(3500));
+    feeding = true;
+    feeder = std::thread([&] {
+        for (uint64_t t = 100000; feeding; t++) {
+            std::vector<std::pair<SignalId, Signal>> u;
+            for (SignalId id : ids)
+                u.push_back({id, Signal{0.5f, 1.0f, t}});
+            state.update(std::span(u));
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+    });
+    for (int i = 0; i < 40; i++) {
+        CHECK(sink.status().data != LinkSink::Data::Missing);
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    }
+
     // A firewall starts dropping the data: the pongs still come, the count stops.
     module.drop_data = true;
     CHECK(eventually([&] { return sink.status().data == LinkSink::Data::Missing; }, 8000));
@@ -365,4 +385,17 @@ TEST_CASE("link: data goes out bundled, and missing data shows in the status") {
     feeding = false;
     feeder.join();
     sink.stop();
+}
+
+TEST_CASE("link: dongle beacons go only to stations on its own subnet") {
+    auto ip = [](const char *s) {
+        in_addr a{};
+        inet_pton(AF_INET, s, &a);
+        return ntohl(a.s_addr);
+    };
+    const link::Interface dongle{"wlanap", ip("10.35.78.1"), ip("10.35.78.255"), ip("255.255.255.0")};
+    // The ARP table on the dongle can also list the PC's LAN and VPN addresses.
+    const auto out = link::on_subnet(dongle, {ip("10.35.78.25"), ip("192.168.0.149"), ip("100.71.126.17"),
+                                              ip("10.35.78.1"), ip("10.35.78.255"), ip("10.35.78.30")});
+    CHECK(out == std::vector<uint32_t>{ip("10.35.78.25"), ip("10.35.78.30")});
 }

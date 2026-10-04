@@ -287,6 +287,7 @@ int main(int argc, char **argv) {
         o.controller_type = vc.value("controller_type", o.controller_type);
         o.proximity_path = vc.value("proximity_path", o.proximity_path);
         o.eyetracking_path = vc.value("eyetracking_path", o.eyetracking_path);
+        o.absent_after_s = vc.value("absent_after_s", o.absent_after_s);
         steamvr.start(thread_spec(threads, "steamvr", "bbl-steamvr"), o);
     }
     // SteamVR's eye-service shared memory (independent gaze, native openness);

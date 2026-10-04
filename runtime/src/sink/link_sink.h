@@ -76,6 +76,9 @@ struct Interface {
     uint32_t address = 0, broadcast = 0, netmask = 0;   // host byte order
 };
 std::vector<Interface> system_interfaces();
+// The addresses among `candidates` on the interface's own subnet (ARP entries
+// can name a host's addresses from other networks too).
+std::vector<uint32_t> on_subnet(const Interface &iface, const std::vector<uint32_t> &candidates);
 
 } // namespace link
 
@@ -112,6 +115,7 @@ private:
         sockaddr_in peer{};            // the module's address on this path (control and data)
         std::string mid;
         uint64_t last_pong_ns = 0;
+        uint64_t failing_since_ns = 0;  // sends refused (EAGAIN/ENOBUFS) since, 0 = sending fine
         int good_pongs = 0;            // consecutive
         std::map<uint64_t, uint64_t> pings;   // seq -> sent time
     };
@@ -123,7 +127,9 @@ private:
     void receive(Path *path, int fd, uint64_t now);
     void handle(Path *path, const link::Message &m, const sockaddr_in &from, uint64_t now);
     void choose(uint64_t now);
-    void send(int fd, const sockaddr_in &to, const link::Message &m);
+    bool send(int fd, const sockaddr_in &to, const link::Message &m);   // false if the socket refused it
+    void send_on(Path &p, const sockaddr_in &to, const link::Message &m);   // tracks a path that stops sending
+    bool open_socket(Path &p);   // (re)binds the path's socket to its interface address
     void check_data(uint64_t now);   // 1 Hz: are we sending, and does the module see it?
     link::Message base(const std::string &type) const;
     bool alive(const Path &p, uint64_t now) const;
@@ -154,7 +160,7 @@ private:
     uint64_t seq_ = 0, next_beacon_ns_ = 0, next_ping_ns_ = 0, next_scan_ns_ = 0, last_query_beacon_ns_ = 0;
 
     // Data arriving at the module: its rx count rising while we send.
-    uint64_t sent_last_ = 0, last_sent_ns_ = 0, linked_ns_ = 0;
+    uint64_t sent_last_ = 0, last_sent_ns_ = 0, sending_since_ns_ = 0, linked_ns_ = 0;
     std::optional<uint64_t> rx_last_;
     uint64_t rx_seen_ns_ = 0;
     Data data_state_ = Data::Unknown;
