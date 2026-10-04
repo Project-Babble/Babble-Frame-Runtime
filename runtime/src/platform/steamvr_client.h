@@ -33,13 +33,30 @@ inline const char *to_string(Worn w) {
 //
 // Worn: the headset's raw proximity sensor, read as a boolean input action
 // bound to /user/head/proximity (driver_cv registers the /proximity
-// component) - instant in both directions. If that action isn't active, the
-// HMD activity level is the fallback: UserInteraction = worn, Idle/Standby =
-// not worn (SteamVR only reaches Idle ~6 s after removal on the Frame).
-// Anything else (not connected, unknown) = Unknown: callers must not pause.
+// component). If that action isn't active, the HMD activity level is the
+// fallback: UserInteraction = worn, Idle/Standby = not worn (SteamVR only
+// reaches Idle ~6 s after removal on the Frame). Anything else (not
+// connected, unknown) = Unknown: callers must not pause. Putting the headset
+// on counts at once; taking it off only after absent_after_s without a break
+// (PresenceFilter), since the sensor blips "off" for ~0.5 s while worn.
 //
 // The client owns the process's single SteamVR input manifest: the proximity
 // action plus the eye-tracking action the gaze module reads (gaze_action()).
+// Debounces worn -> not worn: "not worn" only after it has lasted
+// absent_after_ns without a break; worn (and unknown) pass at once.
+class PresenceFilter {
+public:
+    explicit PresenceFilter(uint64_t absent_after_ns) : absent_after_ns_(absent_after_ns) {}
+    Worn update(Worn raw, uint64_t now_ns);
+    uint64_t blips() const { return blips_; }   // "not worn" spells too short to count
+
+private:
+    uint64_t absent_after_ns_;
+    Worn out_ = Worn::Unknown;
+    uint64_t absent_since_ = 0;   // 0 = not currently reading "not worn"
+    uint64_t blips_ = 0;
+};
+
 class SteamVrClient {
 public:
     ~SteamVrClient();
@@ -49,6 +66,7 @@ public:
         std::string controller_type = "frame_hmd";
         std::string proximity_path = "/user/head/proximity";
         std::string eyetracking_path = "/user/head/eyetracking";
+        double absent_after_s = 2.0;   // "not worn" must last this long to count
     };
     void start(ThreadSpec thread, Options options);
     void stop();
@@ -89,6 +107,7 @@ private:
     std::atomic<uint64_t> action_set_{0}, gaze_action_{0};
     uint64_t prox_action_ = 0;
     bool prox_reported_ = false;
+    PresenceFilter presence_{2'000'000'000ull};
 };
 
 } // namespace babble

@@ -91,6 +91,14 @@ std::vector<Interface> system_interfaces() {
     return out;
 }
 
+std::vector<uint32_t> on_subnet(const Interface &iface, const std::vector<uint32_t> &candidates) {
+    std::vector<uint32_t> out;
+    for (uint32_t a : candidates)
+        if ((a & iface.netmask) == (iface.address & iface.netmask) && a != iface.address && a != iface.broadcast)
+            out.push_back(a);
+    return out;
+}
+
 } // namespace link
 
 namespace {
@@ -253,12 +261,35 @@ link::Message LinkSink::base(const std::string &type) const {
     return m;
 }
 
-void LinkSink::send(int fd, const sockaddr_in &to, const link::Message &m) {
+bool LinkSink::send(int fd, const sockaddr_in &to, const link::Message &m) {
     const std::string text = link::encode(m);
     if (LOG.debug_enabled() && m.type != "ping")   // pings: 1 Hz per path, see the pong
         LOG.debug("%s: -> %s:%u %s", name_.c_str(), ip_string(to).c_str(), ntohs(to.sin_port), text.c_str());
-    sendto(fd, text.data(), text.size(), MSG_DONTWAIT | MSG_NOSIGNAL, reinterpret_cast<const sockaddr *>(&to),
-           sizeof(to));
+    if (sendto(fd, text.data(), text.size(), MSG_DONTWAIT | MSG_NOSIGNAL, reinterpret_cast<const sockaddr *>(&to),
+               sizeof(to)) >= 0)
+        return true;
+    // A full send buffer, rather than an unreachable host: the socket itself is stuck.
+    return !(errno == EAGAIN || errno == EWOULDBLOCK || errno == ENOBUFS);
+}
+
+void LinkSink::send_on(Path &p, const sockaddr_in &to, const link::Message &m) {
+    if (send(p.sock->fd, to, m))
+        p.failing_since_ns = 0;
+    else if (!p.failing_since_ns)
+        p.failing_since_ns = mono_ns();
+}
+
+bool LinkSink::open_socket(Path &p) {
+    p.sock = std::make_shared<SharedSocket>(socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0));
+    p.failing_since_ns = 0;
+    int one = 1;
+    setsockopt(p.sock->fd, SOL_SOCKET, SO_BROADCAST, &one, sizeof(one));
+    const sockaddr_in local = endpoint(p.iface.address, 0);
+    if (p.sock->fd < 0 || bind(p.sock->fd, reinterpret_cast<const sockaddr *>(&local), sizeof(local)) != 0) {
+        LOG.warn("%s: cannot use interface %s: %s", name_.c_str(), p.iface.name.c_str(), strerror(errno));
+        return false;
+    }
+    return true;
 }
 
 int LinkSink::rank(const std::string &kind) const {
@@ -287,6 +318,17 @@ void LinkSink::rescan(uint64_t now) {
             active_ = nullptr;
         it = paths_.erase(it);
     }
+    // A path whose socket has refused every send for a while is stuck (its
+    // send buffer stays full: packets held by the Wi-Fi driver after the
+    // network went quiet). A fresh socket on the same interface recovers it.
+    for (auto &p : paths_) {
+        if (!p->failing_since_ns || now - p->failing_since_ns < 5'000'000'000ull)
+            continue;
+        LOG.warn("%s: interface %s (%s) has refused every send for %.0f s; reopening its socket", name_.c_str(),
+                 p->iface.name.c_str(), p->kind.c_str(), double(now - p->failing_since_ns) / 1e9);
+        if (open_socket(*p) && active_ == p.get())
+            destination_->set(p->peer, p->sock);   // the data follows (and resends everything)
+    }
     for (const auto &f : found) {
         const bool known = std::any_of(paths_.begin(), paths_.end(), [&](const auto &p) {
             return p->iface.name == f.name && p->iface.address == f.address;
@@ -297,14 +339,9 @@ void LinkSink::rescan(uint64_t now) {
         p->iface = f;
         auto kind = interface_kinds_.find(f.name);
         p->kind = kind != interface_kinds_.end() ? kind->second : "lan";
-        p->sock = std::make_shared<SharedSocket>(socket(AF_INET, SOCK_DGRAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0));
-        int one = 1;
-        setsockopt(p->sock->fd, SOL_SOCKET, SO_BROADCAST, &one, sizeof(one));
-        const sockaddr_in local = endpoint(f.address, 0);
-        if (p->sock->fd < 0 || bind(p->sock->fd, reinterpret_cast<const sockaddr *>(&local), sizeof(local)) != 0) {
-            LOG.warn("%s: cannot use interface %s: %s", name_.c_str(), f.name.c_str(), strerror(errno));
+        if (!open_socket(*p))
             continue;
-        }
+        const sockaddr_in local = endpoint(f.address, 0);
         LOG.info("%s: interface %s (%s, %s)", name_.c_str(), f.name.c_str(), p->kind.c_str(),
                  ip_string(local).c_str());
         paths_.push_back(std::move(p));
@@ -318,22 +355,22 @@ void LinkSink::beacon(uint64_t now) {
     m.name = display_name_;
     m.version = BABBLE_VERSION_DISPLAY;
     for (auto &p : paths_) {
-        send(p->sock->fd, endpoint(p->iface.broadcast, control_port_), m);
+        send_on(*p, endpoint(p->iface.broadcast, control_port_), m);
         if (p->kind == "dongle")
-            for (uint32_t station : arp_neighbours(p->iface.name))
-                send(p->sock->fd, endpoint(station, control_port_), m);
+            for (uint32_t station : link::on_subnet(p->iface, arp_neighbours(p->iface.name)))
+                send_on(*p, endpoint(station, control_port_), m);
     }
     // Manual hosts, from the path on their subnet (or every path).
     for (uint32_t host : hosts_) {
         bool sent = false;
         for (auto &p : paths_)
             if ((host & p->iface.netmask) == (p->iface.address & p->iface.netmask)) {
-                send(p->sock->fd, endpoint(host, control_port_), m);
+                send_on(*p, endpoint(host, control_port_), m);
                 sent = true;
             }
         if (!sent)
             for (auto &p : paths_)
-                send(p->sock->fd, endpoint(host, control_port_), m);
+                send_on(*p, endpoint(host, control_port_), m);
     }
     next_beacon_ns_ = now + (active_ ? beacon_connected_ns_ : beacon_searching_ns_);
 }
@@ -346,7 +383,7 @@ void LinkSink::ping(uint64_t now) {
         m.seq = ++seq_;
         m.path = p->kind;
         m.active = p.get() == active_;
-        send(p->sock->fd, p->peer, m);
+        send_on(*p, p->peer, m);
         p->pings[m.seq] = now;
         while (p->pings.size() > 16)   // unanswered pings: keep only the recent ones
             p->pings.erase(p->pings.begin());
@@ -356,16 +393,21 @@ void LinkSink::ping(uint64_t now) {
 }
 
 void LinkSink::check_data(uint64_t now) {
+    const uint64_t grace = std::max<uint64_t>(3'000'000'000ull, 3 * ping_ns_);
     const uint64_t sent = data_->sent();
-    if (sent != sent_last_)
+    if (sent != sent_last_) {
+        if (now - last_sent_ns_ >= grace)
+            sending_since_ns_ = now;   // sending again after a pause (tracking paused, headset off)
         last_sent_ns_ = now;
+    }
     sent_last_ = sent;
     Data state = Data::Unknown;
-    const uint64_t grace = std::max<uint64_t>(3'000'000'000ull, 3 * ping_ns_);
     if (active_ && rx_last_ && now - last_sent_ns_ < grace) {
-        // Sending: the module's count must have risen recently (after a
-        // grace period from linking, for the first pongs to report it).
-        if (now - rx_seen_ns_ < grace || now - linked_ns_ < grace)
+        // Sending: the module's count must have risen recently. Each start
+        // (linking, or sending again after a pause) gets a grace period first,
+        // for the next pongs to report the new data.
+        const uint64_t since = std::max({rx_seen_ns_, linked_ns_, sending_since_ns_});
+        if (now - since < grace)
             state = Data::Arriving;
         else
             state = Data::Missing;

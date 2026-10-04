@@ -260,7 +260,8 @@
   "steamvr": {
     "controller_type": "frame_hmd",
     "proximity_path": "/user/head/proximity",
-    "eyetracking_path": "/user/head/eyetracking"
+    "eyetracking_path": "/user/head/eyetracking",
+    "absent_after_s": 2
   },
   "visualizer": {
     "command": ["~/aura_vis/run.sh"]

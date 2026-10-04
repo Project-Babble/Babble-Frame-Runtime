@@ -22,6 +22,7 @@ namespace babble {
 SteamVrClient::~SteamVrClient() { stop(); }
 
 void SteamVrClient::start(ThreadSpec thread, Options options) {
+    presence_ = PresenceFilter(uint64_t(std::max(0.0, options.absent_after_s) * 1e9));
     thread_spec_ = std::move(thread);
     options_ = std::move(options);
     stop_ = false;
@@ -131,6 +132,27 @@ std::optional<bool> SteamVrClient::read_proximity() {
     return out;
 }
 
+Worn PresenceFilter::update(Worn raw, uint64_t now) {
+    if (raw != Worn::No) {
+        if (absent_since_ && out_ == Worn::Yes)
+            blips_++;   // back before it counted: a sensor blip
+        absent_since_ = 0;
+        out_ = raw;
+        return out_;
+    }
+    if (out_ != Worn::Yes) {   // nothing to hold on to (unknown, or already off)
+        out_ = Worn::No;
+        return out_;
+    }
+    if (!absent_since_)
+        absent_since_ = now;
+    if (now - absent_since_ >= absent_after_ns_) {
+        out_ = Worn::No;
+        absent_since_ = 0;
+    }
+    return out_;
+}
+
 void SteamVrClient::refresh_activity() {
     vr::EDeviceActivityLevel level = vr::k_EDeviceActivityLevel_Unknown;
     with_vr([&] { level = vr::VRSystem()->GetTrackedDeviceActivityLevel(vr::k_unTrackedDeviceIndex_Hmd); });
@@ -152,6 +174,11 @@ void SteamVrClient::refresh_activity() {
             break;
         }
     }
+    const uint64_t blips = presence_.blips();
+    w = presence_.update(w, mono_ns());
+    if (presence_.blips() != blips)
+        LOG.debug("steamvr: ignored a %s blip of the proximity sensor (%llu so far)", "not worn",
+                  (unsigned long long)presence_.blips());
     Worn prev = worn_.exchange(w);
     if (prev != w)
         LOG.info("steamvr: headset %s (activity level %d)", to_string(w), int(level));
