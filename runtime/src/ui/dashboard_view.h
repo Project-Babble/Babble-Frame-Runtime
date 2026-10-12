@@ -109,9 +109,9 @@ struct Point {
     float x = 0, y = 0;
 };
 
-// The dashboard's pages, drawn on the CPU: a front page with the feed
-// indicators and tracking status, and a settings page behind the cog in the
-// bottom-left corner. No OpenVR here, so it renders anywhere (tests, PNGs).
+// The optional debug dashboard, drawn on the CPU: readings, tracking controls,
+// settings, camera selection and diagnostics. No OpenVR here, so it renders
+// anywhere (tests, PNGs). Tracking is controlled separately by the runtime.
 class DashboardView {
 public:
     static constexpr int kWidth = 1200, kHeight = 750, kThumb = 128;
@@ -164,7 +164,7 @@ private:
     void render_cameras(Canvas &c, const Status &s);
     void render_diagnostics(Canvas &c, const std::vector<Choice> &choices, const Status &s);
     void render_switch_row(Canvas &c, float y, size_t index, const Choice &ch);   // one 124 px row
-    Rect render_pill(Canvas &c, float right, float y, const std::string &text, bool primary);   // -> its rect
+    Rect render_button(Canvas &c, float right, float y, const std::string &text, bool primary);   // -> its rect
     void render_back(Canvas &c, const char *title);
     float render_segments(Canvas &c, float right, float y, const std::vector<std::string> &labels, int selected,
                           const std::function<void(size_t, const Rect &)> &hit);   // -> the control's left edge
@@ -174,6 +174,9 @@ private:
     void render_restart_button(Canvas &c);
     void render_link(Canvas &c, const LinkReading &link, float right);
     void render_eye(Canvas &c, float x, float y, const char *name, const EyeReading &e);
+    enum class Icon { Mouth, Eye, Rate, Camera, Logs, Document, Settings, Home, Count };
+    void render_icon(Canvas &c, Icon icon, float x, float y, Color color);
+    float render_block(Canvas &c, float y, Icon icon);   // -> text's left edge
     bool hovered(const Rect &r) const;
     // Text shortened with an ellipsis to fit max_w.
     std::string fit(const Font &f, const std::string &text, float px, float max_w) const;
@@ -182,6 +185,7 @@ private:
     uint64_t restart_armed_until_ns_ = 0;   // the restart button's confirmation window
     Font regular_, medium_;
     std::optional<Image> logo_small_, logo_thumb_;
+    std::array<std::optional<Image>, size_t(Icon::Count)> icons_{};
     std::vector<Hit> hits_;
     std::optional<Point> pointer_;
 };
