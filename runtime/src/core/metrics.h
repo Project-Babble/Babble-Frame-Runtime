@@ -8,9 +8,11 @@
 
 namespace babble {
 
+// A running total; set() makes it a level instead (e.g. a rate in fps).
 class Counter {
 public:
     void add(uint64_t n = 1) { v_.fetch_add(n, std::memory_order_relaxed); }
+    void set(uint64_t n) { v_.store(n, std::memory_order_relaxed); }
     uint64_t get() const { return v_.load(std::memory_order_relaxed); }
 
 private:

@@ -64,6 +64,14 @@
     "eyesrv": {
       "cpus": [0, 1],
       "nice": 0
+    },
+    "record": {
+      "cpus": [5, 6, 7],
+      "nice": 5
+    },
+    "net": {
+      "cpus": [0],
+      "nice": 10
     }
   },
   "sources": {
@@ -92,8 +100,7 @@
       "enabled": true,
       "dsp_version": 17,
       "ctrl_base_candidates": ["0x234000", "0x124000"],
-      "request_fps": 120,
-      "process_fps": 90,
+      "rate_divisor": 1,
       "tracking": true,
       "poll_interval_us": 400,
       "no_frames_timeout_ms": 2000,
@@ -235,6 +242,18 @@
       "max_rate_hz": 0,
       "exclude": []
     },
+    "record": {
+      "type": "record",
+      "enabled": true,
+      "thread": "record",
+      "dir": "~/.local/share/babble-frame-runtime/captures",
+      "encoder": ["ffmpeg", "-hide_banner", "-loglevel", "warning", "-f", "rawvideo", "-pix_fmt", "gray",
+                  "-s", "{w}x{h}", "-r", "{fps}", "-i", "-", "-c:v", "libx264", "-preset", "ultrafast",
+                  "-qp", "0", "-pix_fmt", "gray", "-g", "{fps}", "-threads", "3", "{out}"],
+      "container": "mkv",
+      "queue_frames": 64,
+      "min_free_gb": 5
+    },
     "vrc_native": {
       "type": "vrc_native",
       "enabled": true,
@@ -268,8 +287,26 @@
   },
   "eye_server": {
     "path": "/dev/shm/eye-server.mmap",
-    "version": 4,
     "thread": "eyesrv"
+  },
+  "capture": {
+    "app": {
+      "repo": "Project-Babble/Babble-Guided-Dataset-Capture",
+      "asset_prefix": "babble-dataset-capture-",
+      "api_url": "https://api.github.com/repos/{repo}/releases?per_page=20",
+      "dir": "~/.local/share/babble-frame-runtime/apps/dataset-capture",
+      "prereleases": false,
+      "check_hours": 6
+    },
+    "upload": {
+      "endpoint": "http://207.211.165.193:3900",
+      "bucket": "babbledata",
+      "region": "garage",
+      "access_key": "",
+      "secret_key": "",
+      "public_key": "",
+      "qp": 20
+    }
   },
   "steamvr_settings": {
     "section": "driver_babble",
@@ -279,7 +316,7 @@
       { "key": "output", "id": "/output" },
       { "key": "mouthRate", "id": "/sources/mouth/process_fps" },
       { "key": "eyeTracking", "id": "/sources/eye/tracking" },
-      { "key": "eyeRate", "id": "/sources/eye/process_fps" },
+      { "key": "eyeRateDivisor", "id": "/sources/eye/rate_divisor" },
       { "key": "opennessSource", "id": "/pipelines/eye/openness_source" },
       { "key": "gazeSource", "id": "/pipelines/gaze/gaze_source" },
       { "key": "debugOverlay", "id": "/dashboard/enabled" }
@@ -297,11 +334,11 @@
         "options": [30, 60, 90, 120]
       },
       {
-        "id": "/sources/eye/process_fps",
+        "id": "/sources/eye/rate_divisor",
         "label": "Eye tracking rate",
-        "hint": "Updates per second. Lower rates save battery.",
-        "unit": "Hz",
-        "options": [30, 45, 60, 90]
+        "hint": "A share of the eye camera rate, which follows the display refresh rate. Lower saves battery.",
+        "options": [1, 2, 3],
+        "labels": ["1:1", "1:2", "1:3"]
       },
       {
         "id": "/sinks/camera_stream/active",

@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # Copies this repository to the Steam Frame, and optionally builds it there.
 #
-#   tools/sync_to_frame.sh [--host USER@HOST] [--build] [--tests]
+#   tools/sync_to_frame.sh [--host USER@HOST] [--build] [--tests] [--profile NAME]
 #
-#   --host    ssh target (default: $FRAME_HOST, else steamos@frame.local)
-#   --build   build the driver folder on the headset (~/babble-frame-runtime/build)
-#   --tests   build the test build (build-dev) and run the unit tests
+#   --host     ssh target (default: $FRAME_HOST, else steamos@frame.local)
+#   --build    build the driver folder on the headset (~/babble-frame-runtime/build)
+#   --tests    build the test build (build-dev) and run the unit tests
+#   --profile  build profile (cmake/babble_profile.cmake): dev (default) or
+#              release; a profile other than dev builds in build-<profile> and
+#              build-<profile>-tests, so the dev build dirs stay as they are
 #
 # The source lands in ~/babble-frame-runtime/src on the headset, next to the
 # build directories (see docs/building.md). Before copying, the current commit
@@ -19,12 +22,14 @@ set -euo pipefail
 host="${FRAME_HOST:-steamos@frame.local}"
 build=false
 tests=false
+profile=dev
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --host) host="${2:?--host needs a value}"; shift 2 ;;
     --build) build=true; shift ;;
     --tests) tests=true; shift ;;
-    -h|--help) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --profile) profile="${2:?--profile needs a value}"; shift 2 ;;
+    -h|--help) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option: $1 (see --help)" >&2; exit 2 ;;
   esac
 done
@@ -41,17 +46,23 @@ rsync -a \
   --exclude 'third_party/doctest/examples' \
   "${repo}/" "${host}:${root}/src/"
 
+if [[ "${profile}" == dev ]]; then
+  bdir=build; tdir=build-dev
+else
+  bdir="build-${profile}"; tdir="build-${profile}-tests"
+fi
+
 if ${build}; then
-  echo "building ${root}/build"
+  echo "building ${root}/${bdir} (${profile} profile)"
   ssh "${host}" "set -e; cd ${root}
-    [ -f build/CMakeCache.txt ] || cmake -S src -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBABBLE_TESTS=OFF
-    cmake --build build -j\$(nproc)"
+    [ -f ${bdir}/CMakeCache.txt ] || cmake -S src -B ${bdir} -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBABBLE_TESTS=OFF -DBABBLE_PROFILE=${profile}
+    cmake --build ${bdir} -j\$(nproc)"
 fi
 
 if ${tests}; then
-  echo "building and running the tests in ${root}/build-dev"
+  echo "building and running the tests in ${root}/${tdir} (${profile} profile)"
   ssh "${host}" "set -e; cd ${root}
-    [ -f build-dev/CMakeCache.txt ] || cmake -S src -B build-dev -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBABBLE_TESTS=ON
-    cmake --build build-dev -j\$(nproc)
-    build-dev/runtime/babble_tests"
+    [ -f ${tdir}/CMakeCache.txt ] || cmake -S src -B ${tdir} -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBABBLE_TESTS=ON -DBABBLE_PROFILE=${profile}
+    cmake --build ${tdir} -j\$(nproc)
+    ${tdir}/runtime/babble_tests"
 fi

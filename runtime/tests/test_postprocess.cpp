@@ -1,7 +1,9 @@
 #include <doctest/doctest.h>
 
 #include "model/postprocess/eye_post.h"
+#if BABBLE_FRUNK_MOUTH
 #include "model/postprocess/mouth_post.h"
+#endif
 
 #include <nlohmann/json.hpp>
 
@@ -21,10 +23,12 @@ const json &golden() {
     return g;
 }
 
+#if BABBLE_FRUNK_MOUTH
 mouth::Calibration shipped_calibration() {
     std::ifstream f(std::string(BABBLE_MODELS_DIR) + "/../calibration_mouth.json");
     return mouth::Calibration::from_json(json::parse(f));
 }
+#endif
 
 // Compares an optional reference value (null = None) with ours.
 void check_opt(const json &want, std::optional<double> got, double tol, const char *what, size_t i, int e) {
@@ -39,6 +43,7 @@ void check_opt(const json &want, std::optional<double> got, double tol, const ch
 
 } // namespace
 
+#if BABBLE_FRUNK_MOUTH
 TEST_CASE("mouth post-processing matches mouth_osc_pc.py --no-presence (manual and auto)") {
     const auto &preds = golden()["mouth_preds"];
     for (const char *mode_name : {"manual", "auto"}) {
@@ -66,6 +71,7 @@ TEST_CASE("mouth post-processing matches mouth_osc_pc.py --no-presence (manual a
         CHECK_MESSAGE(worst <= 1e-6f, "max |diff| " << worst << " at frame " << worst_frame);
     }
 }
+#endif
 
 TEST_CASE("eye post-processing matches eye_osc_pc.py") {
     const auto &g = golden()["eye"];

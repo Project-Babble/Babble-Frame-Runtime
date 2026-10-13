@@ -41,6 +41,7 @@ struct SinkDeps {
     const nlohmann::json &threads;     // config["threads"]
     const ExpressionState &state;
     StatsRegistry &stats;
+    std::string version = "", profile = "";   // the runtime's, for modules that record it (session manifests)
 };
 
 // Builds the module named by cfg["type"]; null (logged) for unknown types.

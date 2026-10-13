@@ -67,9 +67,10 @@ void Dashboard::set_status(const Status &s) {
         s.link.available != status_.link.available || s.link.linked != status_.link.linked ||
         s.link.path != status_.link.path || s.link.pc != status_.link.pc || s.link.address != status_.link.address ||
         std::lround(s.link.rtt_ms) != std::lround(status_.link.rtt_ms) || s.mouth_source != status_.mouth_source ||
+        s.mouth_source_selectable != status_.mouth_source_selectable ||
         s.camera != status_.camera || s.active_camera != status_.active_camera ||
         s.verbose_minutes_left != status_.verbose_minutes_left || s.last_diagnostics != status_.last_diagnostics ||
-        s.log_file != status_.log_file ||
+        s.log_file != status_.log_file || s.choice_hints != status_.choice_hints || s.capture != status_.capture ||
         s.cameras.size() != status_.cameras.size() ||
         !std::equal(s.cameras.begin(), s.cameras.end(), status_.cameras.begin(),
                     [](const UsbCamera &a, const UsbCamera &b) { return a.id == b.id && a.label == b.label; }))
@@ -277,6 +278,10 @@ void Dashboard::run() {
                 verbose_request_ = *r.verbose ? 1 : 0;
             if (r.write_diagnostics)
                 diagnostics_request_ = true;
+            if (r.opened_diagnostics)
+                capture_check_request_ = true;
+            if (r.capture != DashboardView::ClickResult::CaptureAction::None)
+                capture_request_ = int(r.capture);
             std::lock_guard<std::mutex> lock(mutex_);
             // String settings: shown at once, applied by the main thread.
             if (r.mouth_source && *r.mouth_source != status_.mouth_source) {
@@ -299,7 +304,9 @@ void Dashboard::run() {
                 const auto [feed, on] = *r.toggle;
                 FeedStatus &f = feed == 0 ? status_.mouth : status_.eye;
                 f.tracking = on;
-                changes_.emplace_back(std::string("/sources/") + kFeedSources[feed] + "/tracking", on);
+                changes_.emplace_back(feed == 0 ? options_.mouth_tracking_id
+                                                : std::string("/sources/") + kFeedSources[1] + "/tracking",
+                                      on);
             }
         }
 

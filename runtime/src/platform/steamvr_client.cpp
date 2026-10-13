@@ -199,8 +199,22 @@ void SteamVrClient::refresh_ipd() {
     ipd_ = v;
 }
 
+void SteamVrClient::refresh_display_hz() {
+    float v = 0;
+    vr::ETrackedPropertyError err = vr::TrackedProp_Success;
+    with_vr([&] {
+        v = vr::VRSystem()->GetFloatTrackedDeviceProperty(vr::k_unTrackedDeviceIndex_Hmd,
+                                                          vr::Prop_DisplayFrequency_Float, &err);
+    });
+    if (err != vr::TrackedProp_Success || !(v > 10.0f && v < 1000.0f))
+        return;
+    if (std::fabs(v - display_hz_.load()) > 0.5)
+        LOG.info("steamvr: display refresh %.0f Hz", v);
+    display_hz_ = v;
+}
+
 void SteamVrClient::run() {
-    uint64_t next_try = 0, next_poll = 0;
+    uint64_t next_try = 0, next_poll = 0, next_display = 0;
     while (!stop_) {
         const uint64_t now = mono_ns();
         if (!connected_) {
@@ -244,6 +258,11 @@ void SteamVrClient::run() {
         }
         if (ipd_changed)
             refresh_ipd();
+        // The refresh rate changes with a display mode change; once a second is plenty.
+        if (now >= next_display) {
+            refresh_display_hz();
+            next_display = now + 1000000000ull;
+        }
         // The proximity sensor is polled at 10 Hz (events cover the activity fallback).
         if (activity || now >= next_poll) {
             refresh_activity();

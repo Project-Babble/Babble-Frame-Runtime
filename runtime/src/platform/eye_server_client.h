@@ -7,6 +7,7 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -17,17 +18,23 @@ namespace babble {
 // SteamVR's private eye-service shared memory, /dev/shm/eye-server.mmap.
 // Beyond the fused gaze the public input API gives, it carries each eye's
 // gaze before stereo fusion and Valve's own lid openness. Layout and access
-// protocol as documented by konsti219/frameeyeosc (MIT), for layout version 4
-// (Steam Frame, SteamVR 2.17.10).
+// protocol as documented by konsti219/frameeyeosc (MIT), for layout versions 4
+// (SteamVR 2.17.10) and 5 (2.18.1); see docs/eye-tracking.md.
 namespace eye_server {
 
-inline constexpr size_t kMinFileSize = 0x4f21a;
+// What differs between layout versions: the file size and where the record
+// sits. Everything before 0x40 and the record itself are the same.
+struct Layout {
+    uint32_t version;
+    size_t file_size, record_offset;
+};
+inline constexpr Layout kLayouts[] = {{4, 0x4f21a, 0x152}, {5, 0x4f21f, 0x157}};
+inline constexpr size_t kMinFileSize = 0x4f21a;   // the smallest known layout
 inline constexpr size_t kVersionOffset = 0x00, kInitializedOffset = 0x04;
 inline constexpr size_t kMutexOffset = 0x08;       // glibc pthread_mutex_t, process-shared + robust
 inline constexpr size_t kMutexBytes = 0x30;
 inline constexpr size_t kSequenceOffset = 0x38;    // bumped (and futex-woken) per new record
 inline constexpr size_t kRequestedOffset = 0x3c;   // consumers set 1 to ask for records
-inline constexpr size_t kRecordOffset = 0x152;
 inline constexpr size_t kRecordBytes = 0xebc;
 
 // Offsets inside the packed record.
@@ -55,6 +62,7 @@ inline constexpr int kLeftEye = 0, kRightEye = 1;
 struct Sample {
     uint64_t seq = 0;           // ours: increments per published sample
     uint64_t received_ns = 0;   // mono_ns when we copied it
+    uint32_t layout = 0;        // the file's layout version
     double sample_time = 0;     // the service's clock
     std::array<Vec3, 2> gaze{}, pre_fusion_gaze{};
     Vec3 fixation{};
@@ -74,10 +82,9 @@ bool parse_record(const uint8_t *rec, Sample *out);
 // (logged once) and retried every few seconds; so is a missing file.
 class EyeServerClient {
 public:
-    enum Consumer : uint32_t { Gaze = 1, Openness = 2 };
+    enum Consumer : uint32_t { Gaze = 1, Openness = 2, Record = 4 };
     struct Options {
         std::string path = "/dev/shm/eye-server.mmap";
-        uint32_t version = 4;
     };
 
     ~EyeServerClient();
@@ -90,6 +97,11 @@ public:
     bool available() const { return available_.load(); }
     // The newest sample if it arrived within max_age_ns.
     std::optional<eye_server::Sample> latest(uint64_t max_age_ns) const;
+    // Called on the reader thread with every published sample (the recorder
+    // keeps them all); must be quick. Empty to remove.
+    void set_listener(std::function<void(const eye_server::Sample &)> fn);
+    // The layout version of the open file; 0 while none is open.
+    uint32_t layout_version() const { return version_.load(); }
 
 private:
     void run();
@@ -101,6 +113,8 @@ private:
     Options options_;
     StatsRegistry *stats_ = nullptr;
     std::thread thread_;
+    std::atomic<uint32_t> version_{0};
+    size_t map_bytes_ = 0, record_offset_ = 0;
     std::atomic<bool> stop_{false};
     std::atomic<uint32_t> wanted_{0};
     std::atomic<bool> available_{false};
@@ -113,6 +127,8 @@ private:
 
     mutable std::mutex mutex_;
     std::optional<eye_server::Sample> latest_;
+    std::mutex listener_mutex_;
+    std::function<void(const eye_server::Sample &)> listener_;
 
     RateStat samples_;
     Counter timeouts_, reopens_;

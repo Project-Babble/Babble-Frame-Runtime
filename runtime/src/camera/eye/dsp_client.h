@@ -51,11 +51,12 @@ public:
     // Pure validator over a control-block image, shared with the unit tests.
     static bool validate(const uint8_t *ctrl, size_t ctrl_size, const Layout &layout, std::string *why);
 
-    // Replicates the known start sequence (locks free, fps, enables, trigger).
-    // fps <= 0 leaves the rate Valve's tracker asked for untouched.
-    void start_streaming(const Layout &layout, float fps);
-    // Restores the frame rate that was set before start_streaming changed it.
-    void restore_fps(const Layout &layout);
+    // Replicates the known start sequence (locks free, enables, trigger).
+    // The frame rate is left alone: SteamVR's eye service owns it and sets it
+    // from the display refresh rate on every headset-on and display mode change.
+    void start_streaming(const Layout &layout);
+    // The camera frame rate SteamVR's eye service set, in fps; 0 if unset or insane.
+    float read_fps(const Layout &layout) const;
 
     Indices read_indices(const Layout &layout) const;
     const uint8_t *slot_ptr(const Layout &layout, bool right, uint32_t idx) const;
@@ -71,7 +72,6 @@ private:
     int shm_fd_ = -1;
     uint8_t *data_ = nullptr;
     uint8_t *ctrl_ = nullptr;
-    std::optional<uint32_t> saved_fps_bits_;
 };
 
 } // namespace babble

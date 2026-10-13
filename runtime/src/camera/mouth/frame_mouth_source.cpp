@@ -27,7 +27,7 @@ uint32_t fourcc_from(const std::string &s) {
 } // namespace
 
 FrameMouthSource::FrameMouthSource(const nlohmann::json &cfg, SourceDeps deps)
-    : cfg_(cfg), name_(deps.name), out_(deps.out), stats_(deps.stats), arbiter_(deps.arbiter), steamvr_(deps.steamvr),
+    : cfg_(cfg), name_(deps.name), out_(deps.out), stats_(deps.stats), arbiter_(*deps.arbiter), steamvr_(deps.steamvr),
       pause_when_absent_(cfg.value("pause_when_absent", true)),
       tracking_(cfg.value("tracking", true)),
       pairer_(uint64_t(cfg.value("pair_tolerance_us", 4000)) * 1000ull, FrameOrigin::MouthL, FrameOrigin::MouthR),
@@ -261,6 +261,10 @@ void FrameMouthSource::on_frame(FramePtr frame) {
     pairs_.tick();
     skew_.add(uint64_t(std::llabs(pair->skew_ns)));
     pair_latency_.add(now - std::min(pair->left->capture_ns, pair->right->capture_ns));
+
+    // A frame tap (the recorder) gets every pair, before the tracking-rate limiter.
+    if (IFrameTap *tap = tap_.load(std::memory_order_relaxed); tap && tap->tap_wanted())
+        tap->tap_frames(name_, *pair);
 
     std::lock_guard<std::mutex> lock(pair_mutex_);
     if (!limiter_.accept(now))

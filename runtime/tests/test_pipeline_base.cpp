@@ -4,9 +4,11 @@
 
 #include "core/clock.h"
 #include "core/metrics.h"
-#include "model/fusionnet_mouth.h"
 #include "model/pipeline.h"
 #include "state/expression_state.h"
+#if BABBLE_FRUNK_MOUTH
+#include "model/fusionnet_mouth.h"
+#endif
 
 using namespace babble;
 
@@ -66,6 +68,7 @@ TEST_CASE("a held pipeline publishes neutral values once and drops frames until 
     CHECK(p.resets == 2);
 }
 
+#if BABBLE_FRUNK_MOUTH
 TEST_CASE("mouth preprocessing takes frames larger than the default 400x400") {
     const nlohmann::json threads = nlohmann::json::object();
     ExpressionState state;
@@ -89,3 +92,4 @@ TEST_CASE("mouth preprocessing takes frames larger than the default 400x400") {
     CHECK(v0[0] >= 0.0f);
     CHECK(v1[224 * 224 - 1] <= 1.0f);
 }
+#endif

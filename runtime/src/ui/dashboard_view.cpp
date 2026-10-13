@@ -401,7 +401,9 @@ void DashboardView::render_settings(Canvas &c, const std::vector<Choice> &choice
         const float ctl_w = seg_w * float(ch.options.size()) + 2 * pad;
         const Rect ctl{W - kMargin - ctl_w, y + (row_h - seg_h - 2 * pad) / 2, ctl_w, seg_h + 2 * pad};
         medium_.draw(c, kMargin, y + 56, fit(medium_, ch.label, 32, ctl.x - kMargin - 24), 32, kText);
-        regular_.draw(c, kMargin, y + 94, fit(regular_, ch.hint, 25, ctl.x - kMargin - 24), 25, kMuted);
+        const auto live = s.choice_hints.find(ch.id);
+        const std::string &hint = live != s.choice_hints.end() ? live->second : ch.hint;
+        regular_.draw(c, kMargin, y + 94, fit(regular_, hint, 25, ctl.x - kMargin - 24), 25, kMuted);
         c.fill_rect(ctl, kCard, ctl.h / 2);
         for (size_t k = 0; k < ch.options.size(); k++) {
             const double v = ch.options[k];
@@ -411,7 +413,7 @@ void DashboardView::render_settings(Canvas &c, const std::vector<Choice> &choice
                 c.fill_rect(seg, kAccent, seg_h / 2);
             else if (hovered(seg))
                 c.fill_rect(seg, kCardHover, seg_h / 2);
-            const std::string label = format_value(v, ch.unit);
+            const std::string label = k < ch.option_labels.size() ? ch.option_labels[k] : format_value(v, ch.unit);
             const float px = 27;
             medium_.draw(c, seg.x + (seg.w - medium_.measure(label, px)) / 2,
                          seg.y + (seg.h + medium_.cap_height(px)) / 2, label, px, selected ? kText : kMuted);
@@ -420,10 +422,12 @@ void DashboardView::render_settings(Canvas &c, const std::vector<Choice> &choice
         y += row_h;
     }
 
-    // Where the mouth comes from, and for USB which camera (its own page).
-    const bool usb = s.mouth_source == "usb";
+    // Where the mouth comes from (when there is a choice), and for USB which
+    // camera (its own page).
+    const bool selectable = s.mouth_source_selectable;
+    const bool usb = !selectable || s.mouth_source == "usb";
     c.fill_rect({kMargin, y, W - 2 * kMargin, 2}, kLine);
-    {
+    if (selectable) {
         const float row_h = 124, seg_y = y + (row_h - 72) / 2;
         const float ctl_x = render_segments(c, W - kMargin, seg_y, {"Frunk", "USB"}, usb ? 1 : 0,
                                             [&](size_t k, const Rect &r) {
@@ -471,60 +475,132 @@ Rect DashboardView::render_pill(Canvas &c, float right, float y, const std::stri
 // where the logs are (what a tester sends with a problem report).
 // An on/off setting: label and hint, a switch at the right; a click anywhere
 // near the switch flips it.
-void DashboardView::render_switch_row(Canvas &c, float y, size_t index, const Choice &ch) {
+void DashboardView::render_switch_row(Canvas &c, float y, size_t index, const Choice &ch, float row_h) {
     const float W = float(c.width());
     const bool on = ch.value != 0;
-    const Rect sw{W - kMargin - 92, y + 36, 92, 52};
-    const Rect hit{sw.x - 24, y, W - kMargin - (sw.x - 24), 124};
+    const float d = (124 - row_h) / 2;   // rows shorter than 124 px keep their content centred
+    const Rect sw{W - kMargin - 92, y + 36 - d, 92, 52};
+    const Rect hit{sw.x - 24, y, W - kMargin - (sw.x - 24), row_h};
     render_switch(c, sw, on, hovered(hit));
     hits_.push_back({Hit::Option, hit, index, on ? 0.0 : 1.0});
-    medium_.draw(c, kMargin, y + 56, fit(medium_, ch.label, 32, hit.x - kMargin - 24), 32, kText);
-    regular_.draw(c, kMargin, y + 94, fit(regular_, ch.hint, 25, hit.x - kMargin - 24), 25, kMuted);
+    medium_.draw(c, kMargin, y + 56 - d, fit(medium_, ch.label, 32, hit.x - kMargin - 24), 32, kText);
+    regular_.draw(c, kMargin, y + 94 - d, fit(regular_, ch.hint, 25, hit.x - kMargin - 24), 25, kMuted);
+}
+
+// The dataset capture app: what it's doing, its main button and Remove.
+void DashboardView::render_capture_row(Canvas &c, float y, float row_h, const CaptureRow &row) {
+    using S = CaptureRow::State;
+    const float W = float(c.width());
+    const float d = (124 - row_h) / 2;
+    char pct[64];
+    std::string hint, primary, remove;
+    switch (row.state) {
+    case S::Hidden: return;
+    case S::Checking: hint = "Checking for the app..."; break;
+    case S::NotInstalled:
+        hint = row.detail.empty() ? "A guided recording session for the dataset. Optional; not installed." : row.detail;
+        primary = "Install";
+        break;
+    case S::Downloading:
+        snprintf(pct, sizeof(pct), "Downloading %.0f%%", double(row.progress) * 100.0);
+        hint = pct;
+        primary = "Cancel";
+        break;
+    case S::Installing: hint = "Installing..."; break;
+    case S::Installed:
+        hint = "v" + row.version + " installed";
+        primary = "Launch";
+        remove = "Remove";
+        break;
+    case S::UpdateAvailable:
+        hint = "v" + row.version + " installed; v" + row.latest + " available";
+        primary = "Update";
+        remove = "Remove";
+        break;
+    case S::Running:
+        hint = row.recording ? "Running \u00b7 recording" : "Running";
+        primary = "Stop";
+        break;
+    case S::Failed:
+        hint = row.detail.empty() ? "Something went wrong." : row.detail;
+        primary = "Retry";
+        break;
+    }
+    if (row.uploads_pending > 0) {
+        snprintf(pct, sizeof(pct), " \u00b7 %d upload%s pending", row.uploads_pending, row.uploads_pending == 1 ? "" : "s");
+        hint += pct;
+        if (!row.upload_stage.empty()) {
+            snprintf(pct, sizeof(pct), " (%s %.0f%%)", row.upload_stage.c_str(), double(row.upload_progress) * 100.0);
+            hint += pct;
+        }
+    }
+    float left = W - kMargin;
+    if (!primary.empty()) {
+        const Rect b = render_pill(c, left, y + 30 - d, primary, true);
+        hits_.push_back({Hit::CapturePrimary, b});
+        left = b.x - 16;
+    }
+    if (!remove.empty()) {
+        const Rect b = render_pill(c, left, y + 30 - d, remove, false);
+        hits_.push_back({Hit::CaptureRemove, b});
+        left = b.x;
+    }
+    medium_.draw(c, kMargin, y + 56 - d, "Dataset capture", 32, kText);
+    regular_.draw(c, kMargin, y + 94 - d, fit(regular_, hint, 25, left - kMargin - 24), 25, kMuted);
 }
 
 void DashboardView::render_diagnostics(Canvas &c, const std::vector<Choice> &choices, const Status &s) {
     const float W = float(c.width());
     render_back(c, "Diagnostics");
+    // Shorter rows than Settings: up to four of them, then the log paths, fit.
+    constexpr float kRow = 112, d = (124 - kRow) / 2;
     float y = 160;
     {   // Verbose logging, with its switch.
         const bool on = s.verbose_minutes_left > 0;
-        const Rect sw{W - kMargin - 92, y + 36, 92, 52};
-        const Rect hit{sw.x - 24, y, W - kMargin - (sw.x - 24), 124};
+        const Rect sw{W - kMargin - 92, y + 36 - d, 92, 52};
+        const Rect hit{sw.x - 24, y, W - kMargin - (sw.x - 24), kRow};
         render_switch(c, sw, on, hovered(hit));
         Hit h{Hit::Verbose, hit};
         h.value = on ? 0.0 : 1.0;
         hits_.push_back(h);
-        medium_.draw(c, kMargin, y + 56, "Verbose logging", 32, kText);
+        medium_.draw(c, kMargin, y + 56 - d, "Verbose logging", 32, kText);
         const std::string hint = on ? "On for " + std::to_string(s.verbose_minutes_left) + " more min: every module logs in detail."
                                     : "Every module logs in detail for 10 minutes.";
-        regular_.draw(c, kMargin, y + 94, fit(regular_, hint, 25, hit.x - kMargin - 24), 25, kMuted);
-        y += 124;
+        regular_.draw(c, kMargin, y + 94 - d, fit(regular_, hint, 25, hit.x - kMargin - 24), 25, kMuted);
+        y += kRow;
     }
     c.fill_rect({kMargin, y, W - 2 * kMargin, 2}, kLine);
     {   // A diagnostics file.
-        const Rect b = render_pill(c, W - kMargin, y + 30, "Write file", true);
+        const Rect b = render_pill(c, W - kMargin, y + 30 - d, "Write file", true);
         hits_.push_back({Hit::WriteDiagnostics, b});
-        medium_.draw(c, kMargin, y + 56, "Diagnostics file", 32, kText);
+        medium_.draw(c, kMargin, y + 56 - d, "Diagnostics file", 32, kText);
         const std::string hint = s.last_diagnostics.empty() ? "A report of the current state, to send with a problem."
                                                             : "Saved " + s.last_diagnostics;
-        regular_.draw(c, kMargin, y + 94, fit(regular_, hint, 25, b.x - kMargin - 24), 25, kMuted);
-        y += 124;
+        regular_.draw(c, kMargin, y + 94 - d, fit(regular_, hint, 25, b.x - kMargin - 24), 25, kMuted);
+        y += kRow;
     }
     for (size_t i = 0; i < choices.size(); i++) {   // testing switches
         if (!choices[i].diagnostics || !choices[i].boolean)
             continue;
         c.fill_rect({kMargin, y, W - 2 * kMargin, 2}, kLine);
-        render_switch_row(c, y, i, choices[i]);
-        y += 124;
+        render_switch_row(c, y, i, choices[i], kRow);
+        y += kRow;
+    }
+    if (s.capture.state != CaptureRow::State::Hidden) {
+        c.fill_rect({kMargin, y, W - 2 * kMargin, 2}, kLine);
+        render_capture_row(c, y, kRow, s.capture);
+        y += kRow;
     }
     c.fill_rect({kMargin, y, W - 2 * kMargin, 2}, kLine);
     y += 50;
+    // Low on the page (four rows) the paths go right of the cog in the corner.
+    const float x0 = y + 44 > 620 ? 150 : kMargin;
     for (const auto &[label, path] : {std::pair<const char *, const std::string &>{"Log", s.log_file},
                                       {"Stats", s.stats_file}}) {
         if (path.empty())
             continue;
-        medium_.draw(c, kMargin, y, label, 26, kText);
-        regular_.draw(c, kMargin + 110, y, fit(regular_, path, 24, W - 2 * kMargin - 110), 24, kMuted);
+        medium_.draw(c, x0, y, label, 26, kText);
+        regular_.draw(c, x0 + 110, y, fit(regular_, path, 24, W - kMargin - x0 - 110), 24, kMuted);
         y += 44;
     }
 }
@@ -640,6 +716,15 @@ DashboardView::ClickResult DashboardView::click(Point p) {
             break;
         case Hit::OpenDiagnostics:
             page_ = Page::Diagnostics;
+            out.opened_diagnostics = true;
+            out.redraw = true;
+            break;
+        case Hit::CapturePrimary:
+            out.capture = ClickResult::CaptureAction::Primary;
+            out.redraw = true;
+            break;
+        case Hit::CaptureRemove:
+            out.capture = ClickResult::CaptureAction::Remove;
             out.redraw = true;
             break;
         case Hit::Verbose:

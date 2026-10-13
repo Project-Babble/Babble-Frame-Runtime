@@ -7,6 +7,9 @@
 #include "babble_version.h"
 #include "camera/tracking_source.h"
 #include "camera/usb/babble_usb_source.h"
+#include "capture/app_installer.h"
+#include "capture/capture_server.h"
+#include "capture/uploader.h"
 #include "core/clock.h"
 #include "core/config.h"
 #include "core/crash.h"
@@ -19,11 +22,14 @@
 #include "model/pipeline.h"
 #include "platform/app_launcher.h"
 #include "platform/diagnostics.h"
+#if BABBLE_FRUNK_MOUTH
 #include "platform/camera_arbiter_client.h"
+#endif
 #include "platform/eye_server_client.h"
 #include "platform/steamvr_client.h"
 #include "platform/steamvr_settings.h"
 #include "sink/link_sink.h"
+#include "sink/record_sink.h"
 #include "sink/vrc_native_sink.h"
 #include "sink/sink.h"
 #include "state/expression_state.h"
@@ -57,6 +63,36 @@ const babble::log::Logger LOG("main");
 using namespace babble;
 
 namespace {
+
+// The platform's camera routing (the arbiter under /etc/babble-camera): only
+// the Frame's own mouth cameras depend on it, so builds without that source
+// have none, and everything that mentions it here is a no-op.
+struct ArbiterPoll {
+#if BABBLE_FRUNK_MOUTH
+    CameraArbiterClient client;
+    uint64_t idle_ns, streaming_ns, next = 0;
+    explicit ArbiterPoll(const json &cfg) : client(cfg.value("arbiter", json::object())) {
+        const auto p = section(cfg, "arbiter").value("poll_interval_ms", json::object());
+        idle_ns = uint64_t(p.value("idle", 1000)) * 1000000ull;
+        streaming_ns = uint64_t(p.value("streaming", 5000)) * 1000000ull;
+    }
+    const CameraArbiterClient *ptr() const { return &client; }
+    void tick(uint64_t now, bool any_streaming) {
+        if (now < next)
+            return;
+        client.poll();
+        next = now + (any_streaming ? streaming_ns : idle_ns);
+    }
+    void recheck(uint64_t now) { next = now; }   // capture trouble: re-check the platform right away
+    std::string state() const { return to_string(client.state()); }
+#else
+    explicit ArbiterPoll(const json &) {}
+    const CameraArbiterClient *ptr() const { return nullptr; }
+    void tick(uint64_t, bool) {}
+    void recheck(uint64_t) {}
+    std::string state() const { return {}; }   // "": no arbiter in this build
+#endif
+};
 
 struct Options {
     std::optional<std::filesystem::path> config;
@@ -116,7 +152,9 @@ json load(const Options &opt) {
         LOG.warn("config: %s; using the default", fix.c_str());
     json &c = cl.config;
     if (opt.no_eye && c["sources"].contains("eye")) c["sources"]["eye"]["enabled"] = false;
-    if (opt.no_mouth && c["sources"].contains("mouth")) c["sources"]["mouth"]["enabled"] = false;
+    // --no-mouth: no mouth tracker at all, the Frame's own cameras or a USB one.
+    for (const char *m : {"mouth", "face"})
+        if (opt.no_mouth && c["sources"].contains(m)) c["sources"][m]["enabled"] = false;
     // --dump-frames targets the "debug" output module (added if not configured).
     if (!opt.dump_dir.empty() || opt.dump_count >= 0) {
         json &d = c["sinks"]["debug"];
@@ -225,6 +263,7 @@ std::vector<ui::Choice> dashboard_choices(const json &cfg) {
         c.boolean = cfg[ptr].is_boolean();
         c.diagnostics = row.value("page", "settings") == "diagnostics";
         c.options = c.boolean ? std::vector<double>{0, 1} : row.value("options", std::vector<double>{});
+        c.option_labels = row.value("labels", std::vector<std::string>{});
         c.value = c.boolean ? double(cfg[ptr].get<bool>()) : cfg[ptr].get<double>();
         out.push_back(std::move(c));
     }
@@ -254,8 +293,9 @@ int main(int argc, char **argv) {
     apply_thread_spec(thread_spec(threads, "main", "babble-runtime"));
 
     const bool shim = ShimLink::present();
-    LOG.info("babble-runtime %s starting (pid %d, %s, state dir %s)", BABBLE_VERSION_DISPLAY, getpid(),
-             shim ? "supervised by driver shim" : "standalone", paths::state_dir().c_str());
+    LOG.info("babble-runtime %s (%s profile) starting (pid %d, %s, state dir %s)", BABBLE_VERSION_DISPLAY,
+             BABBLE_PROFILE_NAME, getpid(), shim ? "supervised by driver shim" : "standalone",
+             paths::state_dir().c_str());
     if (!shim && !opt.standalone)
         LOG.warn("no shim link on fd 3; running unsupervised (use --standalone to silence this)");
     for (const auto &line : diag::session_info(cfg, paths::resource_dir() / "models"))
@@ -277,7 +317,7 @@ int main(int argc, char **argv) {
 
     StatsRegistry stats;
     ExpressionState state;
-    CameraArbiterClient arbiter(cfg.value("arbiter", json::object()));
+    ArbiterPoll arbiter(cfg);
     // The one SteamVR connection: headset presence (proximity sensor), IPD, gaze input.
     SteamVrClient steamvr;
     {
@@ -297,7 +337,6 @@ int main(int argc, char **argv) {
         const json ec = cfg.value("eye_server", json::object());
         EyeServerClient::Options o;
         o.path = ec.value("path", o.path);
-        o.version = ec.value("version", o.version);
         eye_server.start(thread_spec(threads, ec.value("thread", "eyesrv"), "bbl-eyesrv"), o, &stats);
     }
 
@@ -324,7 +363,13 @@ int main(int argc, char **argv) {
             LOG.info("sink %s: disabled", it.key().c_str());
             continue;
         }
-        auto sink = make_sink(it.value(), SinkDeps{it.key(), threads, state, stats});
+        if (!it.value().contains("type")) {
+            // Settings saved for an output this build doesn't have (e.g. VRChat native in a release build).
+            LOG.info("sink %s: not part of this build; ignoring its saved settings", it.key().c_str());
+            continue;
+        }
+        auto sink = make_sink(it.value(),
+                              SinkDeps{it.key(), threads, state, stats, BABBLE_VERSION_DISPLAY, BABBLE_PROFILE_NAME});
         if (!sink)
             continue;
         if (sink->wants_frames())
@@ -368,7 +413,13 @@ int main(int argc, char **argv) {
             LOG.info("source %s: disabled", it.key().c_str());
             continue;
         }
-        auto src = make_tracking_source(it.value(), SourceDeps{it.key(), threads, *slots[it.key()], stats, arbiter, &steamvr});
+        if (!it.value().contains("type")) {
+            // Settings saved for a source this build doesn't have (e.g. the Frame's mouth cameras in a release build).
+            LOG.info("source %s: not part of this build; ignoring its saved settings", it.key().c_str());
+            continue;
+        }
+        auto src = make_tracking_source(it.value(),
+                                        SourceDeps{it.key(), threads, *slots[it.key()], stats, arbiter.ptr(), &steamvr});
         if (src)
             sources.push_back({it.key(), std::move(src)});
     }
@@ -378,6 +429,12 @@ int main(int argc, char **argv) {
         const json &o = cfg.value("output", json("vrcft"));
         return o.is_string() ? o.get<std::string>() : std::string("vrcft");
     };
+    // A saved choice this build has no module for (a release build with
+    // "output": "vrc_native" in settings.json) would leave no output at all.
+    if (std::none_of(sinks.begin(), sinks.end(), [&](const SinkEntry &k) { return k.output == output_choice(); })) {
+        LOG.warn("output: %s is not available in this build; using VRCFaceTracking", output_choice().c_str());
+        cfg["output"] = "vrcft";
+    }
     for (auto it = sinks.begin(); it != sinks.end();) {
         if (!it->output.empty() && it->output != output_choice()) {
             ++it;   // started when the Output setting picks it
@@ -437,6 +494,7 @@ int main(int argc, char **argv) {
         if (!s.src->tracking())
             set_feed_tracking(s.name, false);
 
+#if BABBLE_FRUNK_MOUTH
     // The mouth comes from the Frame's own cameras, the "frunk" (source
     // "mouth"), or a USB camera such as a Babble face tracker (source "face"),
     // per "mouth_source". The Mouth Tracking switch (/sources/mouth/tracking)
@@ -465,6 +523,45 @@ int main(int argc, char **argv) {
     };
     if (face_source)
         face_source->set_process_fps(usb_mouth_rate());
+    // The mouth feed as the overlay sees it: its source now, its label, and
+    // the setting its switch flips.
+    auto mouth_feed = [&] { return mouth_from_usb() ? "face" : ui::kFeedSources[0]; };
+    auto mouth_label = [&] { return mouth_from_usb() ? "usb" : "frunk"; };
+    const std::string mouth_tracking_id = "/sources/mouth/tracking";
+    // The settings that go through the mouth routing: nullopt = not one of
+    // them; false = rejected, nothing applied; true = applied (cfg updated).
+    auto apply_mouth_setting = [&](const std::string &id, const json &value) -> std::optional<bool> {
+        if (id == "/sources/face/tracking") {
+            // The USB camera follows Mouth Tracking and Mouth Source; switching it
+            // on by itself would run two mouth trackers at once.
+            LOG.warn("settings: ignoring %s: set /sources/mouth/tracking and /mouth_source instead", id.c_str());
+            return false;
+        }
+        const bool routing = (id == "/sources/mouth/tracking" && value.is_boolean()) ||
+                             (id == "/mouth_source" && (value == "frunk" || value == "usb")) ||
+                             (id == "/sources/mouth/process_fps" && value.is_number() && value.get<double>() > 0);
+        if (!routing)
+            return std::nullopt;
+        cfg[json::json_pointer(id)] = value;
+        if (id == "/sources/mouth/process_fps") {
+            for (auto &s : sources)
+                if (s.name == "mouth")
+                    s.src->set_process_fps(value.get<double>());
+            if (face_source)
+                face_source->set_process_fps(usb_mouth_rate());
+        } else {
+            route_mouth();
+        }
+        return true;
+    };
+#else
+    // The USB Babble tracker is the mouth (source "face"): its on/off and rate
+    // are ordinary source settings, handled by the per-source loop below.
+    auto mouth_feed = [] { return "face"; };
+    auto mouth_label = [] { return "usb"; };
+    const std::string mouth_tracking_id = "/sources/face/tracking";
+    auto apply_mouth_setting = [](const std::string &, const json &) -> std::optional<bool> { return std::nullopt; };
+#endif
 
     // The USB camera source, and the camera list the debug overlay shows
     // (read at start and whenever the overlay asks for a refresh).
@@ -501,6 +598,7 @@ int main(int argc, char **argv) {
             o.icons_dir = paths::resource_dir() / "icons";
             o.width_m = dcfg.value("width_m", o.width_m);
             o.state = &state;
+            o.mouth_tracking_id = mouth_tracking_id;
             dashboard->start(steamvr, thread_spec(threads, "ui", "bbl-ui"), o, dashboard_choices(cfg));
         } else {
             dashboard->stop();
@@ -532,31 +630,14 @@ int main(int argc, char **argv) {
             return;
         LOG.debug("settings: %s = %s from %s (was %s)", id.c_str(), value.dump().c_str(), origin_name(origin),
                   cfg.contains(ptr) ? cfg[ptr].dump().c_str() : "unset");
-        bool applied = false;
-        if (id == "/sources/face/tracking") {
-            // The USB camera follows Mouth Tracking and Mouth Source; switching it
-            // on by itself would run two mouth trackers at once.
-            LOG.warn("settings: ignoring %s: set /sources/mouth/tracking and /mouth_source instead", id.c_str());
-            return;
-        }
-        const bool mouth_routing = (id == "/sources/mouth/tracking" && value.is_boolean()) ||
-                                   (id == "/mouth_source" && (value == "frunk" || value == "usb")) ||
-                                   (id == "/sources/mouth/process_fps" && value.is_number() && value.get<double>() > 0);
-        if (mouth_routing) {
-            cfg[ptr] = value;
-            if (id == "/sources/mouth/process_fps") {
-                for (auto &s : sources)
-                    if (s.name == "mouth")
-                        s.src->set_process_fps(value.get<double>());
-                if (face_source)
-                    face_source->set_process_fps(usb_mouth_rate());
-            } else {
-                route_mouth();
-            }
-            applied = true;
+        bool applied = false, mouth_handled = false;
+        if (auto r = apply_mouth_setting(id, value)) {
+            if (!*r)
+                return;
+            applied = mouth_handled = true;
         }
         for (auto &s : sources) {
-            if (mouth_routing)
+            if (mouth_handled)
                 break;
             if (id == "/sources/" + s.name + "/process_fps" && value.is_number() && value.get<double>() > 0) {
                 s.src->set_process_fps(value.get<double>());
@@ -655,9 +736,6 @@ int main(int argc, char **argv) {
         return f;
     };
 
-    const auto poll_cfg = section(cfg, "arbiter").value("poll_interval_ms", json::object());
-    const uint64_t arbiter_idle_ns = uint64_t(poll_cfg.value("idle", 1000)) * 1000000ull;
-    const uint64_t arbiter_streaming_ns = uint64_t(poll_cfg.value("streaming", 5000)) * 1000000ull;
     // Diagnostics file (SIGUSR1, the Babble tab): everything needed to look
     // into a problem report without the headset.
     std::string last_stats = "{}";   // the latest stats render (JSON)
@@ -670,9 +748,9 @@ int main(int argc, char **argv) {
         o << "Babble Frame Runtime diagnostics, " << when << "\n\n== session\n";
         for (const auto &line : diag::session_info(cfg, paths::resource_dir() / "models"))
             o << line << "\n";
-        o << "\n== status\narbiter " << to_string(arbiter.state()) << ", headset " << to_string(steamvr.worn())
-          << ", steamvr " << (steamvr.connected() ? "connected" : "not connected") << ", mouth source "
-          << (mouth_from_usb() ? "usb" : "frunk") << "\n";
+        o << "\n== status\n" << (arbiter.state().empty() ? "" : "arbiter " + arbiter.state() + ", ") << "headset "
+          << to_string(steamvr.worn()) << ", steamvr " << (steamvr.connected() ? "connected" : "not connected")
+          << ", mouth source " << mouth_label() << "\n";
         for (auto &src : sources)
             o << "source " << src.name << ": " << src.src->state_name() << (src.src->tracking() ? "" : " (tracking off)")
               << (src.src->last_error().empty() ? "" : ", last error: " + src.src->last_error()) << "\n";
@@ -720,6 +798,182 @@ int main(int argc, char **argv) {
         return path;
     };
 
+    // Dataset recording for the capture app: the recorder module taps every
+    // source's frames, and the app drives it over a local socket.
+    RecordSink *recorder = nullptr;
+    for (auto &k : sinks)
+        if (auto *r = dynamic_cast<RecordSink *>(k.sink.get()); r && k.running)
+            recorder = r;
+    if (recorder) {
+        for (auto &s : sources)
+            s.src->set_frame_tap(recorder);
+        // Valve's eye-service samples go into the session as valve_eye.bin.
+        eye_server.set_listener([recorder](const eye_server::Sample &s) { recorder->add_eye_sample(s); });
+    }
+    auto find_source = [&](const std::string &name) -> ITrackingSource * {
+        for (auto &s : sources)
+            if (s.name == name)
+                return s.src.get();
+        return nullptr;
+    };
+    auto source_json = [&](const std::string &name) {
+        json j = nullptr;
+        if (ITrackingSource *src = find_source(name)) {
+            j = {{"state", src->state_name()}, {"streaming", src->streaming()}};
+            if (src->camera_fps() > 0)
+                j["camera_fps"] = src->camera_fps();
+        }
+        return j;
+    };
+    // Uploads of consented sessions, in the background; never while recording.
+    const json capture_cfg = section(cfg, "capture");
+    capture::Uploader uploader(capture_cfg.value("upload", json::object()),
+                               recorder ? recorder->dir() : paths::data_dir() / "captures", threads,
+                               [&] { return recorder && recorder->status().recording; });
+    uploader.start();
+    capture::FnBackend capture_backend;
+    // The eye camera rate follows the display refresh rate, which an XR app
+    // (the capture app included) can change, so status carries both live.
+    auto eye_json = [&] {
+        json eye = source_json("eye");
+        if (eye.is_object() && steamvr.display_hz() > 0)
+            eye["display_hz"] = steamvr.display_hz();
+        return eye;
+    };
+    capture_backend.on_hello = [&] {
+        json eye = eye_json();
+        json mouth = source_json(mouth_feed());
+        if (mouth.is_object())
+            mouth["kind"] = mouth_label();
+        return json{{"runtime", BABBLE_VERSION_DISPLAY},
+                    {"profile", BABBLE_PROFILE_NAME},
+                    {"recording", recorder && recorder->available()},
+                    {"upload", uploader.available()},
+                    {"sources", {{"eye", eye}, {"mouth", mouth}}}};
+    };
+    capture_backend.on_start = [&](const json &req) {
+        if (!recorder || !recorder->available())
+            return capture::Result::fail("unavailable", "recording isn't available in this runtime (no encoder)");
+        const std::string routine = req.value("routine", "");
+        auto streaming = [&](const std::string &name) {
+            ITrackingSource *s = find_source(name);
+            return s && s->streaming();
+        };
+        if (routine == "eye" && !streaming("eye"))
+            return capture::Result::fail("no_source", "the eye cameras aren't streaming");
+        if (routine == "mouth" && !streaming(mouth_feed()))
+            return capture::Result::fail("no_source", "no mouth camera is streaming");
+        if (std::none_of(sources.begin(), sources.end(), [](const SourceEntry &s) { return s.src->streaming(); }))
+            return capture::Result::fail("no_source", "no camera is streaming");
+        RecordSink::SessionSpec spec;
+        spec.routine = routine;
+        spec.meta = req.value("meta", json::object());
+        spec.consent = req.value("consent", json(nullptr));
+        spec.routine_def = req.value("routine_def", json(nullptr));
+        spec.valve_eye = find_source("eye") != nullptr;
+        for (auto &s : sources) {
+            // The rate the encoder is told; the stamps carry the real timing.
+            double fps = s.src->camera_fps();
+            const json &sc = cfg["sources"][s.name];
+            if (fps <= 0)
+                fps = sc.value("sensor_fps", sc.value("fps", 0.0));
+            spec.source_fps[s.name] = fps > 0 ? fps : 30.0;
+        }
+        if (ITrackingSource *eye = find_source("eye"); eye && eye->camera_fps() > 0)
+            spec.context["eye_camera_fps"] = eye->camera_fps();
+        if (steamvr.display_hz() > 0)
+            spec.context["display_hz"] = steamvr.display_hz();
+        spec.context["mouth_source"] = mouth_label();
+        spec.context["eye_rate_divisor"] = cfg["sources"].value("eye", json::object()).value("rate_divisor", 1);
+        if (spec.valve_eye)
+            eye_server.want(EyeServerClient::Record, true);   // until the session finishes
+        const auto r = recorder->start_session(spec);
+        if (!r.ok) {
+            eye_server.want(EyeServerClient::Record, false);
+            return capture::Result::fail(r.error, r.message);
+        }
+        capture::Result ok;
+        ok.data = {{"session", r.id}, {"dir", r.dir}};
+        return ok;
+    };
+    capture_backend.on_segment = [&](const capture::Segment &seg) {
+        json extra = json::object();
+        if (seg.step)
+            extra["step"] = *seg.step;
+        if (!seg.phase.empty())
+            extra["phase"] = seg.phase;
+        std::string err;
+        if (!recorder || !recorder->add_label(seg.label, seg.start_ns, seg.end_ns, &err, extra))
+            return capture::Result::fail("bad_request", recorder ? err : "not recording");
+        return capture::Result{};
+    };
+    capture_backend.on_stop = [&](const std::string &reason) {
+        if (!recorder || !recorder->stop_session(reason))
+            return capture::Result::fail("bad_request", "not recording");
+        return capture::Result{};
+    };
+    // The protocol names sources by role, as hello does: "eye", and "mouth"
+    // for the current mouth feed; any other recorded source keeps its name.
+    auto protocol_source = [&](const std::string &name) -> std::string {
+        return name == mouth_feed() ? "mouth" : name;
+    };
+    auto capture_status = [&] {
+        json s = {{"recording", false}};
+        const auto up = uploader.snapshot();
+        s["uploads"] = {{"pending", up.pending},
+                        {"active", up.active.empty() ? json(nullptr) : json(up.active)},
+                        {"stage", up.stage.empty() ? json(nullptr) : json(up.stage)},
+                        {"progress", up.progress}};
+        json src = {{"eye", eye_json()}, {"mouth", source_json(mouth_feed())}};
+        if (src["mouth"].is_object())
+            src["mouth"]["kind"] = mouth_label();
+        if (recorder) {
+            const auto st = recorder->status();
+            s["recording"] = st.recording;
+            if (st.recording) {
+                s["session"] = st.id;
+                s["finishing"] = st.finishing;
+                s["elapsed_ns"] = mono_ns() - st.started_ns;
+                for (const auto &[name, c] : st.sources) {
+                    json &e = src[protocol_source(name)];
+                    if (!e.is_object())
+                        e = json::object();
+                    e["frames"] = c.frames;
+                    e["dropped"] = c.dropped;
+                }
+            }
+        }
+        s["sources"] = src;
+        return s;
+    };
+    capture_backend.on_status = capture_status;
+    capture_backend.on_upload = [&](const std::string &session) { return uploader.queue(session); };
+    // The app itself: an optional add-on, installed from its GitHub releases.
+    const json app_cfg = capture_cfg.value("app", json::object());
+    capture::AppInstaller installer(app_cfg, capture::kProtocol, threads);
+    installer.start();
+    const uint64_t app_check_ns = uint64_t(std::max(1.0, app_cfg.value("check_hours", 6.0)) * 3600e9);
+    uint64_t app_checked_at = 0;
+    std::optional<AppLauncher> capture_app;
+    std::string capture_app_entry;   // what capture_app was built for
+    capture::Server capture_server(capture_backend);
+    std::vector<int> capture_fds;   // registered with epoll
+    auto sync_capture_fds = [&] {
+        for (int fd : capture_fds)
+            epoll_ctl(ep, EPOLL_CTL_DEL, fd, nullptr);
+        capture_fds = capture_server.fds();
+        for (int fd : capture_fds)
+            add_epoll(ep, fd);
+    };
+    if (recorder) {
+        std::string err;
+        if (capture_server.listen(paths::runtime_dir() / "capture.sock", &err))
+            sync_capture_fds();
+        else
+            LOG.error("capture: no control socket: %s", err.c_str());
+    }
+    uint64_t next_capture_status = 0;
+
     // Stats: the full set to stats.jsonl every interval; in the log, the status
     // line when it changes and a short summary every summary_s.
     log::RotatingFile stats_file;
@@ -732,7 +986,7 @@ int main(int argc, char **argv) {
     uint64_t next_summary = mono_ns() + summary_ns;
     std::string last_status;
     const uint64_t stats_ns = uint64_t(std::max(1, cfg.value("stats_interval_s", 5))) * 1000000000ull;
-    uint64_t next_arbiter = 0, next_stats = mono_ns() + stats_ns;
+    uint64_t next_stats = mono_ns() + stats_ns;
     bool running = true;
     const char *exit_reason = "?";
     Worn last_worn = Worn::Unknown;
@@ -756,7 +1010,7 @@ int main(int argc, char **argv) {
                             json fresh = load(opt);
                             apply_log_level(fresh);
                             for (auto &s : sources)
-                                for (const char *key : {"process_fps", "tracking"}) {
+                                for (const char *key : {"process_fps", "rate_divisor", "tracking"}) {
                                     const json::json_pointer ptr("/sources/" + s.name + "/" + key);
                                     if (fresh.contains(ptr))
                                         apply_setting(ptr.to_string(), fresh[ptr], Origin::Reload);
@@ -785,7 +1039,22 @@ int main(int argc, char **argv) {
                     exit_reason = "shim link closed (vrserver exited)";
                     running = false;
                 }
+            } else if (std::find(capture_fds.begin(), capture_fds.end(), fd) != capture_fds.end()) {
+                capture_server.on_readable(fd);
             }
+        }
+        if (capture_server.take_fds_changed())
+            sync_capture_fds();
+        // The installed capture app's launcher, rebuilt when an install or remove changes it.
+        if (const std::string entry = installer.snapshot().entry; entry != capture_app_entry) {
+            if (capture_app && capture_app->running())
+                capture_app->stop();
+            capture_app.reset();
+            if (!entry.empty())
+                capture_app.emplace(json{{"command", {entry}},
+                                         {"env", {{"BABBLE_CAPTURE_SOCKET", capture_server.path().string()}}}},
+                                    (paths::state_dir() / "dataset-capture.log").string());
+            capture_app_entry = entry;
         }
         if (!running)
             break;
@@ -794,10 +1063,7 @@ int main(int argc, char **argv) {
         bool any_streaming = false;
         for (auto &s : sources)
             any_streaming = any_streaming || s.src->streaming();
-        if (now >= next_arbiter) {
-            arbiter.poll();
-            next_arbiter = now + (any_streaming ? arbiter_streaming_ns : arbiter_idle_ns);
-        }
+        arbiter.tick(now, any_streaming);
         // Headset put on / taken off: pipelines publish neutral values and
         // reset per-session state; sources pause on their own tick.
         if (Worn w = steamvr.worn(); w != Worn::Unknown && w != last_worn) {
@@ -817,7 +1083,30 @@ int main(int argc, char **argv) {
                 s.last_state = st_now;
             }
             if (was && !s.src->streaming())
-                next_arbiter = now;   // capture trouble: re-check the platform right away
+                arbiter.recheck(now);
+        }
+
+        if (recorder) {
+            if (auto fin = recorder->take_finished()) {
+                eye_server.want(EyeServerClient::Record, false);
+                json ev = {{"session", fin->id}, {"dir", fin->dir}, {"status", fin->status}};
+                if (!fin->error.empty())
+                    ev["error"] = fin->error;
+                if (!fin->stop_reason.empty())
+                    ev["reason"] = fin->stop_reason;
+                for (const auto &[name, c] : fin->sources) {
+                    ev["frames"][protocol_source(name)] = c.frames;
+                    ev["dropped"][protocol_source(name)] = c.dropped;
+                }
+                capture_server.stopped(ev);
+            }
+            if (capture_server.greeted() && now >= next_capture_status &&
+                (recorder->status().recording || uploader.snapshot().pending > 0)) {
+                json s = capture_status();
+                s["op"] = "status";
+                capture_server.send(s);
+                next_capture_status = now + 1000000000ull;
+            }
         }
 
         if (now - rates_at >= 1000000000ull) {
@@ -852,6 +1141,32 @@ int main(int argc, char **argv) {
                 exit_reason = "restart requested from the Babble tab";
                 running = false;
             }
+            if (dashboard->take_capture_check_request() && !installer.snapshot().busy() &&
+                (app_checked_at == 0 || now - app_checked_at >= app_check_ns)) {
+                installer.check();
+                app_checked_at = now;
+            }
+            using CaptureAction = ui::DashboardView::ClickResult::CaptureAction;
+            if (const CaptureAction a = dashboard->take_capture_request(); a != CaptureAction::None) {
+                using S = capture::AppInstaller::State;
+                const auto snap = installer.snapshot();
+                const bool app_running = capture_app && capture_app->running();
+                if (a == CaptureAction::Remove) {
+                    if (!app_running && !snap.busy())
+                        installer.remove();
+                } else if (app_running) {
+                    capture_app->stop();
+                } else if (snap.state == S::Downloading) {
+                    installer.cancel();
+                } else if (snap.state == S::NotInstalled || snap.state == S::UpdateAvailable) {
+                    installer.install();
+                } else if (snap.state == S::Failed) {
+                    installer.check();
+                    app_checked_at = now;
+                } else if (snap.state == S::Installed && capture_app) {
+                    capture_app->start();
+                }
+            }
             if (dashboard->take_visualizer_request()) {
                 if (visualizer.running())
                     visualizer.stop();
@@ -861,12 +1176,13 @@ int main(int argc, char **argv) {
             ui::Status st;
             st.steamvr = steamvr.connected();
             st.worn = steamvr.worn();
-            st.mouth = feed_status(mouth_from_usb() ? "face" : ui::kFeedSources[0]);
+            st.mouth = feed_status(mouth_feed());
             st.eye = feed_status(ui::kFeedSources[1]);
             st.visualizer = !visualizer.available() ? ui::AppState::Unavailable
                             : visualizer.running()  ? ui::AppState::Running
                                                     : ui::AppState::Stopped;
-            st.mouth_source = mouth_from_usb() ? "usb" : "frunk";
+            st.mouth_source = mouth_label();
+            st.mouth_source_selectable = BABBLE_FRUNK_MOUTH;
             if (const uint64_t until = log::verbose_until(); until > now)
                 st.verbose_minutes_left = int((until - now) / 60000000000ull) + 1;
             st.last_diagnostics = last_diagnostics;
@@ -876,6 +1192,17 @@ int main(int argc, char **argv) {
             if (usb_source) {
                 st.camera = usb_source->camera();
                 st.active_camera = usb_source->active_camera();
+            }
+            for (auto &s : sources) {
+                // The eye rate row is a share of the camera rate: say what that comes to.
+                const json::json_pointer ptr("/sources/" + s.name + "/rate_divisor");
+                const double cam = s.src->camera_fps();
+                if (cam > 0 && cfg.contains(ptr) && cfg[ptr].is_number() && cfg[ptr].get<double>() >= 1) {
+                    char buf[96];
+                    snprintf(buf, sizeof(buf), "%.0f Hz now, from a %.0f Hz camera (set by the display refresh rate).",
+                             cam / cfg[ptr].get<double>(), cam);
+                    st.choice_hints[ptr.to_string()] = buf;
+                }
             }
             if (pc_link && pc_link_entry->running) {
                 const auto ls = pc_link->status();
@@ -891,6 +1218,43 @@ int main(int argc, char **argv) {
                 st.link.address = ns.address;
                 native_sent_last = ns.sent;
             }
+            {   // The dataset capture row.
+                using S = capture::AppInstaller::State;
+                using R = ui::CaptureRow::State;
+                const auto snap = installer.snapshot();
+                ui::CaptureRow row;
+                row.version = snap.installed;
+                row.latest = snap.latest;
+                row.detail = snap.detail;
+                row.progress = snap.progress;
+                if (capture_app && capture_app->running()) {
+                    row.state = R::Running;
+                } else {
+                    switch (snap.state) {
+                    case S::Unknown: row.state = snap.installed.empty() ? R::NotInstalled : R::Installed; break;
+                    case S::Checking: row.state = R::Checking; break;
+                    case S::NotInstalled: row.state = R::NotInstalled; break;
+                    case S::Installed: row.state = R::Installed; break;
+                    case S::UpdateAvailable: row.state = R::UpdateAvailable; break;
+                    case S::Downloading: row.state = R::Downloading; break;
+                    case S::Installing: row.state = R::Installing; break;
+                    case S::Failed: row.state = R::Failed; break;
+                    }
+                }
+                // Without a recorder there's nothing for the app to do, unless it's installed already.
+                if (!recorder && snap.installed.empty())
+                    row.state = R::Hidden;
+                if (recorder) {
+                    row.recording = recorder->status().recording;
+                    if (!recorder->available() && row.state == R::NotInstalled)
+                        row.detail = "ffmpeg isn't installed, so nothing can be recorded";
+                }
+                const auto up = uploader.snapshot();
+                row.uploads_pending = up.pending;
+                row.upload_progress = up.progress;
+                row.upload_stage = up.stage;
+                st.capture = row;
+            }
             dashboard->set_status(st);
         }
 
@@ -899,8 +1263,8 @@ int main(int argc, char **argv) {
             LOG.info("verbose logging ended");
         }
         if (now >= next_stats) {
-            std::string line = std::string("arbiter=") + to_string(arbiter.state()) +
-                               " headset=" + to_string(steamvr.worn());
+            std::string line = (arbiter.state().empty() ? "" : "arbiter=" + arbiter.state() + " ") +
+                               "headset=" + to_string(steamvr.worn());
             for (auto &s : sources)
                 line += " " + s.name + "=" + s.src->state_name();
             last_stats = stats.render();
@@ -934,6 +1298,10 @@ int main(int argc, char **argv) {
         _exit(1);
     }).detach();
     dashboard->stop();
+    capture_server.close();
+    for (auto &s : sources)
+        s.src->set_frame_tap(nullptr);   // the recorder stops with the sinks
+    eye_server.set_listener(nullptr);
     // Order: consumers first so nothing holds frames when sources stop.
     for (auto &p : pipelines)
         p->stop();

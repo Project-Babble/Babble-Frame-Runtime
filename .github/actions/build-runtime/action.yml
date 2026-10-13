@@ -15,6 +15,12 @@ inputs:
       RC, Release; N optional, e.g. V0.1-Alpha-2). Empty builds the VERSION file's version, marked as a dev build.
     required: false
     default: ''
+  profile:
+    description: >-
+      Build profile (cmake/babble_profile.cmake): dev (everything) or release
+      (the USB Babble tracker is the only mouth; release trims).
+    required: false
+    default: dev
 
 outputs:
   package-dir:
@@ -88,6 +94,7 @@ runs:
         -DCMAKE_BUILD_TYPE=${{ inputs.build-type }}
         -DBABBLE_EXECUTORCH_PREFIX=${{ steps.paths.outputs.et-prefix }}
         "-DBABBLE_VERSION=${{ inputs.version }}"
+        -DBABBLE_PROFILE=${{ inputs.profile }}
 
     - name: Build runtime, driver shim and driver folder
       shell: bash

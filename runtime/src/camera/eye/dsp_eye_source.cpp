@@ -4,6 +4,8 @@
 #include "core/log.h"
 #include "platform/steamvr_client.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstring>
 
 namespace {
@@ -15,14 +17,19 @@ namespace babble {
 namespace {
 
 constexpr uint32_t kMaxLayoutFaults = 3;
+constexpr uint32_t kMaxDivisor = 3;
+constexpr uint64_t kFpsCheckNs = 500000000ull;   // how often the camera rate word is re-read
 
 } // namespace
 
 DspEyeSource::DspEyeSource(const nlohmann::json &cfg, SourceDeps deps)
     : cfg_(cfg), name_(deps.name), thread_spec_(thread_spec(deps.threads, "eye", "bbl-eye")), out_(deps.out),
       stats_(deps.stats), steamvr_(deps.steamvr), pause_when_absent_(cfg.value("pause_when_absent", true)),
-      tracking_(cfg.value("tracking", true)),
-      limiter_(cfg.value("process_fps", 120.0)) {
+      tracking_(cfg.value("tracking", true)) {
+    divisor_ = std::clamp(cfg.value("rate_divisor", 1u), 1u, kMaxDivisor);
+    if (cfg.contains("process_fps"))
+        LOG.info("%s: process_fps is no longer used (saved from an older version); the tracking rate is rate_divisor",
+                 name_.c_str());
     for (const auto &c : cfg_.value("ctrl_base_candidates", nlohmann::json::array())) {
         if (c.is_string())
             candidates_.push_back(uint32_t(std::stoul(c.get<std::string>(), nullptr, 0)));
@@ -50,6 +57,10 @@ DspEyeSource::DspEyeSource(const nlohmann::json &cfg, SourceDeps deps)
     stats_.add(name_ + ".pool_exhausted", &pool_exhausted_);
     stats_.add(name_ + ".copy", &copy_time_);
     stats_.add(name_ + ".late_detect", &late_detect_);
+    stats_.add(name_ + ".fps_l", &side_l_);
+    stats_.add(name_ + ".fps_r", &side_r_);
+    stats_.add(name_ + ".half_pairs", &half_pairs_);
+    stats_.add(name_ + ".camera_rate", &camera_rate_);
 }
 
 DspEyeSource::~DspEyeSource() {
@@ -58,8 +69,20 @@ DspEyeSource::~DspEyeSource() {
 }
 
 void DspEyeSource::set_process_fps(double fps) {
-    limiter_.set_fps(fps);
-    LOG.info("%s: process rate %.1f fps", name_.c_str(), fps);
+    LOG.warn("%s: a fixed process rate isn't supported; set rate_divisor (1, 2 or 3) instead", name_.c_str());
+}
+
+bool DspEyeSource::set_option(const std::string &key, const nlohmann::json &value) {
+    // A whole number; the Babble tab sends numbers as doubles.
+    if (key != "rate_divisor" || !value.is_number())
+        return false;
+    const double v = value.get<double>();
+    const int64_t d = std::llround(v);
+    if (double(d) != v || d < 1 || d > int64_t(kMaxDivisor))
+        return false;
+    divisor_ = uint32_t(d);
+    LOG.info("%s: tracking rate 1:%u of the camera rate", name_.c_str(), unsigned(d));
+    return true;
 }
 
 void DspEyeSource::set_tracking(bool on) {
@@ -134,11 +157,11 @@ bool DspEyeSource::start() {
     size_t bytes = size_t(std::max(crop_l_.w * crop_l_.h, crop_r_.w * crop_r_.h));
     pool_ = FramePool::create_owned(12, bytes);
 
-    client_.start_streaming(layout_, float(cfg_.value("request_fps", 0.0)));
+    client_.start_streaming(layout_);
     stop_ = false;
     failed_ = false;
     consecutive_faults_ = 0;
-    limiter_.reset();
+    pairer_.reset();
     thread_ = start_thread(thread_spec_, [this] { run(); });
     return true;
 }
@@ -147,7 +170,6 @@ void DspEyeSource::stop(const char *why) {
     stop_ = true;
     if (thread_.joinable())
         thread_.join();
-    client_.restore_fps(layout_);
     client_.disconnect();
     pool_.reset();
     LOG.info("eye: stopped (%s)", why);
@@ -184,7 +206,6 @@ void DspEyeSource::run() {
     const uint64_t poll_ns = uint64_t(cfg_.value("poll_interval_us", 400)) * 1000ull;
     const uint64_t no_frames_ns = uint64_t(cfg_.value("no_frames_timeout_ms", 2000)) * 1000000ull;
     const uint64_t margin_min_ns = uint64_t(cfg_.value("predict_margin_us", 1500)) * 1000ull;
-    uint32_t last_l = DspClient::kNotReady, last_r = DspClient::kNotReady;
     uint64_t last_frame = mono_ns();
     uint32_t seq = 0;
 
@@ -234,9 +255,25 @@ void DspEyeSource::run() {
         logged_gap_ = true;
     }
 
+    uint64_t next_fps_check = 0;
+    uint64_t wait_ns = 5000000ull;   // how long a lone side may wait for the other: half a frame period
+    uint32_t pair_count = 0;
     while (!stop_) {
         auto idx = client_.read_indices(layout_);
         uint64_t now = mono_ns();
+        if (now >= next_fps_check) {
+            // SteamVR re-sets the camera rate on every headset-on and display mode change.
+            const float fps = client_.read_fps(layout_);
+            if (fps != camera_fps_.load(std::memory_order_relaxed)) {
+                if (fps > 0)
+                    LOG.info("eye: camera rate %.0f fps (set by SteamVR)", fps);
+                camera_fps_ = fps;
+                camera_rate_.set(uint64_t(fps + 0.5f));
+            }
+            if (fps > 0)
+                wait_ns = uint64_t(0.5e9 / fps);
+            next_fps_check = now + kFpsCheckNs;
+        }
         bool bad_l = idx.l != DspClient::kNotReady && idx.l >= layout_.slots;
         bool bad_r = idx.r != DspClient::kNotReady && idx.r >= layout_.slots;
         if (bad_l || bad_r) {
@@ -250,26 +287,48 @@ void DspEyeSource::run() {
             continue;
         }
         consecutive_faults_ = 0;   // a sane index read: only a run of bad reads is fatal
-        if (idx.l == DspClient::kNotReady || idx.r == DspClient::kNotReady || (idx.l == last_l && idx.r == last_r)) {
+
+        const EyePairer::Step step = pairer_.feed(idx.l, idx.r, now, wait_ns);
+        if (step.new_l)
+            side_l_.tick();
+        if (step.new_r)
+            side_r_.tick();
+        if (step.result == EyePairer::Result::Half) {
+            // One camera published and the other never followed: hand the
+            // lone slot back unused rather than pair it with a stale image.
+            half_pairs_.add();
+            if (step.half_l)
+                client_.release(layout_, false, idx.l);
+            if (step.half_r)
+                client_.release(layout_, true, idx.r);
+            last_frame = now;
+            continue;
+        }
+        if (step.result != EyePairer::Result::Pair) {
             if (now - last_frame > no_frames_ns) {
                 thread_error_ = "no eye frames";
                 failed_ = true;
                 return;
             }
-            idle_sleep(now);
+            if (pairer_.waiting())
+                sleep_ns(poll_ns);   // the other side is due any moment: poll finely
+            else
+                idle_sleep(now);
             continue;
         }
 
         on_new_frame(now);
         frames_.tick();
-        if (!limiter_.accept(now)) {
-            // Subsampled out: skip the copy, but hand the slots back exactly
-            // as a consumed frame would.
+        last_frame = now;
+        IFrameTap *tap = tap_.load(std::memory_order_relaxed);
+        const bool want_tap = tap && tap->tap_wanted();
+        // The tracking rate is every Nth pair, counted rather than timed, so
+        // 1:1 never drops a pair to jitter.
+        const bool forward = pair_count++ % divisor_.load(std::memory_order_relaxed) == 0;
+        if (!forward && !want_tap) {
+            // Skip the copy, but hand the slots back exactly as a consumed pair would.
             client_.release(layout_, false, idx.l);
             client_.release(layout_, true, idx.r);
-            last_l = idx.l;
-            last_r = idx.r;
-            last_frame = now;
             continue;
         }
 
@@ -278,21 +337,21 @@ void DspEyeSource::run() {
         seq++;
         // Both copies always run: each hands its ring slot back to dsp_service
         // whether it succeeds or not (a short-circuit here leaked the right slot).
-        const bool ok_l = copy_view(false, idx.l, now, seq, &sf.left);
-        const bool ok_r = copy_view(true, idx.r, now, seq, &sf.right);
-        if (!ok_l || !ok_r) {
-            last_l = idx.l;
-            last_r = idx.r;
+        // Each view is stamped when its index was first seen to advance; the
+        // pair with the midpoint, as StereoFrame defines it.
+        const bool ok_l = copy_view(false, idx.l, step.l_ns, seq, &sf.left);
+        const bool ok_r = copy_view(true, idx.r, step.r_ns, seq, &sf.right);
+        if (!ok_l || !ok_r)
             continue;
-        }
         copy_time_.add(mono_ns() - t0);
-        sf.capture_ns = now;
-        sf.skew_ns = 0;
-        last_l = idx.l;
-        last_r = idx.r;
-        last_frame = now;
-        processed_.tick();
-        out_.put(std::move(sf));
+        sf.skew_ns = int64_t(step.l_ns) - int64_t(step.r_ns);
+        sf.capture_ns = step.r_ns + uint64_t(sf.skew_ns / 2);
+        if (want_tap)
+            tap->tap_frames(name_, sf);
+        if (forward) {
+            processed_.tick();
+            out_.put(std::move(sf));
+        }
     }
 }
 

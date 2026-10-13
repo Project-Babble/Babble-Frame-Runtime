@@ -1,7 +1,8 @@
 name: CI
 
 # Checks that the runtime, the SteamVR driver shim and the unit-test binary
-# still compile on every push and pull request. Nothing is executed.
+# still compile on every push and pull request, in both build profiles (dev
+# with everything, release with the USB mouth tracker only). Nothing is executed.
 
 on:
   push:
@@ -15,8 +16,12 @@ concurrency:
 
 jobs:
   build-linuxarm64:
-    name: Build (linuxarm64)
+    name: Build (linuxarm64, ${{ matrix.profile }})
     runs-on: ubuntu-24.04-arm
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [dev, release]
 
     steps:
       - name: Checkout
@@ -29,10 +34,12 @@ jobs:
 
       - name: Build
         uses: ./.github/actions/build-runtime
+        with:
+          profile: ${{ matrix.profile }}
 
       - name: Upload binaries
         uses: actions/upload-artifact@v4
         with:
-          name: babble-frame-runtime-bin-linuxarm64
+          name: babble-frame-runtime-bin-linuxarm64-${{ matrix.profile }}
           path: build/babble/bin/linuxarm64
           retention-days: 7

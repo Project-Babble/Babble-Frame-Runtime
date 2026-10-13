@@ -44,15 +44,21 @@ struct FakeService {
     std::string path;
     int fd = -1;
     uint8_t *base = nullptr;
+    size_t size = 0x4f21f, record = 0x157;   // an unknown version gets the version-5 shape
 
     explicit FakeService(uint32_t version) {
+        for (const auto &l : kLayouts)
+            if (l.version == version) {
+                size = l.file_size;
+                record = l.record_offset;
+            }
         path = (std::filesystem::temp_directory_path() / ("babble_eyesrv_" + std::to_string(getpid()) + "_" +
                                                           std::to_string(version)))
                    .string();
         fd = open(path.c_str(), O_RDWR | O_CREAT | O_TRUNC, 0600);
         REQUIRE(fd >= 0);
-        REQUIRE(ftruncate(fd, kMinFileSize) == 0);
-        base = static_cast<uint8_t *>(mmap(nullptr, kMinFileSize, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0));
+        REQUIRE(ftruncate(fd, off_t(size)) == 0);
+        base = static_cast<uint8_t *>(mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0));
         REQUIRE(base != MAP_FAILED);
         put<uint32_t>(base, kVersionOffset, version);
         put<uint32_t>(base, kInitializedOffset, 1);
@@ -64,7 +70,7 @@ struct FakeService {
         pthread_mutexattr_destroy(&a);
     }
     ~FakeService() {
-        munmap(base, kMinFileSize);
+        munmap(base, size);
         close(fd);
         unlink(path.c_str());
     }
@@ -74,7 +80,7 @@ struct FakeService {
     // Writes a record, bumps the sequence and wakes waiters, like the service.
     void produce(uint32_t state) {
         pthread_mutex_lock(mutex());
-        write_record(base + kRecordOffset, state);
+        write_record(base + record, state);
         __atomic_add_fetch(word(kSequenceOffset), 1, __ATOMIC_RELEASE);
         pthread_mutex_unlock(mutex());
         syscall(SYS_futex, word(kSequenceOffset), FUTEX_WAKE, INT_MAX, nullptr, nullptr, 0);
@@ -120,7 +126,7 @@ TEST_CASE("an eye-service record decodes field by field") {
 TEST_CASE("the client follows the service's protocol and publishes samples") {
     FakeService svc(4);
     EyeServerClient c;
-    c.start(ThreadSpec{"t-eyesrv", {}, 0}, {svc.path, 4}, nullptr);
+    c.start(ThreadSpec{"t-eyesrv", {}, 0}, {svc.path}, nullptr);
     CHECK_FALSE(c.latest(1000000000ull));   // nobody wants it yet
     c.want(EyeServerClient::Gaze, true);
     auto s = wait_for_sample(svc, c, 1, 3000000000ull);
@@ -132,10 +138,46 @@ TEST_CASE("the client follows the service's protocol and publishes samples") {
     c.stop();
 }
 
-TEST_CASE("an unknown layout version is left alone") {
+TEST_CASE("the recorder consumer gets every published sample through the listener") {
+    FakeService svc(4);
+    EyeServerClient c;
+    std::atomic<int> heard{0};
+    std::atomic<uint64_t> last_seq{0};
+    c.set_listener([&](const Sample &s) {
+        heard++;
+        last_seq = s.seq;
+    });
+    c.start(ThreadSpec{"t-eyesrv", {}, 0}, {svc.path}, nullptr);
+    CHECK(c.layout_version() == 0);   // nothing open yet
+    c.want(EyeServerClient::Record, true);   // the recorder alone keeps the reader going
+    auto s = wait_for_sample(svc, c, 1, 3000000000ull);
+    REQUIRE(s);
+    CHECK(c.layout_version() == 4);
+    CHECK(s->layout == 4);
+    CHECK(heard.load() >= 1);
+    CHECK(last_seq.load() == c.latest(1000000000ull)->seq);
+    c.set_listener(nullptr);
+    c.stop();
+}
+
+TEST_CASE("layout version 5: the record sits 5 bytes later") {
     FakeService svc(5);
     EyeServerClient c;
-    c.start(ThreadSpec{"t-eyesrv", {}, 0}, {svc.path, 4}, nullptr);
+    c.start(ThreadSpec{"t-eyesrv", {}, 0}, {svc.path}, nullptr);
+    c.want(EyeServerClient::Gaze, true);
+    auto s = wait_for_sample(svc, c, 1, 3000000000ull);
+    REQUIRE(s);
+    CHECK(c.layout_version() == 5);
+    CHECK(s->layout == 5);
+    CHECK(s->pre_fusion_gaze[1] == Vec3{110, 111, 112});
+    CHECK(s->openness[1] == 0.75f);
+    c.stop();
+}
+
+TEST_CASE("an unknown layout version is left alone") {
+    FakeService svc(6);
+    EyeServerClient c;
+    c.start(ThreadSpec{"t-eyesrv", {}, 0}, {svc.path}, nullptr);
     c.want(EyeServerClient::Openness, true);
     CHECK_FALSE(wait_for_sample(svc, c, 1, 500000000ull));
     CHECK_FALSE(c.available());
@@ -146,7 +188,7 @@ TEST_CASE("an unknown layout version is left alone") {
 TEST_CASE("records the producer marks invalid are not published") {
     FakeService svc(4);
     EyeServerClient c;
-    c.start(ThreadSpec{"t-eyesrv", {}, 0}, {svc.path, 4}, nullptr);
+    c.start(ThreadSpec{"t-eyesrv", {}, 0}, {svc.path}, nullptr);
     c.want(EyeServerClient::Gaze, true);
     CHECK_FALSE(wait_for_sample(svc, c, 0, 500000000ull));
     CHECK(c.available());

@@ -112,7 +112,6 @@ void DspClient::disconnect() {
     if (sock_ >= 0)
         ::close(sock_);
     shm_fd_ = sock_ = -1;
-    saved_fps_bits_.reset();
 }
 
 bool DspClient::validate(const uint8_t *ctrl, size_t ctrl_size, const Layout &l, std::string *why) {
@@ -204,7 +203,7 @@ void DspClient::store32(uint32_t off, uint32_t v) {
     __atomic_store_n(reinterpret_cast<uint32_t *>(ctrl_ + off), v, __ATOMIC_RELEASE);
 }
 
-void DspClient::start_streaming(const Layout &l, float fps) {
+void DspClient::start_streaming(const Layout &l) {
     const uint32_t b = l.ctrl_base;
     for (uint32_t i = 0; i < l.slots; i++) {
         store32(b + l.locks_l + 4 * i, 1);
@@ -213,23 +212,15 @@ void DspClient::start_streaming(const Layout &l, float fps) {
     store32(b + l.enables, 1);
     store32(b + l.enables + 4, 1);
     store32(b + l.transition, 1);
-    if (fps > 0) {
-        if (!saved_fps_bits_)
-            saved_fps_bits_ = load32(b + l.fps);
-        uint32_t bits;
-        memcpy(&bits, &fps, sizeof(bits));
-        store32(b + l.fps, bits);
-    }
 }
 
-void DspClient::restore_fps(const Layout &l) {
-    if (!ctrl_ || !saved_fps_bits_)
-        return;
-    store32(l.ctrl_base + l.fps, *saved_fps_bits_);
+float DspClient::read_fps(const Layout &l) const {
+    if (!ctrl_)
+        return 0;
+    const uint32_t bits = load32(l.ctrl_base + l.fps);
     float fps;
-    memcpy(&fps, &*saved_fps_bits_, sizeof(fps));
-    LOG.info("dsp: restored eye camera rate %.1f fps", fps);
-    saved_fps_bits_.reset();
+    memcpy(&fps, &bits, sizeof(fps));
+    return std::isfinite(fps) && fps > 0.0f && fps <= 240.0f ? fps : 0.0f;
 }
 
 DspClient::Indices DspClient::read_indices(const Layout &l) const {

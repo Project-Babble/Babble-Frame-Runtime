@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.24)
 project(babble_frame_runtime CXX)
 
 # Version: "V<feature/major>.<bugfix/incremental> <Alpha|Beta|RC|Release> [N]",
@@ -23,16 +23,25 @@ if(NOT babble_version MATCHES "^V[0-9]+\\.[0-9]+ (Alpha|Beta|RC|Release)( [0-9]+
 endif()
 message(STATUS "Babble version: ${babble_version}")
 
+set(BABBLE_GENERATED_DIR ${CMAKE_BINARY_DIR}/generated)
+file(MAKE_DIRECTORY ${BABBLE_GENERATED_DIR})
+
+# The build profile (-DBABBLE_PROFILE=dev|release) and the config files derived
+# from it at configure time (cmake/babble_profile.cmake); the runtime embeds
+# the generated defaults.json, so this comes before add_subdirectory(runtime).
+include(cmake/babble_profile.cmake)
+babble_profile_generate(${CMAKE_CURRENT_SOURCE_DIR} ${BABBLE_GENERATED_DIR})
+
 # Generates generated/babble_version.h and the versioned settings schema at
 # every build (cmake/babble_version.cmake).
-set(BABBLE_GENERATED_DIR ${CMAKE_BINARY_DIR}/generated)
 add_custom_target(babble_version ALL
     COMMAND ${CMAKE_COMMAND} -DSRC_DIR=${CMAKE_CURRENT_SOURCE_DIR} -DOUT_DIR=${BABBLE_GENERATED_DIR}
-            -DVERSION=${babble_version} -DDEV=${babble_dev} -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/babble_version.cmake
+            -DVERSION=${babble_version} -DDEV=${babble_dev} -DPROFILE=${BABBLE_PROFILE}
+            -DSCHEMA_IN=${BABBLE_GENERATED_DIR}/settingsschema.vrsettings.in
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/babble_version.cmake
     BYPRODUCTS ${BABBLE_GENERATED_DIR}/babble_version.h ${BABBLE_GENERATED_DIR}/settingsschema.vrsettings
-    COMMENT "Version ${babble_version}"
+    COMMENT "Version ${babble_version} (${BABBLE_PROFILE} profile)"
     VERBATIM)
-file(MAKE_DIRECTORY ${BABBLE_GENERATED_DIR})
 
 # Builds the runtime daemon first, then the SteamVR driver folder that bundles it:
 #   build/babble/driver.vrdrivermanifest

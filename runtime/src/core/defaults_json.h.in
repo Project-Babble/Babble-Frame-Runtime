@@ -1,4 +1,5 @@
-// Generated from runtime/resources/defaults.json at configure time. Do not edit.
+// Generated at configure time from the build profile's defaults.json
+// (cmake/babble_profile.cmake, derived from runtime/resources/defaults.json). Do not edit.
 #pragma once
 
 namespace babble {

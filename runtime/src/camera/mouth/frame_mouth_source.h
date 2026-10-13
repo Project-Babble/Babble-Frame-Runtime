@@ -39,6 +39,7 @@ public:
     void set_process_fps(double fps) override;
     void set_tracking(bool on) override;
     bool tracking() const override { return tracking_; }
+    void set_frame_tap(IFrameTap *tap) override { tap_.store(tap); }
 
     bool streaming() const override { return state_ == State::Streaming; }
     SourceActivity activity() const override;
@@ -69,6 +70,7 @@ private:
     std::vector<std::pair<std::string, int64_t>> saved_strobe_;
     StereoPairer pairer_;
     RateLimiter limiter_;
+    std::atomic<IFrameTap *> tap_{nullptr};
     std::unique_ptr<IExposureController> ae_;
     std::mutex pair_mutex_;   // limiter + AE are fed from both capture threads
     uint32_t ae_interval_ = 8;

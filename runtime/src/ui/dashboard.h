@@ -34,6 +34,7 @@ public:
         std::string name = "Babble";
         float width_m = 1.6f;
         ExpressionState *state = nullptr;   // the eye panel's source; null = no panel data
+        std::string mouth_tracking_id = "/sources/mouth/tracking";   // what the mouth card's switch flips
     };
     ~Dashboard();
 
@@ -59,6 +60,12 @@ public:
     // The Diagnostics page: verbose logging switched (1 on, 0 off, -1 no change), a file wanted.
     int take_verbose_request() { return verbose_request_.exchange(-1); }
     bool take_diagnostics_request() { return diagnostics_request_.exchange(false); }
+    // The dataset capture row: its main button or Remove (None if neither was clicked).
+    DashboardView::ClickResult::CaptureAction take_capture_request() {
+        return DashboardView::ClickResult::CaptureAction(capture_request_.exchange(0));
+    }
+    // The Diagnostics page was opened (a moment to check for an app update).
+    bool take_capture_check_request() { return capture_check_request_.exchange(false); }
 
 private:
     void run();
@@ -89,6 +96,8 @@ private:
     std::atomic<bool> camera_refresh_request_{false};
     std::atomic<int> verbose_request_{-1};
     std::atomic<bool> diagnostics_request_{false};
+    std::atomic<int> capture_request_{0};
+    std::atomic<bool> capture_check_request_{false};
     bool drawn_restart_armed_ = false;
 
     // Dashboard thread only.

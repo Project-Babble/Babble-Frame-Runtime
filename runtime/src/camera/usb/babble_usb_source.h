@@ -53,6 +53,7 @@ public:
     bool tracking() const override { return tracking_; }
     bool streaming() const override { return state_ == State::Streaming; }
     bool set_option(const std::string &key, const nlohmann::json &value) override;
+    void set_frame_tap(IFrameTap *tap) override { tap_.store(tap); }
     // The camera setting ("" = automatic) and the id of the one streaming ("" if none).
     const std::string &camera() const { return camera_; }
     const std::string &active_camera() const { return active_id_; }
@@ -82,6 +83,7 @@ private:
 
     std::shared_ptr<FramePool> pool_;
     RateLimiter limiter_;
+    std::atomic<IFrameTap *> tap_{nullptr};
     std::thread thread_;
     std::atomic<bool> stop_{false};
     std::atomic<bool> failed_{false};

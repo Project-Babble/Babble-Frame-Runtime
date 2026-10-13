@@ -41,6 +41,15 @@ std::string os_release(const std::string &key) {
     return "";
 }
 
+// Config keys whose values never go in the log (upload credentials and the like).
+bool secret_path(const std::string &path) {
+    const std::string leaf = path.substr(path.rfind('/') + 1);
+    for (const char *w : {"key", "secret", "password", "token", "credential"})
+        if (leaf.find(w) != std::string::npos)
+            return true;
+    return false;
+}
+
 std::string short_value(const nlohmann::json &v) {
     std::string s = v.dump();
     return s.size() > 120 ? s.substr(0, 117) + "..." : s;
@@ -58,7 +67,8 @@ std::vector<std::string> session_info(const nlohmann::json &cfg, const fs::path 
             uptime = 0;
         fclose(f);
     }
-    out.push_back(std::string("version ") + BABBLE_VERSION_DISPLAY + ", pid " + std::to_string(getpid()));
+    out.push_back(std::string("version ") + BABBLE_VERSION_DISPLAY + ", profile " + BABBLE_PROFILE_NAME + ", pid " +
+                  std::to_string(getpid()));
     out.push_back(std::string("system ") + u.sysname + " " + u.release + " " + u.machine + ", " +
                   os_release("PRETTY_NAME") + " (build " + os_release("BUILD_ID") + "), up " +
                   std::to_string(int(uptime / 60)) + " min");
@@ -75,6 +85,8 @@ std::vector<std::string> session_info(const nlohmann::json &cfg, const fs::path 
             const std::string path = op.value("path", "");
             if (what == "remove")
                 out.push_back("config: " + path + " removed");
+            else if (secret_path(path))
+                out.push_back("config: " + path + " set (not logged)");
             else
                 out.push_back("config: " + path + " = " + short_value(op.value("value", nlohmann::json())));
         }

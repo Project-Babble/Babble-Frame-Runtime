@@ -15,8 +15,9 @@ on:
         type: boolean
         default: false
       version-number:
-        description: 'Version Number for Release, "Vx.x-Stage[-N]" (Stage: Alpha, Beta, RC, Release; e.g. V0.1-Alpha-2)'
+        description: 'Version Number for Release, "Vx.x-Stage[-N]" (Stage: Alpha, Beta, RC, Release; e.g. V0.1-Alpha-2). Empty: the VERSION file'
         type: string
+        required: false
       release-name-info:
         description: 'Additional info to put at the end of the release name'
         type: string
@@ -48,6 +49,8 @@ jobs:
         shell: bash
 
     runs-on: ubuntu-24.04-arm
+    outputs:
+      version: ${{ steps.version.outputs.version }}
 
     steps:
       - name: Checkout latest
@@ -55,6 +58,19 @@ jobs:
         with:
           submodules: true
           lfs: true
+
+      # The version typed in, else the VERSION file's, in the git-tag spelling
+      # ("V1.0 Alpha 4" -> "V1.0-Alpha-4"). Either way it is a release build,
+      # not a dev build: CMake checks the format.
+      - name: Resolve the version
+        id: version
+        env:
+          INPUT: ${{ github.event.inputs.version-number }}
+        run: |
+          v="${INPUT:-$(head -n1 VERSION)}"
+          v="$(echo "$v" | xargs | tr ' ' '-')"
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "Version: $v"
 
       - name: Check the LFS models were fetched
         run: |
@@ -65,10 +81,16 @@ jobs:
             fi
           done
 
+      # Releases ship the release profile: the USB Babble tracker is the only
+      # mouth, VRCFaceTracking the only output (cmake/babble_profile.cmake).
       - name: Build
         uses: ./.github/actions/build-runtime
         with:
-          version: ${{ github.event.inputs.version-number }}
+          version: ${{ steps.version.outputs.version }}
+          profile: release
+
+      - name: Run the unit tests
+        run: build/runtime/babble_tests
 
       # The tarball unpacks to babble/, the SteamVR driver folder, next to the
       # scripts for installing it by hand (one-off builds; Steam gets babble/ only):
@@ -99,13 +121,6 @@ jobs:
       contents: write
 
     steps:
-      - name: Validate version number exists
-        run: |
-          if [ -z "${{ github.event.inputs.version-number }}" ]; then
-            echo "::error::version-number is required to publish a release"
-            exit 1
-          fi
-
       - name: Download artifact
         uses: actions/download-artifact@v4
         with:
@@ -114,7 +129,7 @@ jobs:
 
       - name: Rename artifact
         env:
-          VERSION: ${{ github.event.inputs.version-number }}
+          VERSION: ${{ needs.build-linuxarm64.outputs.version }}
         run: |
           cd artifacts
           mv "${ARTIFACT}" "babble-frame-runtime.linuxarm64.${VERSION}.tar.xz"
@@ -123,9 +138,9 @@ jobs:
         id: release-name
         run: |
           if [[ -z "${{ github.event.inputs.release-name-info }}" ]]; then
-            echo "name=${{ github.event.inputs.version-number }}" >> "$GITHUB_OUTPUT"
+            echo "name=${{ needs.build-linuxarm64.outputs.version }}" >> "$GITHUB_OUTPUT"
           else
-            echo "name=${{ github.event.inputs.version-number }} - ${{ github.event.inputs.release-name-info }}" >> "$GITHUB_OUTPUT"
+            echo "name=${{ needs.build-linuxarm64.outputs.version }} - ${{ github.event.inputs.release-name-info }}" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Set release body or generate notes
@@ -145,8 +160,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            artifacts/babble-frame-runtime.linuxarm64.${{ github.event.inputs.version-number }}.tar.xz
-          tag_name: ${{ github.event.inputs.version-number }}
+            artifacts/babble-frame-runtime.linuxarm64.${{ needs.build-linuxarm64.outputs.version }}.tar.xz
+          tag_name: ${{ needs.build-linuxarm64.outputs.version }}
           name: ${{ steps.release-name.outputs.name }}
           prerelease: ${{ github.event.inputs.publish-pre-release }}
           body: ${{ steps.release-body.outputs.body }}
@@ -168,12 +183,8 @@ jobs:
       # Steam only shows branch controls once a build exists, so the very first
       # upload has to run with set-live unticked; create the branch on the
       # Builds page afterwards and later uploads can set live on it.
-      - name: Validate version number and Steam configuration
+      - name: Validate Steam configuration
         run: |
-          if [ -z "${{ github.event.inputs.version-number }}" ]; then
-            echo "::error::version-number is required to publish on Steam"
-            exit 1
-          fi
           if [ -z "${{ vars.STEAM_APP_ID }}" ]; then
             echo "::error::The STEAM_APP_ID repository variable is not set"
             exit 1
@@ -198,7 +209,7 @@ jobs:
           configVdf: ${{ secrets.STEAM_CONFIG_VDF }}
           appId: ${{ vars.STEAM_APP_ID }}
           firstDepotIdOverride: ${{ vars.STEAM_DEPOT_ID }}
-          buildDescription: ${{ github.event.inputs.version-number }}
+          buildDescription: ${{ needs.build-linuxarm64.outputs.version }}
           depot1Path: builds/babble
           depot1InstallScriptPath: builds/babble/installscript.vdf
           releaseBranch: ${{ github.event.inputs.set-live == 'true' && github.event.inputs.steam-branch || '' }}

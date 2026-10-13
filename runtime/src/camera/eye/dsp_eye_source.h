@@ -1,12 +1,12 @@
 #pragma once
 
 #include "camera/eye/dsp_client.h"
+#include "camera/eye/eye_pairer.h"
 #include "camera/tracking_source.h"
 #include "core/metrics.h"
 #include "core/threading.h"
 #include "frame/frame_pool.h"
 #include "frame/mailbox.h"
-#include "frame/rate_limiter.h"
 
 #include <nlohmann/json.hpp>
 
@@ -24,6 +24,11 @@ namespace babble {
 // source Unavailable; the rest of the runtime keeps going. Config type
 // "frame_dsp_eye".
 //
+// The camera rate is SteamVR's (it follows the display refresh rate); the
+// tracking rate is a whole fraction of it, "rate_divisor" 1, 2 or 3, so no
+// pair is ever dropped to timing jitter. A frame tap (the recorder) gets every
+// pair regardless of the divisor.
+//
 // dsp_service has no frame notification, so the ring index is polled. To keep
 // wakeups low the poll thread learns the frame interval and sleeps until just
 // before the next expected frame, then polls finely until it arrives. Frames
@@ -38,8 +43,13 @@ public:
 
     void tick(uint64_t now_ns) override;
     void shutdown() override;
-    void set_process_fps(double fps) override;
+    void set_process_fps(double fps) override;   // not used: the eye rate is a divisor
     void set_tracking(bool on) override;
+    bool set_option(const std::string &key, const nlohmann::json &value) override;
+    void set_frame_tap(IFrameTap *tap) override { tap_.store(tap); }
+
+    double camera_fps() const override { return camera_fps_.load(std::memory_order_relaxed); }
+    uint32_t rate_divisor() const { return divisor_.load(std::memory_order_relaxed); }
     bool tracking() const override { return tracking_; }
 
     bool streaming() const override { return state_ == State::Streaming; }
@@ -71,7 +81,10 @@ private:
     std::vector<uint32_t> candidates_;
     Crop crop_l_, crop_r_;
     std::shared_ptr<FramePool> pool_;
-    RateLimiter limiter_;
+    EyePairer pairer_;
+    std::atomic<uint32_t> divisor_{1};
+    std::atomic<IFrameTap *> tap_{nullptr};
+    std::atomic<float> camera_fps_{0};
     std::thread thread_;
     std::atomic<bool> stop_{false};
     std::atomic<bool> failed_{false};
@@ -84,8 +97,9 @@ private:
     bool not_ready_ = false;   // last start found the control block not set up yet
     bool logged_gap_ = false;
 
-    RateStat frames_, processed_;
-    Counter layout_faults_, restarts_, pool_exhausted_, late_detect_;   // stats: lifetime totals
+    RateStat frames_, processed_, side_l_, side_r_;
+    Counter layout_faults_, restarts_, pool_exhausted_, late_detect_, half_pairs_;   // stats: lifetime totals
+    Counter camera_rate_;   // a level: the camera rate SteamVR set, in whole fps
     // Bad index reads in a row (capture thread while streaming, read by tick
     // after the thread stopped): kMaxLayoutFaults of them disable the source.
     uint32_t consecutive_faults_ = 0;

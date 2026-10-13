@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.24)
 project(babble_driver CXX)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -34,9 +34,10 @@ set_target_properties(babble_setup PROPERTIES OUTPUT_NAME babble-setup)
 
 # Assemble the SteamVR driver folder:
 #   babble/driver.vrdrivermanifest
-#   babble/resources/settings/default.vrsettings
+#   babble/resources/settings/default.vrsettings       (the profile's, cmake/babble_profile.cmake)
 #   babble/resources/settings/settingsschema.vrsettings  (the "Expression Tracking" section in SteamVR Settings)
-#   babble/resources/runtime/defaults.json
+#   babble/resources/runtime/defaults.json             (the profile's)
+#   babble/resources/runtime/{fonts,icons,models}/     (the models the profile's pipelines load)
 #   babble/installscript.vdf   (Steam runs babble-setup --uninstall before deleting the folder)
 #   babble/bin/<platform>/driver_babble.so
 #   babble/bin/<platform>/babble-runtime
@@ -62,15 +63,46 @@ foreach(plugin IN LISTS BABBLE_PLUGINS)
         COMMAND ${CMAKE_COMMAND} -E rename ${dst}.new ${dst})
 endforeach()
 
+# The runtime's resources, per profile: fonts, icons, the profile's defaults,
+# and only the models (and calibration) its pipelines load.
+set(runtime_res ${CMAKE_CURRENT_SOURCE_DIR}/../runtime/resources)
+set(BABBLE_PACKAGED_MODELS eye_split96_uncapped_fp16.pte face_mono_224_fp16.pte)
+set(BABBLE_PACKAGED_FILES)
+if(BABBLE_FRUNK_MOUTH)
+    list(APPEND BABBLE_PACKAGED_MODELS fusionnet_int8_xnnpack_qat_linear.pte)
+    list(APPEND BABBLE_PACKAGED_FILES calibration_mouth.json)
+endif()
+if(BABBLE_DEV_FEATURES)
+    list(APPEND BABBLE_PACKAGED_MODELS lid_mnv4_160_int8.pte pupil_cnx_160_fp32.pte)   # the split eye layout (config only)
+endif()
+set(BABBLE_RESOURCE_COMMANDS
+    # Start clean, so nothing from another profile lingers (a running runtime
+    # has its models mapped already; unlinking them is safe).
+    COMMAND ${CMAKE_COMMAND} -E rm -rf ${BABBLE_OUT}/resources/runtime
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${BABBLE_OUT}/resources/runtime/models
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${runtime_res}/fonts ${BABBLE_OUT}/resources/runtime/fonts
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${runtime_res}/icons ${BABBLE_OUT}/resources/runtime/icons
+    COMMAND ${CMAKE_COMMAND} -E copy ${BABBLE_GENERATED_DIR}/defaults.json ${BABBLE_OUT}/resources/runtime/defaults.json)
+foreach(f IN LISTS BABBLE_PACKAGED_FILES)
+    list(APPEND BABBLE_RESOURCE_COMMANDS
+        COMMAND ${CMAKE_COMMAND} -E copy ${runtime_res}/${f} ${BABBLE_OUT}/resources/runtime/${f})
+endforeach()
+foreach(m IN LISTS BABBLE_PACKAGED_MODELS)
+    list(APPEND BABBLE_RESOURCE_COMMANDS
+        COMMAND ${CMAKE_COMMAND} -E copy ${runtime_res}/models/${m} ${BABBLE_OUT}/resources/runtime/models/${m})
+endforeach()
+
 # A separate target so relinking only the runtime still refreshes the folder.
 add_custom_target(babble_package ALL
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${CMAKE_CURRENT_SOURCE_DIR}/package ${BABBLE_OUT}
+    # The profile's SteamVR defaults, over the dev ones package/ carries.
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${BABBLE_GENERATED_DIR}/default.vrsettings ${BABBLE_OUT}/resources/settings/default.vrsettings
     # The settings schema with the version filled in (cmake/babble_version.cmake).
     COMMAND ${CMAKE_COMMAND} -E copy
         ${BABBLE_GENERATED_DIR}/settingsschema.vrsettings ${BABBLE_OUT}/resources/settings/settingsschema.vrsettings
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        ${CMAKE_CURRENT_SOURCE_DIR}/../runtime/resources ${BABBLE_OUT}/resources/runtime
+    ${BABBLE_RESOURCE_COMMANDS}
     # Copy then rename: the shim may be running the old binary, which cannot
     # be overwritten in place (ETXTBSY); rename swaps it atomically.
     COMMAND ${CMAKE_COMMAND} -E copy

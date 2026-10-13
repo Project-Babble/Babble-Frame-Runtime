@@ -77,6 +77,9 @@ public:
     uint64_t connection() const { return connection_.load(); }
     // Headset IPD in metres from SteamVR, 0 until known.
     double ipd() const { return ipd_.load(); }
+    // The headset display refresh rate in Hz, 0 until known. SteamVR sets the
+    // eye camera rate from it.
+    double display_hz() const { return display_hz_.load(); }
 
     // Input handles (valid while connected; 0 if setup failed).
     uint64_t gaze_action() const { return gaze_action_.load(); }
@@ -93,6 +96,7 @@ private:
     bool setup_input();
     std::optional<bool> read_proximity();
     void refresh_ipd();
+    void refresh_display_hz();
 
     ThreadSpec thread_spec_;
     std::thread thread_;
@@ -102,6 +106,7 @@ private:
     std::atomic<uint64_t> connection_{0};
     std::atomic<Worn> worn_{Worn::Unknown};
     std::atomic<double> ipd_{0.0};
+    std::atomic<double> display_hz_{0.0};
     bool has_prox_ = false;
     Options options_;
     std::atomic<uint64_t> action_set_{0}, gaze_action_{0};

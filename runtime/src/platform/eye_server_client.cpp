@@ -128,6 +128,11 @@ std::optional<Sample> EyeServerClient::latest(uint64_t max_age_ns) const {
     return latest_;
 }
 
+void EyeServerClient::set_listener(std::function<void(const Sample &)> fn) {
+    std::lock_guard<std::mutex> lock(listener_mutex_);
+    listener_ = std::move(fn);
+}
+
 bool EyeServerClient::open_map() {
     auto problem = [&](std::string why) {
         if (why != last_problem_)   // once per distinct reason
@@ -142,30 +147,48 @@ bool EyeServerClient::open_map() {
         return problem(strerror(errno));
     struct stat st{};
     if (fstat(fd_, &st) != 0 || size_t(st.st_size) < kMinFileSize)
-        return problem("file is smaller than the version-4 layout");
+        return problem("file is smaller than any known layout");
     void *p = mmap(nullptr, kMinFileSize, PROT_READ | PROT_WRITE, MAP_SHARED, fd_, 0);
     if (p == MAP_FAILED)
         return problem(std::string("mmap: ") + strerror(errno));
     base_ = static_cast<uint8_t *>(p);
+    map_bytes_ = kMinFileSize;
     const uint32_t version = __atomic_load_n(shm_word(base_, kVersionOffset), __ATOMIC_ACQUIRE);
-    if (version != options_.version)
-        return problem("layout version " + std::to_string(version) + ", expected " +
-                       std::to_string(options_.version));
+    const Layout *layout = nullptr;
+    for (const auto &l : kLayouts)
+        if (l.version == version)
+            layout = &l;
+    if (!layout)
+        return problem("unknown layout version " + std::to_string(version) + " (this runtime reads 4 and 5)");
+    if (size_t(st.st_size) < layout->file_size)
+        return problem("file is smaller than the version-" + std::to_string(version) + " layout");
+    if (layout->file_size != map_bytes_) {   // map the whole layout
+        munmap(base_, map_bytes_);
+        p = mmap(nullptr, layout->file_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd_, 0);
+        base_ = p == MAP_FAILED ? nullptr : static_cast<uint8_t *>(p);
+        map_bytes_ = base_ ? layout->file_size : 0;
+        if (!base_)
+            return problem(std::string("mmap: ") + strerror(errno));
+    }
+    record_offset_ = layout->record_offset;
     if (__atomic_load_n(shm_word(base_, kInitializedOffset), __ATOMIC_ACQUIRE) != 1)
         return problem("not initialized");
     if (!announced_ || !last_problem_.empty())
         LOG.info("eye-server: reading %s (layout version %u)", options_.path.c_str(), version);
     announced_ = true;
     last_problem_.clear();
+    version_ = version;
     available_ = true;
     return true;
 }
 
 void EyeServerClient::close_map() {
     available_ = false;
+    version_ = 0;
     if (base_)
-        munmap(base_, kMinFileSize);
+        munmap(base_, map_bytes_);
     base_ = nullptr;
+    map_bytes_ = 0;
     if (fd_ >= 0)
         ::close(fd_);
     fd_ = -1;
@@ -190,17 +213,23 @@ bool EyeServerClient::read_one() {
         return false;
     const bool fresh = __atomic_load_n(seq_word, __ATOMIC_ACQUIRE) != seq;
     if (fresh)
-        memcpy(rec, base_ + kRecordOffset, kRecordBytes);
+        memcpy(rec, base_ + record_offset_, kRecordBytes);
     pthread_mutex_unlock(shm_mutex(base_));
 
     Sample s;
     if (!fresh || !parse_record(rec, &s))
         return false;
     s.received_ns = mono_ns();
+    s.layout = version_.load(std::memory_order_relaxed);
     s.seq = ++seq_;
     {
         std::lock_guard<std::mutex> l(mutex_);
         latest_ = s;
+    }
+    {
+        std::lock_guard<std::mutex> l(listener_mutex_);
+        if (listener_)
+            listener_(s);
     }
     samples_.tick();
     return true;

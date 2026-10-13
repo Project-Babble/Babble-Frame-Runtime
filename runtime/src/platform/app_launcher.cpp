@@ -1,6 +1,7 @@
 #include "platform/app_launcher.h"
 
 #include "core/log.h"
+#include "core/paths.h"
 
 #include <cerrno>
 #include <csignal>
@@ -21,22 +22,17 @@ extern char **environ;
 
 namespace babble {
 
-namespace {
-
-std::string expand_home(const std::string &s) {
-    if (s.rfind("~/", 0) == 0)
-        if (const char *home = getenv("HOME"))
-            return std::string(home) + s.substr(1);
-    return s;
-}
-
-} // namespace
+using paths::expand_home;
 
 AppLauncher::AppLauncher(const nlohmann::json &cfg, std::string default_log) {
     for (const auto &a : cfg.value("command", nlohmann::json::array()))
         if (a.is_string())
             argv_.push_back(expand_home(a.get<std::string>()));
     log_ = expand_home(cfg.value("log", default_log));
+    const nlohmann::json env = cfg.value("env", nlohmann::json::object());
+    for (const auto &[k, v] : env.items())
+        if (v.is_string())
+            env_[k] = v.get<std::string>();
     name_ = argv_.empty() ? "" : std::filesystem::path(argv_[0]).parent_path().filename().string();
 }
 
@@ -79,8 +75,21 @@ bool AppLauncher::start() {
     for (auto &a : argv_)
         argv.push_back(a.data());
     argv.push_back(nullptr);
+    // The runtime's environment plus the configured "env" entries.
+    std::vector<std::string> env_store;
+    for (char **e = environ; e && *e; e++) {
+        std::string kv = *e;
+        if (!env_.count(kv.substr(0, kv.find('='))))
+            env_store.push_back(std::move(kv));
+    }
+    for (const auto &[k, v] : env_)
+        env_store.push_back(k + "=" + v);
+    std::vector<char *> envp;
+    for (auto &kv : env_store)
+        envp.push_back(kv.data());
+    envp.push_back(nullptr);
     pid_t pid = -1;
-    const int rc = posix_spawn(&pid, argv_[0].c_str(), &fa, &at, argv.data(), environ);
+    const int rc = posix_spawn(&pid, argv_[0].c_str(), &fa, &at, argv.data(), envp.data());
     posix_spawn_file_actions_destroy(&fa);
     posix_spawnattr_destroy(&at);
     if (rc != 0) {

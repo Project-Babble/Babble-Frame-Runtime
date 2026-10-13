@@ -6,6 +6,7 @@
 #include "sink/link_sink.h"
 #include "sink/osc_sink.h"
 #include "sink/plugin_sink.h"
+#include "sink/record_sink.h"
 #include "sink/vrc_native_sink.h"
 
 namespace {
@@ -28,6 +29,8 @@ std::unique_ptr<ISink> make_sink(const nlohmann::json &cfg, SinkDeps deps) {
         return std::make_unique<CameraStreamSink>(cfg, std::move(deps));
     if (type == "vrc_native")
         return std::make_unique<VrcNativeSink>(cfg, std::move(deps));
+    if (type == "record")
+        return std::make_unique<RecordSink>(cfg, std::move(deps));
     LOG.error("sink %s: unknown type '%s'", deps.name.c_str(), type.c_str());
     return nullptr;
 }

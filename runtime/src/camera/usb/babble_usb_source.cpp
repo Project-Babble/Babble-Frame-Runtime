@@ -176,7 +176,11 @@ void BabbleUsbSource::run(usb::Found dev) {
             frames_.tick();
             frames_in++;
             bytes_in += size;
-            if (!limiter_.accept(now))
+            // A frame tap (the recorder) gets every frame; tracking only the subsampled ones.
+            IFrameTap *tap = tap_.load(std::memory_order_relaxed);
+            const bool want_tap = tap && tap->tap_wanted();
+            const bool forward = limiter_.accept(now);
+            if (!forward && !want_tap)
                 return;   // subsampled out: skip the decode
             auto frame = pool_->acquire();
             if (!frame) {
@@ -202,6 +206,10 @@ void BabbleUsbSource::run(usb::Found dev) {
             StereoFrame sf;
             sf.left = std::move(frame);
             sf.capture_ns = now;
+            if (want_tap)
+                tap->tap_frames(name_, sf);
+            if (!forward)
+                return;
             processed_.tick();
             frames_kept++;
             out_.put(std::move(sf));

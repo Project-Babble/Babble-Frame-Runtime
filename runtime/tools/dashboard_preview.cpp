@@ -47,8 +47,9 @@ int main(int argc, char **argv) {
     std::vector<Choice> choices = {
         {"/sources/mouth/process_fps", "Mouth tracking rate", "Updates per second. Lower rates save battery.", "Hz",
          {30, 60, 90, 120}, 120},
-        {"/sources/eye/process_fps", "Eye tracking rate", "Updates per second. Lower rates save battery.", "Hz",
-         {30, 45, 60, 90}, 90},
+        {"/sources/eye/rate_divisor", "Eye tracking rate",
+         "A share of the eye camera rate, which follows the display refresh rate. Lower saves battery.", "", {1, 2, 3}, 1,
+         false, false, {"1:1", "1:2", "1:3"}},
         {"/sinks/camera_stream/active", "Camera stream",
          "MJPEG on TCP 9099 for infer.py (net:<headset>:9099). Off after a restart.", "", {0, 1}, 1, true, true},
     };
@@ -116,6 +117,11 @@ int main(int argc, char **argv) {
     usb.active_camera = usb.camera;
     view.render(c, usb, choices, std::nullopt);
     save(c, "settings_usb");
+    // Release builds: the USB tracker is the only mouth, so no Frunk/USB row and no mouth rate.
+    Status release = usb;
+    release.mouth_source_selectable = false;
+    view.render(c, release, {choices[1]}, std::nullopt);
+    save(c, "settings_release");
     view.set_page(DashboardView::Page::Cameras);
     view.render(c, usb, choices, Point{600, 340});   // hovering the second camera
     save(c, "cameras");
@@ -133,6 +139,24 @@ int main(int argc, char **argv) {
     view.set_page(DashboardView::Page::Diagnostics);
     view.render(c, diag, choices, std::nullopt);
     save(c, "diagnostics");
+    // The dataset capture row in a few states.
+    for (const auto &[name, st] : {std::pair<const char *, CaptureRow::State>{"not_installed", CaptureRow::State::NotInstalled},
+                                   {"downloading", CaptureRow::State::Downloading},
+                                   {"installed", CaptureRow::State::Installed},
+                                   {"update", CaptureRow::State::UpdateAvailable},
+                                   {"running", CaptureRow::State::Running}}) {
+        Status d = diag;
+        d.capture.state = st;
+        d.capture.version = "0.1.0";
+        d.capture.latest = "0.2.0";
+        d.capture.progress = 0.42f;
+        d.capture.recording = st == CaptureRow::State::Running;
+        d.capture.uploads_pending = st == CaptureRow::State::Running ? 2 : 0;
+        d.capture.upload_progress = 0.4f;
+        d.capture.upload_stage = "uploading";
+        view.render(c, d, choices, std::nullopt);
+        save(c, std::string("diagnostics_capture_") + name);
+    }
 
     // Render cost (what the dashboard thread pays per redraw).
     {

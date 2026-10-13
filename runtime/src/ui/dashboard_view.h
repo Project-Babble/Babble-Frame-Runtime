@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <optional>
 #include <string>
 #include <utility>
@@ -18,7 +19,9 @@ namespace babble::ui {
 
 enum class Health { Off, Starting, Paused, Working, Fault };
 
-// The front page's feeds, in order: config source names.
+// The front page's feeds, in order: config source names. The mouth feed's
+// actual source can differ (a USB tracker, source "face"): main passes its
+// status and the setting its switch flips (Dashboard::Options).
 inline constexpr const char *kFeedSources[2] = {"mouth", "eye"};
 
 // One camera feed (mouth, eyes) as the front page shows it.
@@ -67,6 +70,20 @@ struct UsbCamera {
     std::string detail;   // "303a:8000 · serial 28372F18F94C"
 };
 
+// The dataset capture app's row on the Diagnostics page: an optional add-on
+// the runtime installs, launches and records for.
+struct CaptureRow {
+    enum class State { Hidden, Checking, NotInstalled, Downloading, Installing, Installed, UpdateAvailable, Running, Failed };
+    State state = State::Hidden;
+    std::string version{}, latest{}, detail{};
+    float progress = 0;           // downloading, 0..1
+    bool recording = false;
+    int uploads_pending = 0;
+    float upload_progress = 0;    // of the active stage, 0..1
+    std::string upload_stage{};   // packaging | encrypting | uploading
+    bool operator==(const CaptureRow &) const = default;
+};
+
 struct Status {
     bool steamvr = false;
     Worn worn = Worn::Unknown;
@@ -77,12 +94,17 @@ struct Status {
     // Where the mouth comes from ("frunk" or "usb"), and for USB the camera
     // list (from the last refresh), the setting ("" = automatic) and the one streaming.
     std::string mouth_source = "frunk";
+    bool mouth_source_selectable = true;   // false: the USB camera is the only mouth; no Frunk/USB row
     std::vector<UsbCamera> cameras{};
     std::string camera{}, active_camera{};
     // Diagnostics page: verbose logging (minutes left, 0 = off), the last
     // diagnostics file written, and where the log files are.
     int verbose_minutes_left = 0;
     std::string last_diagnostics{}, log_file{}, stats_file{};
+    // Live hints that replace a setting row's fixed hint, by setting id (the
+    // eye rate row shows the rate its share of the camera rate works out to).
+    std::map<std::string, std::string> choice_hints{};
+    CaptureRow capture{};
 };
 
 // The overall tracking state in words (the Babble tab's headline); tone
@@ -103,6 +125,7 @@ struct Choice {
     double value = 0;
     bool boolean = false;
     bool diagnostics = false;
+    std::vector<std::string> option_labels{};   // shown instead of value + unit when set (one per option)
 };
 
 struct Point {
@@ -135,6 +158,10 @@ public:
         bool refresh_cameras = false;                       // list the USB cameras again
         std::optional<bool> verbose;                        // verbose logging on (for a while) / off
         bool write_diagnostics = false;                     // write a diagnostics file now
+        bool opened_diagnostics = false;                    // the Diagnostics page was opened
+        // The dataset capture row: its main button (install / update / launch /
+        // stop / cancel / retry, by state) or Remove.
+        enum class CaptureAction { None, Primary, Remove } capture = CaptureAction::None;
     };
     // Hit-tests against the last render.
     ClickResult click(Point p);
@@ -152,7 +179,7 @@ private:
     struct Hit {
         enum Kind {
             Cog, Back, Option, Toggle, Visualizer, Restart, MouthSource, OpenCameras, Camera, Refresh,
-            OpenDiagnostics, Verbose, WriteDiagnostics
+            OpenDiagnostics, Verbose, WriteDiagnostics, CapturePrimary, CaptureRemove
         } kind;
         Rect rect;
         size_t choice = 0;   // Option: choice index; Toggle: feed index
@@ -163,7 +190,8 @@ private:
     void render_settings(Canvas &c, const std::vector<Choice> &choices, const Status &s);
     void render_cameras(Canvas &c, const Status &s);
     void render_diagnostics(Canvas &c, const std::vector<Choice> &choices, const Status &s);
-    void render_switch_row(Canvas &c, float y, size_t index, const Choice &ch);   // one 124 px row
+    void render_switch_row(Canvas &c, float y, size_t index, const Choice &ch, float row_h = 124);
+    void render_capture_row(Canvas &c, float y, float row_h, const CaptureRow &row);
     Rect render_pill(Canvas &c, float right, float y, const std::string &text, bool primary);   // -> its rect
     void render_back(Canvas &c, const char *title);
     float render_segments(Canvas &c, float right, float y, const std::vector<std::string> &labels, int selected,

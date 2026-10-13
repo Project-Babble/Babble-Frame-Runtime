@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.24)
 project(babble_runtime CXX)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -14,10 +14,11 @@ option(BABBLE_TESTS "Build the runtime unit tests" ON)
 set(THIRD_PARTY ${CMAKE_CURRENT_SOURCE_DIR}/../third_party)
 
 # The shipped defaults are compiled into the binary so the runtime never
-# depends on finding its resource folder.
-set(BABBLE_DEFAULTS_FILE ${CMAKE_CURRENT_SOURCE_DIR}/resources/defaults.json)
+# depends on finding its resource folder. They are the profile's version of
+# resources/defaults.json (cmake/babble_profile.cmake, generated at configure).
+set(BABBLE_DEFAULTS_FILE ${BABBLE_GENERATED_DIR}/defaults.json)
 file(READ ${BABBLE_DEFAULTS_FILE} BABBLE_DEFAULTS_JSON)
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${BABBLE_DEFAULTS_FILE})
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/resources/defaults.json)
 configure_file(src/core/defaults_json.h.in ${CMAKE_CURRENT_BINARY_DIR}/generated/defaults_json.h @ONLY)
 
 # ExecuTorch runtime, built and installed once by tools/build_executorch.sh
@@ -36,12 +37,6 @@ add_library(babble_core STATIC
     src/core/paths.cpp
     src/core/threading.cpp
     src/frame/frame_pool.cpp
-    src/frame/stereo_pairer.cpp
-    src/camera/v4l2/v4l2_capture.cpp
-    src/camera/v4l2/v4l2_controls.cpp
-    src/camera/v4l2/v4l2_subdev.cpp
-    src/camera/mouth/exposure_controller.cpp
-    src/camera/mouth/frame_mouth_source.cpp
     src/camera/eye/dsp_client.cpp
     src/camera/eye/dsp_eye_source.cpp
     src/camera/tracking_source.cpp
@@ -52,9 +47,7 @@ add_library(babble_core STATIC
     src/camera/usb/uvc_camera.cpp
     src/platform/app_launcher.cpp
     src/platform/diagnostics.cpp
-    src/platform/camera_arbiter_client.cpp
     src/platform/eye_server_client.cpp
-    src/platform/media_graph.cpp
     src/platform/steamvr_client.cpp
     src/platform/steamvr_settings.cpp
     src/model/null_model_runner.cpp
@@ -63,12 +56,10 @@ add_library(babble_core STATIC
     src/model/executorch_runner.cpp
     src/model/pipeline.cpp
     src/model/null_pipeline.cpp
-    src/model/fusionnet_mouth.cpp
     src/model/babble_eye.cpp
     src/model/babble_mono_face.cpp
     src/model/postprocess/face_post.cpp
     src/model/steamvr_gaze.cpp
-    src/model/postprocess/mouth_post.cpp
     src/model/postprocess/eye_post.cpp
     src/state/expression_state.cpp
     src/sink/debug_sink.cpp
@@ -79,6 +70,16 @@ add_library(babble_core STATIC
     src/sink/plugin_sink.cpp
     src/sink/vrc_native_sink.cpp
     src/sink/camera_stream_sink.cpp
+    src/sink/record_sink.cpp
+    src/core/sha256.cpp
+    src/platform/process.cpp
+    src/capture/capture_protocol.cpp
+    src/capture/capture_server.cpp
+    src/capture/github_release.cpp
+    src/capture/app_installer.cpp
+    src/capture/uploader.cpp
+    src/capture/hevc_encoder.cpp
+    src/capture/packager.cpp
     src/ui/canvas.cpp
     src/ui/font.cpp
     src/ui/image.cpp
@@ -86,6 +87,25 @@ add_library(babble_core STATIC
     src/ui/dashboard.cpp
     src/ui/vk_uploader.cpp
 )
+if(BABBLE_FRUNK_MOUTH)
+    # The Frame's own stereo mouth cameras (the front port): V4L2 capture, the
+    # camera arbiter it waits for, and FusionNet. Dev builds only, for now.
+    target_sources(babble_core PRIVATE
+        src/frame/stereo_pairer.cpp
+        src/camera/v4l2/v4l2_capture.cpp
+        src/camera/v4l2/v4l2_controls.cpp
+        src/camera/v4l2/v4l2_subdev.cpp
+        src/camera/mouth/exposure_controller.cpp
+        src/camera/mouth/frame_mouth_source.cpp
+        src/platform/camera_arbiter_client.cpp
+        src/platform/media_graph.cpp
+        src/model/fusionnet_mouth.cpp
+        src/model/postprocess/mouth_post.cpp)
+endif()
+# The profile, for the few #if sites (the source/pipeline registries, main's
+# mouth routing) and for the tests; PUBLIC so every target sees the same 0/1.
+target_compile_definitions(babble_core PUBLIC
+    BABBLE_FRUNK_MOUTH=$<BOOL:${BABBLE_FRUNK_MOUTH}> BABBLE_DEV_FEATURES=$<BOOL:${BABBLE_DEV_FEATURES}>)
 target_include_directories(babble_core
     PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src ${CMAKE_CURRENT_BINARY_DIR}/generated ${BABBLE_GENERATED_DIR}
            ${CMAKE_CURRENT_SOURCE_DIR}/../sdk/include
@@ -126,6 +146,16 @@ add_executable(model_bench tools/model_bench.cpp)
 target_link_libraries(model_bench PRIVATE babble_core)
 set_target_properties(model_bench PROPERTIES BUILD_RPATH "${THIRD_PARTY}/openvr/lib/linuxarm64")
 
+# Runs an eye model over recorded frames on stdin (compares outputs across codecs).
+add_executable(eye_replay tools/eye_replay.cpp)
+target_link_libraries(eye_replay PRIVATE babble_core)
+set_target_properties(eye_replay PROPERTIES BUILD_RPATH "${THIRD_PARTY}/openvr/lib/linuxarm64")
+
+# Packages a recorded dataset session by hand (what the upload queue does).
+add_executable(dataset_package tools/dataset_package.cpp)
+target_link_libraries(dataset_package PRIVATE babble_core)
+set_target_properties(dataset_package PROPERTIES BUILD_RPATH "${THIRD_PARTY}/openvr/lib/linuxarm64")
+
 # Streams a Babble face tracker over usbfs and reports/saves what arrives (bring-up and debugging).
 add_executable(babble_usb_probe tools/babble_usb_probe.cpp)
 target_link_libraries(babble_usb_probe PRIVATE babble_core)
@@ -136,7 +166,6 @@ if(BABBLE_TESTS)
     add_executable(babble_tests
         tests/main.cpp
         tests/test_mailbox.cpp
-        tests/test_stereo_pairer.cpp
         tests/test_rate_limiter.cpp
         tests/test_dsp_layout.cpp
         tests/test_config.cpp
@@ -148,6 +177,7 @@ if(BABBLE_TESTS)
         tests/test_gaze.cpp
         tests/test_dashboard.cpp
         tests/test_eye_server.cpp
+        tests/test_packager.cpp
         tests/test_plugin_sink.cpp
         tests/test_link_sink.cpp
         tests/test_babble_tracker.cpp
@@ -155,7 +185,16 @@ if(BABBLE_TESTS)
         tests/test_log.cpp
         tests/test_vrc_native.cpp
         tests/test_camera_stream.cpp
+        tests/test_eye_pairing.cpp
+        tests/test_record_sink.cpp
+        tests/test_process.cpp
+        tests/test_capture_protocol.cpp
+        tests/test_sha256.cpp
+        tests/test_capture_apps.cpp
     )
+    if(BABBLE_FRUNK_MOUTH)
+        target_sources(babble_tests PRIVATE tests/test_stereo_pairer.cpp)
+    endif()
     target_link_libraries(babble_tests PRIVATE babble_core)
     set_target_properties(babble_tests PROPERTIES BUILD_RPATH "${THIRD_PARTY}/openvr/lib/linuxarm64")
     target_include_directories(babble_tests SYSTEM PRIVATE ${THIRD_PARTY}/doctest)

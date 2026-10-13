@@ -40,6 +40,25 @@ fs::path config_dir() { return ensure(xdg_dir("XDG_CONFIG_HOME", ".config") / "b
 
 fs::path state_dir() { return ensure(xdg_dir("XDG_STATE_HOME", ".local/state") / "babble-frame-runtime"); }
 
+fs::path data_dir() { return ensure(xdg_dir("XDG_DATA_HOME", ".local/share") / "babble-frame-runtime"); }
+
+fs::path runtime_dir() {
+    const char *v = getenv("XDG_RUNTIME_DIR");
+    if (!v || !*v)
+        return state_dir();
+    fs::path dir = ensure(fs::path(v) / "babble-frame-runtime");
+    std::error_code ec;
+    fs::permissions(dir, fs::perms::owner_all, fs::perm_options::replace, ec);
+    return dir;
+}
+
+std::string expand_home(const std::string &path) {
+    if (path.rfind("~/", 0) == 0)
+        if (const char *home = getenv("HOME"); home && *home)
+            return std::string(home) + path.substr(1);
+    return path;
+}
+
 fs::path resource_dir() {
     fs::path exe_dir = exe_path().parent_path();
     std::error_code ec;

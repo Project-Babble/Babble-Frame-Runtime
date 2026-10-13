@@ -11,6 +11,7 @@
 
 using namespace babble;
 
+#if BABBLE_FRUNK_MOUTH
 TEST_CASE("ExecuTorchRunner runs FusionNet and matches the Python ExecuTorch runtime") {
     ExecuTorchRunner::set_threads(1);
     ExecuTorchRunner r;
@@ -50,6 +51,7 @@ TEST_CASE("ExecuTorchRunner runs FusionNet and matches the Python ExecuTorch run
     REQUIRE(r.run(iv, ov2));
     CHECK(again == out);
 }
+#endif
 
 TEST_CASE("ExecuTorchRunner runs the fp16 combined eye model and matches the Python ExecuTorch runtime") {
     ExecuTorchRunner::set_threads(1);

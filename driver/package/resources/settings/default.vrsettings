@@ -6,7 +6,7 @@
 		"mouthRate" : 120,
 		"output" : "vrcft",
 		"eyeTracking" : true,
-		"eyeRate" : 90,
+		"eyeRateDivisor" : 1,
 		"opennessSource" : "model",
 		"gazeSource" : "independent",
 		"debugOverlay" : false

@@ -2,6 +2,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -14,8 +15,8 @@ namespace babble {
 // signal mask and default dispositions (the runtime blocks its signals for
 // signalfd), no shim pipe on fd 3, and its output appended to a log file.
 //
-// Config: {"command": ["~/aura_vis/run.sh", ...], "log": "<path>"}; a leading
-// "~/" expands to $HOME. Main thread only.
+// Config: {"command": ["~/aura_vis/run.sh", ...], "log": "<path>",
+// "env": {"NAME": "value"}}; a leading "~/" expands to $HOME. Main thread only.
 class AppLauncher {
 public:
     AppLauncher(const nlohmann::json &cfg, std::string default_log);
@@ -30,6 +31,7 @@ public:
 private:
     std::vector<std::string> argv_;
     std::string log_, name_;
+    std::map<std::string, std::string> env_;
     pid_t pid_ = -1;
 };
 

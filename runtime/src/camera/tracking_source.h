@@ -15,6 +15,18 @@ namespace babble {
 class CameraArbiterClient;
 class SteamVrClient;
 
+// Receives every frame a source captures, before the source's tracking-rate
+// subsampling (the dataset recorder). Called on the source's capture thread:
+// like ISink::offer_frames it must only copy or hand the frame off, never
+// block or do I/O. wanted() is checked first, so a source skips the copy
+// work while nothing is recording.
+class IFrameTap {
+public:
+    virtual ~IFrameTap() = default;
+    virtual bool tap_wanted() const = 0;
+    virtual void tap_frames(const std::string &source, const StereoFrame &frames) = 0;
+};
+
 // What a source is doing, for user-facing status (the dashboard).
 enum class SourceActivity {
     Off,         // disabled in config, or tracking turned off by the user
@@ -49,6 +61,13 @@ public:
     // A module-specific option changed live (config reload, the debug overlay).
     // False = not an option this module has, or a value it rejects.
     virtual bool set_option(const std::string &key, const nlohmann::json &value) { return false; }
+    // Main thread, before or while streaming; null removes it. The tap must
+    // outlive the source or be removed first.
+    virtual void set_frame_tap(IFrameTap *tap) {}
+
+    // The camera's own frame rate when the platform sets it (the eye cameras:
+    // SteamVR); 0 = unknown or not applicable. Any thread.
+    virtual double camera_fps() const { return 0; }
 
     virtual bool streaming() const = 0;
     virtual SourceActivity activity() const = 0;
@@ -63,7 +82,9 @@ struct SourceDeps {
     const nlohmann::json &threads;           // config["threads"]
     LatestSlot<StereoFrame> &out;
     StatsRegistry &stats;
-    const CameraArbiterClient &arbiter;
+    // The platform's camera routing; only the Frame's own mouth cameras need
+    // it (null otherwise, and in builds without that source).
+    const CameraArbiterClient *arbiter = nullptr;
     // Headset-worn state; with pause_when_absent (default) a module stops its
     // cameras while SteamVR reports the headset not worn. Null = never pause.
     const SteamVrClient *steamvr = nullptr;

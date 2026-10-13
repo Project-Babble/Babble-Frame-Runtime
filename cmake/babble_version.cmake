@@ -2,8 +2,11 @@
 # filled in. Runs at every build (script mode), so the commit shown by a dev
 # build is always current; outputs are only rewritten when they change.
 #
-#   cmake -DSRC_DIR=<repo> -DOUT_DIR=<dir> -DVERSION=<Vx.x Stage> -DDEV=<ON|OFF> -P babble_version.cmake
+#   cmake -DSRC_DIR=<repo> -DOUT_DIR=<dir> -DVERSION=<Vx.x Stage> -DDEV=<ON|OFF>
+#         -DPROFILE=<dev|release> -DSCHEMA_IN=<profile's settingsschema.vrsettings.in> -P babble_version.cmake
 #
+# SCHEMA_IN is the profile's schema (cmake/babble_profile.cmake), with the
+# @BABBLE_VERSION@ placeholder still in it.
 # A dev build (the version came from the VERSION file, not the release build)
 # shows its commit: "V0.1 Alpha (dev a1e76b9)". The commit comes from git, or
 # from <repo>/.babble-rev when the tree was copied without .git (the headset).
@@ -35,8 +38,9 @@ write_if_changed("${OUT_DIR}/babble_version.h"
 #pragma once
 #define BABBLE_VERSION \"${VERSION}\"
 #define BABBLE_VERSION_DISPLAY \"${display}\"
+#define BABBLE_PROFILE_NAME \"${PROFILE}\"
 ")
 
-file(READ "${SRC_DIR}/driver/package/resources/settings/settingsschema.vrsettings" schema)
+file(READ "${SCHEMA_IN}" schema)
 string(REPLACE "@BABBLE_VERSION@" "${display}" schema "${schema}")
 write_if_changed("${OUT_DIR}/settingsschema.vrsettings" "${schema}")
