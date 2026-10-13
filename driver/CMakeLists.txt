@@ -39,6 +39,7 @@ set_target_properties(babble_setup PROPERTIES OUTPUT_NAME babble-setup)
 #   babble/resources/runtime/defaults.json             (the profile's)
 #   babble/resources/runtime/{fonts,icons,models}/     (the models the profile's pipelines load)
 #   babble/installscript.vdf   (Steam runs babble-setup --uninstall before deleting the folder)
+#   babble/LICENSE             (the Babble Software Distribution License, shipped with every copy)
 #   babble/bin/<platform>/driver_babble.so
 #   babble/bin/<platform>/babble-runtime
 #   babble/bin/<platform>/babble-setup
@@ -102,6 +103,8 @@ add_custom_target(babble_package ALL
     # The settings schema with the version filled in (cmake/babble_version.cmake).
     COMMAND ${CMAKE_COMMAND} -E copy
         ${BABBLE_GENERATED_DIR}/settingsschema.vrsettings ${BABBLE_OUT}/resources/settings/settingsschema.vrsettings
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${CMAKE_CURRENT_SOURCE_DIR}/../LICENSE ${BABBLE_OUT}/LICENSE
     ${BABBLE_RESOURCE_COMMANDS}
     # Copy then rename: the shim may be running the old binary, which cannot
     # be overwritten in place (ETXTBSY); rename swaps it atomically.

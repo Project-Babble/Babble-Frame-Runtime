@@ -80,3 +80,7 @@ sdk/             output plugin ABI header and plugin template
 tools/           ExecuTorch build script, model export, golden data, probes, icon rendering
 third_party/     OpenVR headers, and submodules: ExecuTorch, nlohmann/json, doctest, stb
 ```
+
+## License
+
+Licensed under the [Babble Software Distribution License 1.0](LICENSE), the same license as Baballonia: non-commercial use only, and derivative works must be released under the same license with their source. Third-party code in `third_party/` keeps its own license.
