@@ -8,6 +8,7 @@
 #include "camera/tracking_source.h"
 #include "camera/usb/babble_usb_source.h"
 #include "capture/app_installer.h"
+#include "update/runtime_updater.h"
 #include "capture/capture_server.h"
 #include "capture/uploader.h"
 #include "core/clock.h"
@@ -954,6 +955,17 @@ int main(int argc, char **argv) {
     installer.start();
     const uint64_t app_check_ns = uint64_t(std::max(1.0, app_cfg.value("check_hours", 6.0)) * 3600e9);
     uint64_t app_checked_at = 0;
+    // The runtime's own updates (installs made by install.sh): checked a minute
+    // after start, then every few hours; installed and restarted into from the
+    // Babble tab's update pill.
+    const json update_cfg = section(cfg, "update");
+    update::RuntimeUpdater updater(update_cfg,
+                                   {BABBLE_VERSION, std::string(BABBLE_VERSION) != BABBLE_VERSION_DISPLAY,
+                                    update::RuntimeUpdater::own_install_root()},
+                                   threads);
+    updater.start();
+    const uint64_t update_check_ns = uint64_t(std::max(1.0, update_cfg.value("check_hours", 6.0)) * 3600e9);
+    uint64_t update_check_at = mono_ns() + 60'000'000'000ull;
     std::optional<AppLauncher> capture_app;
     std::string capture_app_entry;   // what capture_app was built for
     capture::Server capture_server(capture_backend);
@@ -1146,6 +1158,21 @@ int main(int argc, char **argv) {
                 installer.check();
                 app_checked_at = now;
             }
+            if (now >= update_check_at) {
+                if (!updater.snapshot().busy())
+                    updater.check();
+                update_check_at = now + update_check_ns;
+            }
+            if (dashboard->take_update_request()) {
+                using U = update::RuntimeUpdater::State;
+                switch (updater.snapshot().state) {
+                case U::Available: updater.install(); break;
+                case U::Downloading: updater.cancel(); break;
+                case U::Installed: updater.restart_steamvr(); break;
+                case U::Failed: updater.install(); break;   // checks again first if it never found one
+                default: break;
+                }
+            }
             using CaptureAction = ui::DashboardView::ClickResult::CaptureAction;
             if (const CaptureAction a = dashboard->take_capture_request(); a != CaptureAction::None) {
                 using S = capture::AppInstaller::State;
@@ -1254,6 +1281,24 @@ int main(int argc, char **argv) {
                 row.upload_progress = up.progress;
                 row.upload_stage = up.stage;
                 st.capture = row;
+            }
+            {   // The update pill.
+                using U = update::RuntimeUpdater::State;
+                using N = ui::UpdateNotice::State;
+                const auto up = updater.snapshot();
+                ui::UpdateNotice n;
+                n.version = up.latest;
+                n.detail = up.detail;
+                n.progress = up.progress;
+                switch (up.state) {
+                case U::Available: n.state = N::Available; break;
+                case U::Downloading: n.state = N::Downloading; break;
+                case U::Installing: n.state = N::Installing; break;
+                case U::Installed: n.state = N::RestartNeeded; break;
+                case U::Failed: n.state = N::Failed; break;
+                default: n.state = N::Hidden; break;
+                }
+                st.update = n;
             }
             dashboard->set_status(st);
         }

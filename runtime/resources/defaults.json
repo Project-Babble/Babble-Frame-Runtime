@@ -289,6 +289,13 @@
     "path": "/dev/shm/eye-server.mmap",
     "thread": "eyesrv"
   },
+  "update": {
+    "enabled": true,
+    "repo": "Project-Babble/Babble-Frame-Runtime",
+    "api_url": "https://api.github.com/repos/{repo}/releases?per_page=30",
+    "prereleases": "auto",
+    "check_hours": 6
+  },
   "capture": {
     "app": {
       "repo": "Project-Babble/Babble-Guided-Dataset-Capture",

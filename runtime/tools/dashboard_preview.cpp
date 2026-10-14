@@ -102,6 +102,18 @@ int main(int argc, char **argv) {
     save(c, "home_eyes_off");
     view.render(c, all_off, choices, std::nullopt);
     save(c, "home_all_off");
+    {   // The runtime update pill, beside the version.
+        Status u = tracking;
+        u.update = {UpdateNotice::State::Available, "V1.0 Alpha 5", "", 0};
+        view.render(c, u, choices, std::nullopt);
+        save(c, "home_update_available");
+        u.update = {UpdateNotice::State::Downloading, "V1.0 Alpha 5", "", 0.42f};
+        view.render(c, u, choices, std::nullopt);
+        save(c, "home_update_downloading");
+        u.update = {UpdateNotice::State::RestartNeeded, "V1.0 Alpha 5", "", 0};
+        view.render(c, u, choices, std::nullopt);
+        save(c, "home_update_restart");
+    }
 
     view.set_page(DashboardView::Page::Settings);
     choices[0].value = 60;

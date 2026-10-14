@@ -151,6 +151,7 @@ void DashboardView::render_home(Canvas &c, const Status &s) {
     }
     medium_.draw(c, title_x, 92, "Babble", 40, kText);
     regular_.draw(c, title_x, 124, BABBLE_VERSION_DISPLAY, 22, kMuted);
+    render_update_pill(c, title_x + regular_.measure(BABBLE_VERSION_DISPLAY, 22) + 20, 124, s.update);
 
     // Headline, compact at the top right: the overall state and the live rates.
     const FeedStatus *feeds[2] = {&s.mouth, &s.eye};
@@ -460,6 +461,44 @@ void DashboardView::render_settings(Canvas &c, const std::vector<Choice> &choice
     }
 }
 
+// The runtime update, as a small pill on the version line (x: its left edge).
+void DashboardView::render_update_pill(Canvas &c, float x, float baseline, const UpdateNotice &u) {
+    using S = UpdateNotice::State;
+    char pct[64];
+    std::string text;
+    bool primary = true, clickable = true;
+    switch (u.state) {
+    case S::Hidden: return;
+    case S::Available: text = "Update to " + u.version; break;
+    case S::Downloading:
+        snprintf(pct, sizeof(pct), "Downloading %.0f%% \u00b7 Cancel", double(u.progress) * 100.0);
+        text = pct;
+        primary = false;
+        break;
+    case S::Installing:
+        text = "Installing " + u.version + "...";
+        primary = clickable = false;
+        break;
+    case S::RestartNeeded:
+        text = update_armed(mono_ns()) ? "Click again to restart SteamVR" : "Restart SteamVR to finish";
+        break;
+    case S::Failed:
+        text = "Update failed \u00b7 Retry";
+        primary = false;
+        break;
+    }
+    const float px = 22, pad = 20, h = 42;
+    const Rect r{x, baseline - medium_.cap_height(px) / 2 - h / 2, medium_.measure(text, px) + 2 * pad, h};
+    const bool hover = clickable && hovered(r);
+    c.fill_rect(r, primary ? (hover ? Color::hex(0x6aa0ff) : kAccent) : (hover ? kCardHover : kCard), h / 2);
+    medium_.draw(c, r.x + pad, r.y + (h + medium_.cap_height(px)) / 2, text, px, kText);
+    if (clickable) {
+        Hit hit{Hit::Update, r};
+        hit.text = u.state == S::RestartNeeded ? "restart" : "";
+        hits_.push_back(hit);
+    }
+}
+
 // A rounded button; primary ones use the accent colour.
 Rect DashboardView::render_pill(Canvas &c, float right, float y, const std::string &text, bool primary) {
     const float px = 28, pad = 30, h = 64;
@@ -727,6 +766,18 @@ DashboardView::ClickResult DashboardView::click(Point p) {
             out.capture = ClickResult::CaptureAction::Remove;
             out.redraw = true;
             break;
+        case Hit::Update: {
+            // The pill's text says what a click does; restarting SteamVR asks twice.
+            const uint64_t now = mono_ns();
+            if (h.text != "restart" || update_armed(now)) {
+                out.update = true;
+                update_armed_until_ns_ = 0;
+            } else {
+                update_armed_until_ns_ = now + 3'000'000'000ull;
+            }
+            out.redraw = true;
+            break;
+        }
         case Hit::Verbose:
             out.verbose = h.value > 0.5;
             out.redraw = true;

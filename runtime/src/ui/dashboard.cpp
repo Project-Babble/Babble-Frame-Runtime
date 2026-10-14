@@ -71,6 +71,7 @@ void Dashboard::set_status(const Status &s) {
         s.camera != status_.camera || s.active_camera != status_.active_camera ||
         s.verbose_minutes_left != status_.verbose_minutes_left || s.last_diagnostics != status_.last_diagnostics ||
         s.log_file != status_.log_file || s.choice_hints != status_.choice_hints || s.capture != status_.capture ||
+        s.update != status_.update ||
         s.cameras.size() != status_.cameras.size() ||
         !std::equal(s.cameras.begin(), s.cameras.end(), status_.cameras.begin(),
                     [](const UsbCamera &a, const UsbCamera &b) { return a.id == b.id && a.label == b.label; }))
@@ -282,6 +283,8 @@ void Dashboard::run() {
                 capture_check_request_ = true;
             if (r.capture != DashboardView::ClickResult::CaptureAction::None)
                 capture_request_ = int(r.capture);
+            if (r.update)
+                update_request_ = true;
             std::lock_guard<std::mutex> lock(mutex_);
             // String settings: shown at once, applied by the main thread.
             if (r.mouth_source && *r.mouth_source != status_.mouth_source) {
@@ -316,7 +319,7 @@ void Dashboard::run() {
             const int hover = view_.hit_at(pointer_);
             redraw |= hover != hover_;
             // The restart button's armed state runs out by itself.
-            const bool armed = view_.restart_armed(mono_ns());
+            const bool armed = view_.restart_armed(mono_ns()) || view_.update_armed(mono_ns());
             redraw |= armed != drawn_restart_armed_;
             drawn_restart_armed_ = armed;
             // The eye panel moves with the tracking: redraw when a value

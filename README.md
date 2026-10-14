@@ -31,7 +31,19 @@ so a problem in the runtime never affects SteamVR.
 Work in progress. The mouth and eye models are prototypes; the runtime keeps models swappable so better ones can be
 dropped in.
 
-## Quick start
+## Install
+
+On the Steam Frame, switch to Desktop Mode, open Konsole and paste:
+
+```
+curl -fsSL https://raw.githubusercontent.com/Project-Babble/Babble-Frame-Runtime/main/tools/get.sh | bash
+```
+
+It downloads the newest release, checks it against the release's SHA-256 checksum, installs it in your home folder
+(no sudo) and restarts SteamVR. Updates after that appear in the SteamVR dashboard's Babble tab, next to the version.
+To uninstall, run `~/.local/share/babble-frame-runtime/uninstall.sh`.
+
+## Building from source
 
 1. Get the source on a PC and copy it to the headset.
 2. Build ExecuTorch once, then build the driver, on the headset.

@@ -66,6 +66,8 @@ public:
     }
     // The Diagnostics page was opened (a moment to check for an app update).
     bool take_capture_check_request() { return capture_check_request_.exchange(false); }
+    // The update pill was clicked (what it does depends on the update's state).
+    bool take_update_request() { return update_request_.exchange(false); }
 
 private:
     void run();
@@ -98,6 +100,7 @@ private:
     std::atomic<bool> diagnostics_request_{false};
     std::atomic<int> capture_request_{0};
     std::atomic<bool> capture_check_request_{false};
+    std::atomic<bool> update_request_{false};
     bool drawn_restart_armed_ = false;
 
     // Dashboard thread only.

@@ -16,6 +16,8 @@
 # which also drops any other Babble driver registration (a Steam install or a
 # dev build), so only this one loads. uninstall.sh is copied next to the
 # install (~/.local/share/babble-frame-runtime/uninstall.sh) to undo it.
+# The install is marked (babble/.install-source) so the runtime offers its own
+# updates from GitHub releases; tools/get.sh downloads a release and runs this.
 set -euo pipefail
 
 dir="${HOME}/.local/share/babble-frame-runtime/babble"
@@ -25,7 +27,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --dir) dir="${2:?--dir needs a value}"; shift 2 ;;
     --no-restart) restart=false; shift ;;
-    -h|--help) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     -*) echo "unknown option: $1 (see --help)" >&2; exit 2 ;;
     *) [[ -z "$tarball" ]] || { echo "only one tarball, please" >&2; exit 2; }; tarball="$1"; shift ;;
   esac
@@ -57,6 +59,9 @@ for f in driver.vrdrivermanifest bin/linuxarm64/driver_babble.so bin/linuxarm64/
          bin/linuxarm64/babble-setup; do
   [[ -e "$new/$f" ]] || { echo "not a Babble driver tarball: babble/$f is missing" >&2; exit 1; }
 done
+# Marks a one-off install: the runtime updates itself from GitHub releases only
+# when this file is in its folder (never a Steam install or a dev build).
+echo "install.sh" > "$new/.install-source"
 
 # Swap the folders back to back: a running driver shim treats a folder that
 # stays missing for a couple of seconds as an uninstall and cleans up.

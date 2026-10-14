@@ -4,6 +4,7 @@
 #include "core/log.h"
 #include "core/paths.h"
 #include "core/sha256.h"
+#include "platform/curl.h"
 #include "platform/process.h"
 
 #include <fstream>
@@ -133,48 +134,17 @@ void AppInstaller::refresh_installed() {
 }
 
 bool AppInstaller::fetch(const std::string &url, std::string *out, std::string *err) {
-    std::string e;
-    const int rc = Process::run({"curl", "-fsSL", "--max-time", "30", "-A", "babble-frame-runtime", url}, out, &e,
-                                35000, 8u << 20);
-    if (rc != 0) {
-        while (!e.empty() && (e.back() == '\n' || e.back() == '\r'))
-            e.pop_back();
-        *err = e.empty() ? "download failed (curl " + std::to_string(rc) + ")" : e;
-        return false;
-    }
-    return true;
+    return curl::fetch(url, out, err);
 }
 
 bool AppInstaller::download(const Asset &a, const fs::path &to, std::string *err) {
-    Process p;
-    Process::Options o;
-    o.stderr_pipe = true;
-    if (!p.spawn({"curl", "-fsSL", "--retry", "2", "-A", "babble-frame-runtime", "-o", to.string(), a.url}, o, err))
-        return false;
-    std::string e;
-    while (p.running()) {
-        if (cancel_ || [&] { std::lock_guard<std::mutex> l(mutex_); return stop_; }()) {
-            p.terminate(1000);
-            *err = "cancelled";
-            return false;
-        }
-        std::error_code ec;
-        const auto have = fs::exists(to, ec) ? fs::file_size(to, ec) : 0;
-        if (a.size > 0) {
+    return curl::download(
+        a.url, a.size, to, err,
+        [this] { return cancel_ || [&] { std::lock_guard<std::mutex> l(mutex_); return stop_; }(); },
+        [this](float p) {
             std::lock_guard<std::mutex> lock(snap_mutex_);
-            snap_.progress = float(std::min<double>(1.0, double(have) / double(a.size)));
-        }
-        e += p.read_stderr();
-        sleep_ns(100000000ull);
-    }
-    e += p.read_stderr();
-    if (p.exit_code().value_or(-1) != 0) {
-        while (!e.empty() && (e.back() == '\n' || e.back() == '\r'))
-            e.pop_back();
-        *err = e.empty() ? "download failed" : e;
-        return false;
-    }
-    return true;
+            snap_.progress = p;
+        });
 }
 
 void AppInstaller::do_check() {

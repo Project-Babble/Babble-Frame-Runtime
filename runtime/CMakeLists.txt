@@ -73,10 +73,13 @@ add_library(babble_core STATIC
     src/sink/record_sink.cpp
     src/core/sha256.cpp
     src/platform/process.cpp
+    src/platform/curl.cpp
     src/capture/capture_protocol.cpp
     src/capture/capture_server.cpp
     src/capture/github_release.cpp
     src/capture/app_installer.cpp
+    src/update/version.cpp
+    src/update/runtime_updater.cpp
     src/capture/uploader.cpp
     src/capture/hevc_encoder.cpp
     src/capture/packager.cpp
@@ -191,6 +194,7 @@ if(BABBLE_TESTS)
         tests/test_capture_protocol.cpp
         tests/test_sha256.cpp
         tests/test_capture_apps.cpp
+        tests/test_runtime_updater.cpp
     )
     if(BABBLE_FRUNK_MOUTH)
         target_sources(babble_tests PRIVATE tests/test_stereo_pairer.cpp)

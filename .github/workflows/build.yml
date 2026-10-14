@@ -133,6 +133,8 @@ jobs:
         run: |
           cd artifacts
           mv "${ARTIFACT}" "babble-frame-runtime.linuxarm64.${VERSION}.tar.xz"
+          # What tools/get.sh and the runtime's updater check the download against.
+          sha256sum "babble-frame-runtime.linuxarm64.${VERSION}.tar.xz" > "babble-frame-runtime.linuxarm64.${VERSION}.tar.xz.sha256"
 
       - name: Set dynamic release name
         id: release-name
@@ -161,6 +163,7 @@ jobs:
         with:
           files: |
             artifacts/babble-frame-runtime.linuxarm64.${{ needs.build-linuxarm64.outputs.version }}.tar.xz
+            artifacts/babble-frame-runtime.linuxarm64.${{ needs.build-linuxarm64.outputs.version }}.tar.xz.sha256
           tag_name: ${{ needs.build-linuxarm64.outputs.version }}
           name: ${{ steps.release-name.outputs.name }}
           prerelease: ${{ github.event.inputs.publish-pre-release }}

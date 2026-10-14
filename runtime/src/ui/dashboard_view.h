@@ -84,6 +84,16 @@ struct CaptureRow {
     bool operator==(const CaptureRow &) const = default;
 };
 
+// A runtime update (one-off installs only), shown as a pill beside the version
+// on the front page: offered, downloading, needing a SteamVR restart, or failed.
+struct UpdateNotice {
+    enum class State { Hidden, Available, Downloading, Installing, RestartNeeded, Failed };
+    State state = State::Hidden;
+    std::string version{}, detail{};   // the update's version; the failure
+    float progress = 0;                // downloading, 0..1
+    bool operator==(const UpdateNotice &) const = default;
+};
+
 struct Status {
     bool steamvr = false;
     Worn worn = Worn::Unknown;
@@ -105,6 +115,7 @@ struct Status {
     // eye rate row shows the rate its share of the camera rate works out to).
     std::map<std::string, std::string> choice_hints{};
     CaptureRow capture{};
+    UpdateNotice update{};
 };
 
 // The overall tracking state in words (the Babble tab's headline); tone
@@ -162,6 +173,8 @@ public:
         // The dataset capture row: its main button (install / update / launch /
         // stop / cancel / retry, by state) or Remove.
         enum class CaptureAction { None, Primary, Remove } capture = CaptureAction::None;
+        // The update pill: install / cancel / retry, or (confirmed) restart SteamVR, by state.
+        bool update = false;
     };
     // Hit-tests against the last render.
     ClickResult click(Point p);
@@ -171,6 +184,8 @@ public:
 
     // The restart button needs a second click within 3 s; true while it waits for it.
     bool restart_armed(uint64_t now_ns) const { return now_ns < restart_armed_until_ns_; }
+    // Restarting SteamVR for an update needs a second click within 3 s too.
+    bool update_armed(uint64_t now_ns) const { return now_ns < update_armed_until_ns_; }
 
     Page page() const { return page_; }
     void set_page(Page p) { page_ = p; }
@@ -179,7 +194,7 @@ private:
     struct Hit {
         enum Kind {
             Cog, Back, Option, Toggle, Visualizer, Restart, MouthSource, OpenCameras, Camera, Refresh,
-            OpenDiagnostics, Verbose, WriteDiagnostics, CapturePrimary, CaptureRemove
+            OpenDiagnostics, Verbose, WriteDiagnostics, CapturePrimary, CaptureRemove, Update
         } kind;
         Rect rect;
         size_t choice = 0;   // Option: choice index; Toggle: feed index
@@ -192,6 +207,7 @@ private:
     void render_diagnostics(Canvas &c, const std::vector<Choice> &choices, const Status &s);
     void render_switch_row(Canvas &c, float y, size_t index, const Choice &ch, float row_h = 124);
     void render_capture_row(Canvas &c, float y, float row_h, const CaptureRow &row);
+    void render_update_pill(Canvas &c, float x, float baseline, const UpdateNotice &u);
     Rect render_pill(Canvas &c, float right, float y, const std::string &text, bool primary);   // -> its rect
     void render_back(Canvas &c, const char *title);
     float render_segments(Canvas &c, float right, float y, const std::vector<std::string> &labels, int selected,
@@ -208,6 +224,7 @@ private:
 
     Page page_ = Page::Home;
     uint64_t restart_armed_until_ns_ = 0;   // the restart button's confirmation window
+    uint64_t update_armed_until_ns_ = 0;    // the update pill's, when it restarts SteamVR
     Font regular_, medium_;
     std::optional<Image> logo_small_, logo_thumb_;
     std::vector<Hit> hits_;
