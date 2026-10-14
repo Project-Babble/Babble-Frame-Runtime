@@ -24,10 +24,15 @@ struct PackagerOptions {
     int qp = 20;
     double still_every_s = 2.0;
     std::string ffmpeg = "ffmpeg", ffprobe = "ffprobe", tar = "tar";
-    // Stills decoded from the H.265 file must match the lossless ones within
-    // this PSNR band (dB); QP 20 measured about 43.6. Outside it, the encoder
-    // didn't do what it was asked (QP ignored), and the package fails.
-    double min_still_psnr = 40.0, max_still_psnr = 47.0;
+    // Checks that the encoder did what it was asked (QP ignored fails the package):
+    // - stills decoded from the H.265 file match the lossless ones at this PSNR
+    //   or better (dB). QP 20 measured 43-44.5 on eye and stereo mouth footage,
+    //   about 50 on the clean mono USB mouth camera.
+    // - the H.265 file uses at most this many bits per pixel. QP 20 measured
+    //   0.38 on eye footage and 0.07 on the mono mouth camera; the encoder's own
+    //   rate control at 20 Mbit/s took about 0.87 on eye footage.
+    double min_still_psnr = 40.0;
+    double max_bits_per_pixel = 0.6;
     std::string encoder_device;              // "" = find it
     std::function<bool()> cancelled;         // true: give up for now (a recording started)
     std::function<void(double)> progress;    // 0..1

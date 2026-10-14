@@ -251,12 +251,17 @@ PackageResult make_package(const fs::path &sdir, const PackagerOptions &o) {
         if (m != n)
             return fail(out_name + " decodes to " + std::to_string(m) + " frames, not " + std::to_string(n));
         const double mean = kept.empty() ? 0 : sum / double(kept.size());
-        if (kept.empty() || worst < o.min_still_psnr || mean > o.max_still_psnr)
-            return fail(out_name + ": stills match at " + num(std::round(worst * 10) / 10) + "-" +
-                        num(std::round(mean * 10) / 10) + " dB, outside " + num(o.min_still_psnr) + "-" +
-                        num(o.max_still_psnr) + " (did the encoder ignore QP " + std::to_string(o.qp) + "?)");
-        LOG.info("package: %s: %s frames, %s stills, still PSNR min %.1f mean %.1f dB", j.name.c_str(),
-                 std::to_string(n).c_str(), std::to_string(stills_total).c_str(), worst, mean);
+        if (kept.empty() || worst < o.min_still_psnr)
+            return fail(out_name + ": stills match at " + num(std::round(worst * 10) / 10) + " dB, below " +
+                        num(o.min_still_psnr) + " (did the encoder ignore QP " + std::to_string(o.qp) + "?)");
+        std::error_code size_ec;
+        const uint64_t out_bytes = fs::file_size(out, size_ec);
+        const double bpp = n ? double(out_bytes) * 8 / (double(frame_bytes) * double(n)) : 0;
+        if (size_ec || bpp > o.max_bits_per_pixel)
+            return fail(out_name + ": " + num(std::round(bpp * 1000) / 1000) + " bits per pixel, above " +
+                        num(o.max_bits_per_pixel) + " (did the encoder ignore QP " + std::to_string(o.qp) + "?)");
+        LOG.info("package: %s: %s frames, %s stills, still PSNR min %.1f mean %.1f dB, %.3f bits per pixel",
+                 j.name.c_str(), std::to_string(n).c_str(), std::to_string(stills_total).c_str(), worst, mean, bpp);
         sources[j.name] = {{"file", out_name},
                            {"stills", ref_name},
                            {"stamps", j.stamps},
@@ -265,7 +270,8 @@ PackageResult make_package(const fs::path &sdir, const PackagerOptions &o) {
                            {"still_count", stills_total},
                            {"stills_checked", kept.size()},
                            {"still_psnr_min_db", std::round(worst * 100) / 100},
-                           {"still_psnr_mean_db", std::round(mean * 100) / 100}};
+                           {"still_psnr_mean_db", std::round(mean * 100) / 100},
+                           {"bits_per_pixel", std::round(bpp * 1000) / 1000}};
     }
 
     // The rest of the session, as recorded.

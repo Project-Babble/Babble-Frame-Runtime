@@ -117,6 +117,8 @@ TEST_CASE("packager: a session becomes a verified, hashed H.265 package (hardwar
     CHECK(src["still_every"] == 144);
     CHECK(src["still_count"] == 3);
     CHECK(src["still_psnr_min_db"].get<double>() > 40);
+    CHECK(src["bits_per_pixel"].get<double>() > 0);
+    CHECK(src["bits_per_pixel"].get<double>() <= 0.6);
     CHECK(r.package["codec"]["qp"] == 20);
     CHECK(r.package["codec"]["driver"].get<std::string>().find("iris") != std::string::npos);
 
