@@ -149,7 +149,13 @@ TEST_CASE("the vrc_native module sends the blob to its target") {
     CHECK(memcmp(buf, "/tracking/face/v1\0\0\0,b\0\0", 24) == 0);
     CHECK(buf[27] == 102);             // blob size
     CHECK(buf[28 + 14 + 22] == 255);   // JawOpen
-    const auto st = static_cast<VrcNativeSink *>(sink.get())->status();
+    // The sink counts a send after sendto() returns, so the packet can arrive
+    // before the count moves.
+    auto st = static_cast<VrcNativeSink *>(sink.get())->status();
+    for (int i = 0; i < 100 && st.sent < 1; i++) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        st = static_cast<VrcNativeSink *>(sink.get())->status();
+    }
     CHECK(st.kind == "host");
     CHECK(st.sent >= 1);
 
