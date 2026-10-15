@@ -25,6 +25,10 @@ TEST_CASE("built-in defaults parse and carry the key settings") {
     CHECK((*d)["sinks"]["record"]["encoder"][0] == "ffmpeg");
     CHECK((*d)["capture"]["app"]["repo"] == "Project-Babble/Babble-Guided-Dataset-Capture");
     CHECK((*d)["capture"]["upload"]["bucket"] == "babbledata");
+    // Shipped keys (Baballonia's write-only ones): without them the app never offers an upload.
+    for (const char *k : {"endpoint", "access_key", "secret_key", "public_key"})
+        CHECK_MESSAGE(!(*d)["capture"]["upload"].value(k, std::string()).empty(), k);
+    CHECK((*d)["capture"]["upload"]["public_key"].get<std::string>().rfind("-----BEGIN PUBLIC KEY-----", 0) == 0);
     CHECK((*d)["sources"]["eye"]["dsp_request"] == 0);   // no dsp_service subscriptions (see DspClient::connect)
     CHECK_FALSE((*d)["sources"]["eye"].contains("process_fps"));   // the eye rate is a share of SteamVR's camera rate
     CHECK_FALSE((*d)["sources"]["eye"].contains("request_fps"));

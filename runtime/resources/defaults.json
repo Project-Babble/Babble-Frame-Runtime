@@ -309,9 +309,9 @@
       "endpoint": "http://207.211.165.193:3900",
       "bucket": "babbledata",
       "region": "garage",
-      "access_key": "",
-      "secret_key": "",
-      "public_key": "",
+      "access_key": "GK1b5679b9dba9ff5b96e15cca",
+      "secret_key": "4791149192ade8866bda2f09236e5f4cb0a5c76f10b7ec71cfd15e9995d360c0",
+      "public_key": "-----BEGIN PUBLIC KEY-----\nMIICIjANBgkqhkiG9w0BAQEFAAOCAg8AMIICCgKCAgEAvaow3ZwmKDl6x5Xi7o8o\nQ+bQ7OfgAS5GyJbgx9Tj2px04jZObbCoLnyGkbVRptCMIqrP/5X+Lpc3npcSKxa3\n6EOaINvzElA2wFbHc+Ok67fLqy4VqR/0si1Sivx3miiZfzFz66WlREeg5HZS0aA8\nWsyaeZtdiIcLzKriOuj2Q3a2p6hxbsij45OAvymp2qLpJB7/No0CHcKiwR2mEL8j\n0s4JCHy+AuHZqKMg0fTJ6dGNjljkg3FR4DBv4rJrrLrMEGniPkoc0tWttr5vCkjs\nnAoQ6dMoYqxjumEt9C4lXB7fIipLiha4N5z7gm6AIFycdlV0cQZsBi7LyVqCqQhP\nQTkFEMksYQswS5+g7jGeWAJXYmiSdgJIf/9iiec5LyLv4RUnDTxDa9Z1i7jv1fAC\n0Fiibo4Fk2maHs5N3Oho2wytYLzcd8KTwEFORhkylktZ5vXXwMtyXns4EDEenbSK\nyMd7YnLo/m03bkPFlfaB6Tb76B7/in1qkve/JOJM0n9Q9QcJ/befkfopvQvcSg6l\nyBUvCjd82gpyrz9/t33dKxUdceBXQ0w1HLlHwI3VL4tGYA4xt5dsxD9pegBPeblI\ncGmQGUQ2S2mcUlUC5lN2EMkuJybKiMeALJNEk2IqBi/rZIWrCzHTcuuvjSOjyck0\n8OvTbH1s4f6TwR1LHqZG65UCAwEAAQ==\n-----END PUBLIC KEY-----\n",
       "qp": 20
     }
   },
