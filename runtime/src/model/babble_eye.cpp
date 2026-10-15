@@ -76,7 +76,9 @@ bool BabbleEye::init() {
         deps_.stats.add("pipe." + name_ + ".native_fallback", &native_fallback_);
     }
     babble_swap_ = cfg_.value("babble_swap", false);
-    lid_alpha_ = cfg_.value("lid_alpha", 0.6);
+    // The eyes' own smoothing, tuned apart from the mouth's: openness, and the pupil.
+    lid_filter_ = one_euro_params(cfg_.value("one_euro", nlohmann::json::object()), eye::kLidOneEuro);
+    pupil_filter_ = one_euro_params(cfg_.value("pupil_one_euro", nlohmann::json::object()), eye::kPupilOneEuro);
     pupil_gain_ = cfg_.value("pupil_gain", 2.0);
     {
         const std::string mode = cfg_.value("lid_calibration", "baseline");
@@ -126,15 +128,18 @@ void BabbleEye::start_session() {
     openness_.clear();
     trackers_.clear();
     for (int e = 0; e < 2; e++) {
-        openness_.emplace_back(openness_params());
+        openness_.emplace_back(openness_params(), lid_filter_);
         calib_.emplace_back(tuned_.count(cfg_.value("calib_window_s", 20.0) * tuned_.ref_hz),
                             tuned_.count(cfg_.value("calib_warmup_s", 3.0) * tuned_.ref_hz), 0.5, 50, tuned_.count(30));
         trackers_.emplace_back(cfg_.value("pupil_gate", 0.4), cfg_.value("pupil_gate_hys", 0.1),
                                int(tuned_.count(cfg_.value("pupil_hold_s", 0.1) * tuned_.ref_hz)),
-                               cfg_.value("pupil_alpha", 0.2), cfg_.value("pupil_rate", 0.6), 1, 1);
+                               pupil_filter_, cfg_.value("pupil_rate", 0.6), 1, 1);
+        lid_euro_[e].reset();
+        if (lid_filter_)
+            lid_euro_[e].emplace(1, *lid_filter_);
     }
     set_pupil_windows();
-    smoothed_ = {};
+    last_capture_ns_ = 0;
     update_rate_.restart();   // the gap before this session isn't an update interval
 }
 
@@ -317,6 +322,11 @@ void BabbleEye::process(const StereoFrame &sf) {
     // cameras deliver less). Within 3% of the reference counts as the
     // reference; otherwise retune after a 10% move, at most once a second.
     update_rate_.tick(sf.capture_ns);
+    // Seconds since the previous update, for the One Euro filters (0: the first).
+    const double dt = last_capture_ns_ && sf.capture_ns > last_capture_ns_
+                          ? double(sf.capture_ns - last_capture_ns_) / 1e9
+                          : 0.0;
+    last_capture_ns_ = sf.capture_ns;
     {
         const double measured = update_rate_.hz();
         const double hz = std::fabs(measured - tuned_.ref_hz) < 0.03 * tuned_.ref_hz ? tuned_.ref_hz : measured;
@@ -377,20 +387,21 @@ void BabbleEye::process(const StereoFrame &sf) {
     for (int e = 0; e < 2; e++) {
         const double raw = lid[e];
         if (use_calib_ && baseline_calib_) {
-            // Neutral baseline + wide ceiling (OpennessCalibrator); smooths internally.
-            const auto r = openness_[e].update(raw, tuned_.alpha(lid_alpha_));
+            // Neutral baseline + wide ceiling (OpennessCalibrator); filters internally.
+            const auto r = openness_[e].update(raw, dt);
             o[e] = r.openness;
             widen[e] = r.widen;
             continue;
         }
         // The reference: rolling-median neutral; Widen is whatever exceeds it.
         double v = use_calib_ ? calib_[e].update(raw) : raw;
-        smoothed_[e] = smoothed_[e] ? *smoothed_[e] + tuned_.alpha(lid_alpha_) * (v - *smoothed_[e]) : v;
-        o[e] = std::max(*smoothed_[e], 0.0);
+        if (lid_euro_[e])
+            v = lid_euro_[e]->apply(v, dt);
+        o[e] = std::max(v, 0.0);
         widen[e] = std::clamp(o[e] - 1.0, 0.0, 1.0);
     }
     for (int e = 0; e < 2; e++) {
-        auto r = trackers_[e].update(o[e], py ? std::optional<double>((*py)[e]) : std::nullopt, tuned_.k());
+        auto r = trackers_[e].update(o[e], py ? std::optional<double>((*py)[e]) : std::nullopt, tuned_.k(), dt);
         dil[e] = eye::dilation(r, pupil_gain_);
     }
 

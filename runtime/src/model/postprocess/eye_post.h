@@ -1,9 +1,12 @@
 #pragma once
 
-// Post-processing for the lid and pupil eye models, ported line for line from
-// eye_osc_pc.py (the PC reference implementation). Arithmetic is double,
-// matching the Python floats there. All frame-count constants are in updates;
-// the reference runs at 90 updates/s, so the runtime runs the eye stream at 90.
+// Post-processing for the lid and pupil eye models, ported from eye_osc_pc.py
+// (the PC reference implementation), with One Euro filters in place of its
+// EMAs. Arithmetic is double, matching the Python floats there. All
+// frame-count constants are in updates; the reference runs at 90 updates/s,
+// so the runtime runs the eye stream at 90.
+
+#include "model/postprocess/one_euro.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -12,6 +15,16 @@
 #include <vector>
 
 namespace babble::eye {
+
+// The eyes' smoothing defaults, tuned apart from the mouth's on a recorded
+// session (eye routine, 72 Hz) against the EMAs they replace:
+//  - openness (Lid, and Widen from it; a ratio, 1 = neutral open): ~25% less
+//    jitter above 4 Hz at rest, closes and opens within a frame of the EMA,
+//    blinks keep their full depth;
+//  - the pupil diameter (px, noisy: ~7 px spread): ~45% less jitter above
+//    4 Hz; a size change shows in ~125 ms (pupils take longer to change).
+inline constexpr OneEuroParams kLidOneEuro{1.0, 5.0, 3.0};
+inline constexpr OneEuroParams kPupilOneEuro{0.5, 0.01, 1.0};
 
 // Median of a sample set, as numpy.percentile(x, 50) / numpy.median (linear interpolation).
 double median(std::vector<double> v);
@@ -92,15 +105,16 @@ public:
         double saturation = 1.0;               // the raw output's practical maximum
     };
     struct Out {
-        double openness = 0;   // smoothed ratio to the neutral (>= 0; Lid = min(openness, 1))
+        double openness = 0;   // filtered ratio to the neutral (>= 0; Lid = min(openness, 1))
         double widen = 0;      // 0..1
         bool ready = false;
     };
 
     OpennessCalibrator() : OpennessCalibrator(Params{}) {}
-    explicit OpennessCalibrator(Params p);
-    // x: this update's raw openness; alpha: the smoothing factor for one update.
-    Out update(double x, double alpha);
+    // filter: the One Euro filter on the openness (nullopt: none).
+    explicit OpennessCalibrator(Params p, std::optional<OneEuroParams> filter = std::nullopt);
+    // x: this update's raw openness; dt_s: seconds since the previous update (<= 0: the first).
+    Out update(double x, double dt_s);
     void set_timing(size_t skip, size_t warmup, size_t every, size_t peak_window);
     bool ready() const { return ready_; }
     double baseline() const { return b_; }
@@ -113,7 +127,7 @@ private:
     bool ready_ = false;
     double b_ = 1.0, acc_ = 0, c_ = 1.0;
     std::deque<double> seed_, chunk_, recent_;
-    std::optional<double> sm_;
+    std::optional<OneEuro> filter_;
 };
 
 // Hysteresis gate, blink hold, low-pass + rate limit, baseline ratio (class PupilTracker).
@@ -123,14 +137,18 @@ public:
         std::optional<double> px, ratio;
         bool live = false;
     };
-    PupilTracker(double gate, double hys, int hold, double alpha, double rate, size_t base_window, size_t base_min);
+    // filter: the One Euro filter on the pupil diameter (nullopt: none);
+    // rate: the most the shown diameter moves per reference update (px).
+    PupilTracker(double gate, double hys, int hold, std::optional<OneEuroParams> filter, double rate,
+                 size_t base_window, size_t base_min);
 
     static constexpr double kPupilScale = 3000.0;   // model output = area / 3000 (400 px crop)
     static double px_of(double y);
 
     // openness: calibrated lid value; y: a NEW pupil output, or nullopt if none arrived since the last update.
     // k: reference (90 Hz) updates this update stands for (RateScale::k); 1 = the reference rate.
-    Result update(double openness, std::optional<double> y, double k = 1.0);
+    // dt_s: seconds since the previous update, for the filter (<= 0: the first).
+    Result update(double openness, std::optional<double> y, double k = 1.0, double dt_s = 0.0);
     void set_hold(int hold) { hold_ = hold; }   // blink hold in updates (new update rate)
     // Baseline window and samples needed for the first baseline, in pupil samples. Keeps the samples.
     void set_base_window(size_t window, size_t min);
@@ -138,7 +156,8 @@ public:
     std::optional<double> base() const { return base_; }
 
 private:
-    double gate_, hys_, alpha_, rate_;
+    double gate_, hys_, rate_;
+    std::optional<OneEuro> filter_;
     int hold_;
     bool open_ = true;
     int since_ = 0, held_n_ = 0;

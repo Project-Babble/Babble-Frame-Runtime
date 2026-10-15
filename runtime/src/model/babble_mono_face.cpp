@@ -53,11 +53,8 @@ bool BabbleMonoFace::init() {
         return false;
     }
 
-    const auto euro = cfg_.value("one_euro", nlohmann::json::object());
-    if (!euro.is_boolean() || euro.get<bool>())
-        filter_ = std::make_unique<face::OneEuro>(face::kShapes.size(), euro.is_object() ? euro.value("min_cutoff", 0.5f) : 0.5f,
-                                                  euro.is_object() ? euro.value("beta", 3.0f) : 3.0f,
-                                                  euro.is_object() ? euro.value("d_cutoff", 1.0f) : 1.0f);
+    if (const auto euro = one_euro_params(cfg_.value("one_euro", nlohmann::json::object()), face::kOneEuro))
+        filter_ = std::make_unique<OneEuro>(face::kShapes.size(), *euro);
 
     const auto cal = cfg_.value("calibration", nlohmann::json::object());
     face::CalibMode mode = face::CalibMode::Auto;
@@ -174,9 +171,9 @@ void BabbleMonoFace::process(const StereoFrame &sf) {
 
     values_.assign(out_.begin(), out_.end());
     if (filter_) {
-        const float dt = last_capture_ns_ && sf.capture_ns > last_capture_ns_
-                             ? float(double(sf.capture_ns - last_capture_ns_) / 1e9)
-                             : 0.0f;
+        const double dt = last_capture_ns_ && sf.capture_ns > last_capture_ns_
+                              ? double(sf.capture_ns - last_capture_ns_) / 1e9
+                              : 0.0;
         filter_->apply(values_, dt);
     }
     last_capture_ns_ = sf.capture_ns;

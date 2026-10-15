@@ -70,7 +70,8 @@ bool FusionNetMouth::init() {
     if (!err.empty())
         LOG.warn("pipeline %s: ignoring calibration %s: %s", name_.c_str(), cal_path.c_str(), err.c_str());
 
-    post_ = std::make_unique<mouth::Post>(cfg_.value("ema", 0.5f), mode, std::move(cal));
+    post_ = std::make_unique<mouth::Post>(one_euro_params(cfg_.value("one_euro", nlohmann::json::object()), mouth::kOneEuro),
+                                          mode, std::move(cal));
 
     for (size_t i = 0; i < mouth::kNumShapes; i++)
         ids_[i] = deps_.state.add_signal(mouth::camel(mouth::kChannels[i]));
@@ -171,8 +172,10 @@ std::vector<std::pair<SignalId, Signal>> FusionNetMouth::neutral(uint64_t now) c
 }
 
 void FusionNetMouth::process(const StereoFrame &sf) {
-    if (reset_pending_.exchange(false))
+    if (reset_pending_.exchange(false)) {
         post_->reset();
+        last_capture_ns_ = 0;
+    }
     if (probe_left_ > 0)
         probe(sf);
     uint64_t t0 = mono_ns();
@@ -187,7 +190,11 @@ void FusionNetMouth::process(const StereoFrame &sf) {
         return;
     uint64_t t2 = mono_ns();
 
-    mouth::Vec norm = post_->process(out_);
+    const double dt = last_capture_ns_ && sf.capture_ns > last_capture_ns_
+                          ? double(sf.capture_ns - last_capture_ns_) / 1e9
+                          : 0.0;
+    last_capture_ns_ = sf.capture_ns;
+    mouth::Vec norm = post_->process(out_, dt);
 
     std::vector<std::pair<SignalId, Signal>> updates;
     updates.reserve(mouth::kNumShapes);

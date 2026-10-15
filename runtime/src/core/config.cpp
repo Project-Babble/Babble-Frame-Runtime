@@ -40,8 +40,8 @@ const char *kind(const json &j) {
 }
 
 // Options that legitimately take more than one type: gaze "ipd" ("auto" or
-// metres), the face pipeline's "one_euro" (settings or false).
-bool flexible(const std::string &key) { return key == "ipd" || key == "one_euro"; }
+// metres), the pipelines' One Euro filters (settings or false).
+bool flexible(const std::string &key) { return key == "ipd" || key == "one_euro" || key == "pupil_one_euro"; }
 
 void fix_types_at(json &cfg, const json &defaults, const std::string &path, std::vector<std::string> &fixed) {
     for (auto it = defaults.begin(); it != defaults.end(); ++it) {

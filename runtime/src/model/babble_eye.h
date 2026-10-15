@@ -37,9 +37,13 @@ namespace babble {
 // pupil_thread, update_hz (90: the rate the per-update constants below are
 // tuned at, as in the reference; the pipeline measures its real update rate
 // and converts them, see eye::RateScale),
-// pupil_hz (3; split layout only), pupil_gain (2), lid_alpha (0.6), calib_window_s (20),
+// pupil_hz (3; split layout only), pupil_gain (2), calib_window_s (20),
 // calib_warmup_s (3), calib (true), pupil_gate (0.4), pupil_gate_hys (0.1),
-// pupil_hold_s (0.1), pupil_alpha (0.2), pupil_rate (0.6), pupil_base_s (60),
+// pupil_hold_s (0.1), pupil_rate (0.6 px per reference update), pupil_base_s (60),
+// one_euro (openness, so Lid and Widen) and pupil_one_euro (the pupil
+// diameter, so Dilation): the eyes' One Euro filters, tuned apart from the
+// mouth's ({min_cutoff, beta, d_cutoff} or false; eye::kLidOneEuro and
+// eye::kPupilOneEuro by default),
 // babble_swap (false), lid_calibration:
 //   "baseline" (default): eye::OpennessCalibrator. A neutral baseline that
 //             only nearby values move (blinks and held wide eyes don't), Lid =
@@ -93,7 +97,9 @@ private:
     bool baseline_calib_ = true;
     eye::OpennessCalibrator::Params openness_params() const;
     std::vector<eye::PupilTracker> trackers_;
-    std::array<std::optional<double>, 2> smoothed_{};
+    std::optional<OneEuroParams> lid_filter_, pupil_filter_;   // one_euro, pupil_one_euro
+    std::array<std::optional<OneEuro>, 2> lid_euro_{};         // lid_calibration "median": its filter
+    uint64_t last_capture_ns_ = 0;                             // the previous update's frame, for dt
     void start_session();   // pipeline thread: fresh calibration, filters, pupil trackers
     std::vector<std::pair<SignalId, Signal>> neutral(uint64_t now_ns) const override;
     void reset_session() override { reset_pending_ = true; }
@@ -109,7 +115,7 @@ private:
     void update_eye_server_want();
     Counter native_fallback_;
     bool use_calib_ = true, babble_swap_ = false;
-    double lid_alpha_ = 0.6, pupil_gain_ = 2.0;
+    double pupil_gain_ = 2.0;
     uint64_t pupil_every_ns_ = 0, last_pupil_submit_ns_ = 0;
     bool pupil_submitted_ = false;
 

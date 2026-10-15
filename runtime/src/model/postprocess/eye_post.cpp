@@ -61,7 +61,10 @@ void LidCalibrator::set_timing(size_t window, size_t warmup, size_t every) {
         buf_.pop_front();
 }
 
-OpennessCalibrator::OpennessCalibrator(Params p) : p_(p), c_(1.0 + p.widen_seed) {}
+OpennessCalibrator::OpennessCalibrator(Params p, std::optional<OneEuroParams> filter) : p_(p), c_(1.0 + p.widen_seed) {
+    if (filter)
+        filter_.emplace(1, *filter);
+}
 
 // At the model's saturation the ratio can't exceed saturation / baseline: a
 // ceiling above that would make Widen unreachable. Never below a small
@@ -81,7 +84,7 @@ void OpennessCalibrator::set_timing(size_t skip, size_t warmup, size_t every, si
         recent_.pop_front();
 }
 
-OpennessCalibrator::Out OpennessCalibrator::update(double x, double alpha) {
+OpennessCalibrator::Out OpennessCalibrator::update(double x, double dt_s) {
     n_++;
     double value;
     if (!ready_) {
@@ -97,7 +100,8 @@ OpennessCalibrator::Out OpennessCalibrator::update(double x, double alpha) {
             c_ = std::min(1.0 + p_.widen_seed, cap());
             ready_ = true;
             seed_.clear();
-            sm_.reset();   // the ratio starts clean rather than blending with the pass-through
+            if (filter_)
+                filter_->reset();   // the ratio starts clean rather than blending with the pass-through
         }
         value = std::min(x, 1.0);   // uncalibrated until the seed exists, like the reference
     } else {
@@ -116,9 +120,10 @@ OpennessCalibrator::Out OpennessCalibrator::update(double x, double alpha) {
         }
         value = x / b_;
     }
-    sm_ = sm_ ? *sm_ + alpha * (value - *sm_) : value;
+    if (filter_)
+        value = filter_->apply(value, dt_s);
     Out out;
-    out.openness = std::max(*sm_, 0.0);
+    out.openness = std::max(value, 0.0);
     out.ready = ready_;
     if (ready_) {
         // Ceiling: the largest sustained ratio (short median), seeded and capped.
@@ -133,9 +138,12 @@ OpennessCalibrator::Out OpennessCalibrator::update(double x, double alpha) {
     return out;
 }
 
-PupilTracker::PupilTracker(double gate, double hys, int hold, double alpha, double rate, size_t base_window,
-                           size_t base_min)
-    : gate_(gate), hys_(hys), alpha_(alpha), rate_(rate), hold_(hold), base_window_(base_window), base_min_(base_min) {}
+PupilTracker::PupilTracker(double gate, double hys, int hold, std::optional<OneEuroParams> filter, double rate,
+                           size_t base_window, size_t base_min)
+    : gate_(gate), hys_(hys), rate_(rate), hold_(hold), base_window_(base_window), base_min_(base_min) {
+    if (filter)
+        filter_.emplace(1, *filter);
+}
 
 void PupilTracker::set_base_window(size_t window, size_t min) {
     base_window_ = std::max<size_t>(1, window);
@@ -146,7 +154,7 @@ void PupilTracker::set_base_window(size_t window, size_t min) {
 
 double PupilTracker::px_of(double y) { return 2.0 * std::sqrt(std::max(y, 0.0) * kPupilScale / M_PI); }
 
-PupilTracker::Result PupilTracker::update(double openness, std::optional<double> y, double k) {
+PupilTracker::Result PupilTracker::update(double openness, std::optional<double> y, double k, double dt_s) {
     if (open_ && openness < gate_)
         open_ = false;
     else if (!open_ && openness >= gate_ + hys_)
@@ -174,11 +182,12 @@ PupilTracker::Result PupilTracker::update(double openness, std::optional<double>
     }
     if (!target_)
         return {};
+    // The filtered target, followed at no more than `rate` per reference update.
+    const double want = filter_ ? filter_->apply(*target_, dt_s) : *target_;
     if (!disp_)
-        disp_ = target_;
-    const double alpha = alpha_for(alpha_, k), rate = k == 1.0 ? rate_ : rate_ * k;
-    double step = alpha * (*target_ - *disp_);
-    *disp_ += std::max(-rate, std::min(rate, step));
+        disp_ = want;
+    const double rate = k == 1.0 ? rate_ : rate_ * k;
+    *disp_ += std::max(-rate, std::min(rate, want - *disp_));
     Result r;
     r.px = disp_;
     // Python "if self.base" is falsy for a 0.0 baseline as well as None.

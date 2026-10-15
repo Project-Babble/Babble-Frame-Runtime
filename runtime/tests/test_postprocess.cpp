@@ -30,50 +30,53 @@ mouth::Calibration shipped_calibration() {
 }
 #endif
 
-// Compares an optional reference value (null = None) with ours.
-void check_opt(const json &want, std::optional<double> got, double tol, const char *what, size_t i, int e) {
-    if (want.is_null()) {
-        CHECK_MESSAGE(!got, what << " frame " << i << " eye " << e << ": expected None");
-    } else {
-        REQUIRE_MESSAGE(got, what << " frame " << i << " eye " << e << ": expected " << want.get<double>());
-        CHECK_MESSAGE(std::fabs(*got - want.get<double>()) <= tol,
-                      what << " frame " << i << " eye " << e << ": " << *got << " vs " << want.get<double>());
-    }
-}
-
 } // namespace
 
 #if BABBLE_FRUNK_MOUTH
-TEST_CASE("mouth post-processing matches mouth_osc_pc.py --no-presence (manual and auto)") {
+TEST_CASE("mouth post-processing: unfiltered it is the reference calibration") {
     const auto &preds = golden()["mouth_preds"];
-    for (const char *mode_name : {"manual", "auto"}) {
-        CAPTURE(mode_name);
-        mouth::CalibMode mode;
-        REQUIRE(mouth::parse_mode(mode_name, &mode));
-        mouth::Post post(0.5f, mode, shipped_calibration());
-        const auto &expected = golden()[std::string("mouth_") + mode_name]["expected"];
-        REQUIRE(expected.size() == preds.size());
-        float worst = 0;
-        size_t worst_frame = 0;
-        for (size_t f = 0; f < preds.size(); f++) {
-            mouth::Vec p;
-            for (size_t c = 0; c < mouth::kNumChannels; c++)
-                p[c] = preds[f][c].get<float>();
-            mouth::Vec got = post.process(p);
-            for (size_t c = 0; c < mouth::kNumShapes; c++) {
-                float d = std::fabs(got[c] - expected[f][c].get<float>());
-                if (d > worst) {
-                    worst = d;
-                    worst_frame = f;
-                }
-            }
+    const mouth::Calibration cal = shipped_calibration();
+    mouth::Post manual(std::nullopt, mouth::CalibMode::Manual, shipped_calibration());
+    mouth::Post automatic(std::nullopt, mouth::CalibMode::Auto, shipped_calibration());
+    mouth::AutoCalibrator ref;
+    for (size_t f = 0; f < preds.size(); f++) {
+        mouth::Vec p;
+        for (size_t c = 0; c < mouth::kNumChannels; c++)
+            p[c] = preds[f][c].get<float>();
+        const mouth::Vec m = manual.process(p, 1.0 / 60), want_m = cal.normalize(p);
+        const mouth::Vec a = automatic.process(p, 1.0 / 60), want_a = ref.process(p, true);
+        for (size_t c = 0; c < mouth::kNumShapes; c++) {
+            CHECK(m[c] == want_m[c]);
+            CHECK(a[c] == want_a[c]);
         }
-        CHECK_MESSAGE(worst <= 1e-6f, "max |diff| " << worst << " at frame " << worst_frame);
     }
+}
+
+TEST_CASE("mouth post-processing: the One Euro filter steadies noise and follows a jaw drop") {
+    mouth::Post post(mouth::kOneEuro, mouth::CalibMode::Raw, mouth::Calibration{});
+    mouth::Vec p{};
+    double sum = 0, sq = 0;
+    for (int i = 0; i < 240; i++) {   // 4 s of +-0.05 jitter around 0.3 at 60 Hz
+        p[4] = 0.3f + ((i % 2) ? 0.05f : -0.05f);
+        const float y = post.process(p, i ? 1.0 / 60 : 0.0)[4];
+        if (i >= 120) {
+            sum += y;
+            sq += double(y) * y;
+        }
+    }
+    const double mean = sum / 120, sd = std::sqrt(sq / 120 - mean * mean);
+    CHECK(mean == doctest::Approx(0.3).epsilon(0.02));
+    CHECK(sd < 0.01);   // the input's is 0.05
+    float y = 0;
+    for (int i = 0; i < 12; i++) {   // the jaw drops to 0.9: within 200 ms
+        p[4] = 0.9f;
+        y = post.process(p, 1.0 / 60)[4];
+    }
+    CHECK(y > 0.85f);
 }
 #endif
 
-TEST_CASE("eye post-processing matches eye_osc_pc.py") {
+TEST_CASE("eye lid calibration and pupil gating match eye_osc_pc.py") {
     const auto &g = golden()["eye"];
     const double hz = g["hz"].get<double>();
     const int every = g["pupil_every"].get<int>();
@@ -81,7 +84,7 @@ TEST_CASE("eye post-processing matches eye_osc_pc.py") {
     std::vector<eye::PupilTracker> trk;
     for (int e = 0; e < 2; e++) {
         calib.emplace_back(size_t(20 * hz), size_t(3 * hz));
-        trk.emplace_back(0.4, 0.1, int(0.1 * hz), 0.2, 0.6, size_t(std::max(10, 60 * 5)), size_t(5));
+        trk.emplace_back(0.4, 0.1, int(0.1 * hz), std::nullopt, 0.6, size_t(std::max(10, 60 * 5)), size_t(5));
     }
     std::optional<double> sm[2];
     const auto &lids = g["lids"], &pupil = g["pupil"], &expected = g["expected"];
@@ -98,13 +101,41 @@ TEST_CASE("eye post-processing matches eye_osc_pc.py") {
             std::optional<double> y;
             if (int(i) % every == 0)
                 y = pupil[i][e].get<double>();
+            // The shown diameter is filtered differently now (One Euro, not the
+            // reference's EMA); whether the pupil is live is unchanged.
             auto r = trk[e].update(o[e], y);
-            check_opt(expected[i]["px"][e], r.px, 1e-9, "px", i, e);
-            check_opt(expected[i]["ratio"][e], r.ratio, 1e-9, "ratio", i, e);
             CHECK(r.live == expected[i]["live"][e].get<bool>());
-            check_opt(expected[i]["dil"][e], eye::dilation(r, 2.0), 1e-9, "dilation", i, e);
         }
     }
+}
+
+TEST_CASE("one_euro_params: settings, true for the defaults, false for none") {
+    const OneEuroParams d{1.0, 2.0, 3.0};
+    CHECK(one_euro_params(json{{"beta", 7.5}}, d) == OneEuroParams{1.0, 7.5, 3.0});
+    CHECK(one_euro_params(json(true), d) == d);
+    CHECK_FALSE(one_euro_params(json(false), d));
+    CHECK(one_euro_params(json::object(), d) == d);
+}
+
+TEST_CASE("the eye openness filter steadies the rest and still shows a blink") {
+    // The lid default against jitter at neutral (1.0 +- 0.03) and a 150 ms blink at 90 Hz.
+    OneEuro f(1, eye::kLidOneEuro);
+    const double dt = 1.0 / 90;
+    double y = f.apply(1.0, 0.0), sq = 0;
+    for (int i = 0; i < 180; i++) {
+        y = f.apply(1.0 + ((i % 2) ? 0.03 : -0.03), dt);
+        if (i >= 90)
+            sq += (y - 1.0) * (y - 1.0);
+    }
+    CHECK(std::sqrt(sq / 90) < 0.015);   // the input's is 0.03
+    double low = y;
+    for (int i = 0; i < 14; i++)          // closed (0.1) for ~150 ms
+        low = std::min(low, f.apply(0.1, dt));
+    CHECK(low < 0.2);                     // the blink reaches nearly closed
+    int frames = 0;
+    for (y = low; y < 0.9 && frames < 90; frames++)
+        y = f.apply(1.0, dt);
+    CHECK(frames <= 6);                   // and opens again within ~65 ms
 }
 
 TEST_CASE("percentile matches numpy linear interpolation") {
@@ -145,14 +176,14 @@ TEST_CASE("at 30 Hz the eye filters behave like 90 Hz over the same time") {
     // (per second) at both rates, rate limit included.
     auto follow = [](double hz, double seconds) {
         eye::RateScale r{90, hz};
-        eye::PupilTracker t(0.4, 0.1, int(r.count(9)), 0.2, 0.6, 10, 5);
-        const double small = 0.5, large = 2.0;   // model outputs (area / 3000)
+        eye::PupilTracker t(0.4, 0.1, int(r.count(9)), eye::kPupilOneEuro, 0.6, 10, 5);
+        const double small = 0.5, large = 2.0, dt = 1.0 / hz;   // model outputs (area / 3000)
         auto res = t.update(1.0, small, r.k());
         for (int i = 0; i < int(1.0 * hz); i++)   // settle at the small size, eye open
-            res = t.update(1.0, small, r.k());
-        res = t.update(1.0, large, r.k());
+            res = t.update(1.0, small, r.k(), dt);
+        res = t.update(1.0, large, r.k(), dt);
         for (int i = 1; i < int(seconds * hz); i++)
-            res = t.update(1.0, std::nullopt, r.k());
+            res = t.update(1.0, std::nullopt, r.k(), dt);
         return *res.px;
     };
     const double target = eye::PupilTracker::px_of(2.0), start = eye::PupilTracker::px_of(0.5);
@@ -188,11 +219,10 @@ TEST_CASE("update rate follows frame intervals and skips pauses") {
 namespace {
 
 // Feeds a constant raw openness for `seconds` at `hz`; returns the last output.
-eye::OpennessCalibrator::Out hold(eye::OpennessCalibrator &c, double raw, double seconds, double hz = 90,
-                                  double alpha = 0.6) {
+eye::OpennessCalibrator::Out hold(eye::OpennessCalibrator &c, double raw, double seconds, double hz = 90) {
     eye::OpennessCalibrator::Out out;
     for (int i = 0; i < int(seconds * hz); i++)
-        out = c.update(raw, alpha);
+        out = c.update(raw, 1.0 / hz);
     return out;
 }
 
@@ -230,7 +260,7 @@ TEST_CASE("openness baseline: a 10 s wide hold keeps the neutral and keeps Widen
     const double b = c.baseline();
     double min_widen = 1;
     for (int i = 0; i < 900; i++) {   // 10 s at 0.85 (1.21x neutral)
-        auto out = c.update(0.85, 0.6);
+        auto out = c.update(0.85, 1.0 / 90);
         if (i > 45)   // after the smoothing has caught up
             min_widen = std::min(min_widen, out.widen);
     }
@@ -267,7 +297,7 @@ TEST_CASE("openness ceiling: seed first, then the person's own wide peak") {
     CHECK(hold(c, 0.85, 1).widen > 0.95);
     // A single-frame spike doesn't move it; the cap bounds glitches.
     const double before = c.ceiling();
-    c.update(3.0, 1.0);
+    c.update(3.0, 1.0 / 90);
     hold(c, 0.7, 1);
     CHECK(c.ceiling() == doctest::Approx(before));
     hold(c, 3.0, 1);
@@ -281,12 +311,12 @@ TEST_CASE("openness calibration behaves the same over time at 30 Hz") {
     p.warmup = r.count(180);
     p.every = r.count(12);
     p.peak_window = r.count(9);
-    eye::OpennessCalibrator c(p);
-    hold(c, 0.7, 4, 30, r.alpha(0.6));
+    eye::OpennessCalibrator c(p, eye::kLidOneEuro);
+    hold(c, 0.7, 4, 30);
     REQUIRE(c.ready());
-    hold(c, 0.7, 10, 30, r.alpha(0.6));
+    hold(c, 0.7, 10, 30);
     const double b = c.baseline();
-    auto out = hold(c, 0.85, 5, 30, r.alpha(0.6));
+    auto out = hold(c, 0.85, 5, 30);
     CHECK(c.baseline() == doctest::Approx(b).epsilon(0.01));
     CHECK(out.widen > 0.95);
 }

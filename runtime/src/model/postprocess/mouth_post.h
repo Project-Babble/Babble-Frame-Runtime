@@ -1,13 +1,16 @@
 #pragma once
 
-// Post-processing for the FusionNet mouth model, ported line for line from
-// mouth_osc_pc.py (the PC reference implementation). Arithmetic is float32,
-// matching NumPy float32 arrays there.
+// Post-processing for the FusionNet mouth model, after mouth_osc_pc.py (the
+// PC reference implementation), with a One Euro filter in place of its EMAs.
+// Arithmetic is float32, matching NumPy float32 arrays there.
+
+#include "model/postprocess/one_euro.h"
 
 #include <nlohmann/json.hpp>
 
 #include <array>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -36,6 +39,9 @@ inline constexpr size_t kNumShapes = 43;   // blendshapes, excluding UserPresent
 
 using Vec = std::array<float, kNumChannels>;
 
+// The mouth's smoothing defaults (Baballonia's, as the USB face tracker uses).
+inline constexpr OneEuroParams kOneEuro{0.5, 3.0, 1.0};
+
 // "JawOpen" -> "jawOpen", the spelling the Baballonia module uses.
 std::string camel(const char *name);
 
@@ -51,39 +57,40 @@ public:
     Vec mins, maxs;
 };
 
-// Adaptive running-max normalization with a ramping EMA (class AutoCalibrator).
+// Adaptive running-max normalization (class AutoCalibrator, without its
+// ramping EMA: Post's One Euro filter smooths before it).
 class AutoCalibrator {
 public:
-    explicit AutoCalibrator(float max_seed = 0.5f, float ema_decay = 0.5f, float ema_gain = 0.25f);
+    explicit AutoCalibrator(float max_seed = 0.5f);
     void reset();
     Vec process(const Vec &raw, bool present);
 
 private:
-    float max_seed_, ema_decay_, ema_gain_;
-    Vec max_observed_, smoothed_, weight_acc_;
+    float max_seed_;
+    Vec max_observed_;
 };
 
 enum class CalibMode { Raw, Manual, Auto };
 bool parse_mode(const std::string &s, CalibMode *out);
 
-// The per-frame chain from mouth_osc_pc.py (lines 540-550) with presence
-// handled outside the model: frames only arrive while SteamVR reports the
-// headset worn, and reset() starts each new session. Equivalent to the
-// reference's --no-presence path. Output: the 43 blendshapes.
+// The per-frame chain: the One Euro filter (nullopt: off), then the
+// calibration. Presence is handled outside the model: frames only arrive
+// while SteamVR reports the headset worn, and reset() starts each new
+// session (the reference's --no-presence path). Output: the 43 blendshapes.
 class Post {
 public:
-    Post(float ema, CalibMode mode, Calibration cal);
-    Vec process(const Vec &pred);   // uses channels 0..42; any UserPresent value is ignored
+    Post(std::optional<OneEuroParams> filter, CalibMode mode, Calibration cal);
+    // dt_s: seconds since the previous frame (<= 0: the first). Uses channels
+    // 0..42; any UserPresent value is ignored.
+    Vec process(const Vec &pred, double dt_s);
     void set_mode(CalibMode m) { mode_ = m; }
-    void reset();                   // new session: forget EMA state and auto-calibration
+    void reset();   // new session: forget the filter state and auto-calibration
 
 private:
-    float ema_;
+    std::optional<OneEuro> filter_;
     CalibMode mode_;
     Calibration cal_;
     AutoCalibrator auto_;
-    Vec raw_state_{};
-    bool have_state_ = false;
 };
 
 } // namespace babble::mouth

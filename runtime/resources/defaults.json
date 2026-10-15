@@ -138,7 +138,7 @@
       "flip": "r",
       "rotate": 0,
       "interp": "linear",
-      "ema": 0.5,
+      "one_euro": { "min_cutoff": 0.5, "beta": 3.0, "d_cutoff": 1.0 },
       "calibration": { "mode": "auto", "file": "calibration_mouth.json" }
     },
     "eye": {
@@ -159,16 +159,16 @@
       "widen_ceiling_max": 1.6,
       "lid_saturation": 1.0,
       "calib_tol": 0.15,
-      "lid_alpha": 0.6,
       "calib": true,
       "calib_window_s": 20,
       "calib_warmup_s": 3,
       "pupil_gate": 0.4,
       "pupil_gate_hys": 0.1,
       "pupil_hold_s": 0.1,
-      "pupil_alpha": 0.2,
       "pupil_rate": 0.6,
       "pupil_base_s": 60,
+      "one_euro": { "min_cutoff": 1.0, "beta": 5.0, "d_cutoff": 3.0 },
+      "pupil_one_euro": { "min_cutoff": 0.5, "beta": 0.01, "d_cutoff": 1.0 },
       "babble_swap": false
     },
     "gaze": {

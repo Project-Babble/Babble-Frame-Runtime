@@ -3,6 +3,7 @@
 #include "model/executorch_runner.h"
 #include "model/pipeline.h"
 #include "model/postprocess/face_post.h"
+#include "model/postprocess/one_euro.h"
 
 #include <array>
 #include <atomic>
@@ -25,6 +26,8 @@ inline constexpr std::array<const char *, 45> kShapes = {
     "tongueDown",      "tongueLeft",       "tongueRight",       "tongueRoll",         "tongueBendDown",
     "tongueCurlUp",    "tongueSquish",     "tongueFlat",        "tongueTwistLeft",    "tongueTwistRight",
 };
+// Baballonia's smoothing for this model (its OneEuroFilter defaults).
+inline constexpr OneEuroParams kOneEuro{0.5, 3.0, 1.0};
 } // namespace face
 
 // Config type "babble_mono_face": Baballonia's single-camera face model on a
@@ -60,7 +63,7 @@ private:
     int quarter_turns_ = 0;
     bool flip_h_ = false, flip_v_ = false;
     std::unique_ptr<ExecuTorchRunner> runner_;
-    std::unique_ptr<face::OneEuro> filter_;
+    std::unique_ptr<OneEuro> filter_;
     std::unique_ptr<face::Calibration> calibration_;
     std::array<SignalId, face::kShapes.size()> ids_{};
 

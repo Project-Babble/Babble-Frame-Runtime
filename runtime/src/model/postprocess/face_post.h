@@ -1,8 +1,8 @@
 #pragma once
 
-// Post-processing for Baballonia's mono face model: its One Euro smoothing
-// (Services/Inference/Filters/OneEuroFilter.cs, same defaults), then
-// per-shape calibration.
+// Post-processing for Baballonia's mono face model, after its One Euro
+// smoothing (model/postprocess/one_euro.h, Baballonia's defaults): per-shape
+// calibration.
 
 #include <cstddef>
 #include <cstdint>
@@ -11,21 +11,6 @@
 #include <vector>
 
 namespace babble::face {
-
-// One Euro filter over N channels (Casiez et al.), as Baballonia runs it:
-// the derivative is taken against the previous filtered value.
-class OneEuro {
-public:
-    OneEuro(size_t n, float min_cutoff = 0.5f, float beta = 3.0f, float d_cutoff = 1.0f);
-    // dt_s <= 0 (the first sample, or a repeated timestamp) passes x through.
-    void apply(std::vector<float> &x, float dt_s);
-    void reset();
-
-private:
-    float min_cutoff_, beta_, d_cutoff_;
-    bool init_ = false;
-    std::vector<float> x_prev_, dx_prev_;
-};
 
 enum class CalibMode { Raw, Manual, Auto };
 bool parse_mode(const std::string &s, CalibMode *out);

@@ -50,29 +50,19 @@ Vec Calibration::normalize(const Vec &raw) const {
     return out;
 }
 
-AutoCalibrator::AutoCalibrator(float max_seed, float ema_decay, float ema_gain)
-    : max_seed_(max_seed), ema_decay_(ema_decay), ema_gain_(ema_gain) {
-    reset();
-}
+AutoCalibrator::AutoCalibrator(float max_seed) : max_seed_(max_seed) { reset(); }
 
-void AutoCalibrator::reset() {
-    max_observed_.fill(max_seed_);
-    smoothed_.fill(0.0f);
-    weight_acc_.fill(0.0f);
-}
+void AutoCalibrator::reset() { max_observed_.fill(max_seed_); }
 
 Vec AutoCalibrator::process(const Vec &raw, bool present) {
+    Vec out;
     for (size_t i = 0; i < kNumChannels; i++) {
         if (present)
             max_observed_[i] = std::max(max_observed_[i], raw[i]);
         bool seen = max_observed_[i] > max_seed_;
-        float normed = std::clamp(seen ? raw[i] / std::max(max_observed_[i], 1e-6f) : raw[i], 0.0f, 1.0f);
-        float weight = ema_gain_ + weight_acc_[i];
-        float alpha = weight / (weight + ema_decay_);
-        smoothed_[i] += (normed - smoothed_[i]) * alpha;
-        weight_acc_[i] = (1.0f - alpha) * weight;
+        out[i] = std::clamp(seen ? raw[i] / std::max(max_observed_[i], 1e-6f) : raw[i], 0.0f, 1.0f);
     }
-    return smoothed_;
+    return out;
 }
 
 bool parse_mode(const std::string &s, CalibMode *out) {
@@ -83,33 +73,33 @@ bool parse_mode(const std::string &s, CalibMode *out) {
     return true;
 }
 
-Post::Post(float ema, CalibMode mode, Calibration cal) : ema_(ema), mode_(mode), cal_(std::move(cal)) {}
+Post::Post(std::optional<OneEuroParams> filter, CalibMode mode, Calibration cal)
+    : mode_(mode), cal_(std::move(cal)) {
+    if (filter)
+        filter_.emplace(kNumShapes, *filter);
+}
 
 void Post::reset() {
     auto_.reset();
-    have_state_ = false;
+    if (filter_)
+        filter_->reset();
 }
 
-Vec Post::process(const Vec &pred) {
-    // raw_state = pred if first else ema * pred + (1 - ema) * raw_state
-    if (!have_state_) {
-        raw_state_ = pred;
-        have_state_ = true;
-    } else {
-        for (size_t i = 0; i < kNumChannels; i++)
-            raw_state_[i] = ema_ * pred[i] + (1.0f - ema_) * raw_state_[i];
-    }
+Vec Post::process(const Vec &pred, double dt_s) {
+    Vec x = pred;
+    if (filter_)
+        filter_->apply(x.data(), kNumShapes, dt_s);
     Vec norm;
     switch (mode_) {
     case CalibMode::Raw:
         for (size_t i = 0; i < kNumChannels; i++)
-            norm[i] = std::clamp(raw_state_[i], 0.0f, 1.0f);
+            norm[i] = std::clamp(x[i], 0.0f, 1.0f);
         break;
     case CalibMode::Manual:
-        norm = cal_.normalize(raw_state_);
+        norm = cal_.normalize(x);
         break;
     case CalibMode::Auto:
-        norm = auto_.process(pred, true);   // the reference feeds the unsmoothed prediction here
+        norm = auto_.process(x, true);
         break;
     }
     return norm;

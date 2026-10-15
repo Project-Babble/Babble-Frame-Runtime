@@ -22,8 +22,10 @@ namespace babble {
 //
 // Config: model, from, thread, swap (bool), flip ("r"|"l"|"lr"|"none"),
 // rotate (0|90|180|270, counter-clockwise), interp ("linear"|"area"),
-// ema (0.5). Presence comes from the headset (SteamVR proximity): the
-// cameras pause while it's off and each new session resets the filters.
+// one_euro ({min_cutoff 0.5, beta 3, d_cutoff 1} or false: the mouth's own
+// smoothing, tuned apart from the eyes'). Presence comes from the headset
+// (SteamVR proximity): the cameras pause while it's off and each new session
+// resets the filters.
 // calibration: {mode: "auto" (default)|"manual"|"raw", file: "calibration_mouth.json"},
 // probe_orientation (N > 0: for the first N frames also run all 8 rotate x
 // swap combinations and log them ranked by mean UserPresent, like
@@ -51,6 +53,7 @@ private:
     std::vector<float> in0_, in1_;
     std::array<float, mouth::kNumChannels> out_{};
     std::atomic<bool> reset_pending_{false};
+    uint64_t last_capture_ns_ = 0;   // the previous frame's, for the filter's dt
 
     void probe(const StereoFrame &sf);
     int probe_left_ = 0, probe_total_ = 0;

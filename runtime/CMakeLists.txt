@@ -59,6 +59,7 @@ add_library(babble_core STATIC
     src/model/babble_eye.cpp
     src/model/babble_mono_face.cpp
     src/model/postprocess/face_post.cpp
+    src/model/postprocess/one_euro.cpp
     src/model/steamvr_gaze.cpp
     src/model/postprocess/eye_post.cpp
     src/state/expression_state.cpp

@@ -183,14 +183,14 @@ TEST_CASE("the mono face model (fp16) matches ONNX Runtime on a tracker frame") 
 }
 
 TEST_CASE("the face One Euro filter passes the first sample and follows a step smoothly") {
-    face::OneEuro f(1);
+    OneEuro f(1, face::kOneEuro);
     std::vector<float> x{0.0f};
-    f.apply(x, 0.0f);
+    f.apply(x, 0.0);
     CHECK(x[0] == 0.0f);
     float prev = 0.0f;
     for (int i = 0; i < 30; i++) {
         x = {1.0f};
-        f.apply(x, 1.0f / 60);
+        f.apply(x, 1.0 / 60);
         CHECK(x[0] >= prev - 1e-6f);   // monotonic towards the step (up to float rounding once settled)
         CHECK(x[0] <= 1.0f);
         prev = x[0];
@@ -198,7 +198,7 @@ TEST_CASE("the face One Euro filter passes the first sample and follows a step s
     CHECK(prev > 0.9f);   // fast movement opens the filter (beta)
     f.reset();
     x = {0.25f};
-    f.apply(x, 1.0f / 60);   // after a reset: passes through again
+    f.apply(x, 1.0 / 60);   // after a reset: passes through again
     CHECK(x[0] == 0.25f);
 }
 
