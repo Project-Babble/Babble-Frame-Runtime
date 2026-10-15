@@ -99,7 +99,9 @@ PY
 
   tar -xJf "$tmp/$name" -C "$tmp" install.sh
   bash "$tmp/install.sh" "$tmp/$name" "${install_args[@]}"
-  echo "Babble Frame Runtime $tag is installed. Find it in the SteamVR dashboard's Babble tab."
+  echo "Babble Frame Runtime $tag is installed."
+  echo "Its settings are in SteamVR Settings, under Expression Tracking. Turn on Show App Window there"
+  echo "to add the Babble tab to the SteamVR dashboard."
 }
 
 main "$@"
