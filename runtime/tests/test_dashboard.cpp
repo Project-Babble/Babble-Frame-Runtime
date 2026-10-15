@@ -15,8 +15,8 @@ namespace {
 const std::filesystem::path kFonts = std::filesystem::path(BABBLE_RESOURCES_DIR) / "fonts";
 
 std::vector<Choice> rates() {
-    return {{"/sources/mouth/process_fps", "Mouth tracking rate", "", "Hz", {30, 60, 90, 120}, 120},
-            {"/sources/eye/rate_divisor", "Eye tracking rate", "", "", {1, 2, 3}, 1, false, false, {"1:1", "1:2", "1:3"}}};
+    return {{"/sources/mouth/process_fps", "Mouth Tracking Rate", "", "Hz", {30, 60, 90, 120}, 120},
+            {"/sources/eye/rate_divisor", "Eye Tracking Rate", "", "", {1, 2, 3}, 1, false, false, {"1:1", "1:2", "1:3"}}};
 }
 
 FeedStatus on(Health h, double hz = 0) {
@@ -54,7 +54,7 @@ TEST_CASE("the cog opens settings, a choice reports its value, the cog goes back
 
     view.render(c, s, choices, std::nullopt);
     CHECK(view.page() == DashboardView::Page::Home);
-    CHECK_FALSE(view.click({600, 300}).redraw);   // nothing clickable in the headline
+    CHECK_FALSE(view.click({600, 300}).redraw);   // nothing clickable there
     CHECK(view.click(cog()).redraw);
     CHECK(view.page() == DashboardView::Page::Settings);
 
@@ -76,7 +76,7 @@ TEST_CASE("the eye rate row offers shares of the camera rate") {
     REQUIRE(view.load_fonts(kFonts));
     Canvas c(DashboardView::kWidth, DashboardView::kHeight);
     Status s{true, Worn::Yes, on(Health::Working, 120), on(Health::Working, 90)};
-    s.choice_hints["/sources/eye/rate_divisor"] = "45 Hz now, from a 90 Hz camera (set by the display refresh rate).";
+    s.choice_hints["/sources/eye/rate_divisor"] = "45 Hz now, from 90 Hz eye cameras.";
     view.render(c, s, rates(), std::nullopt);
     view.click(cog());
     view.render(c, s, rates(), std::nullopt);
@@ -131,29 +131,6 @@ TEST_CASE("each feed card has an on/off switch; unconfigured feeds have none") {
     view.render(c, s, rates(), std::nullopt);
     CHECK_FALSE(view.click({540, 536}).toggle);
     CHECK(view.page() == DashboardView::Page::Home);   // switches never change the page
-}
-
-TEST_CASE("the headline summarises tracking, pauses and feeds that are off") {
-    Status s{true, Worn::Yes, on(Health::Working, 120), on(Health::Working, 90)};
-    Headline h = headline(s);
-    CHECK(h.word == "Tracking");
-    CHECK(h.tone == Health::Working);
-    CHECK(h.sub == "Mouth  120 Hz   ·   Eyes  90 Hz");
-
-    s.eye.health = Health::Off;
-    s.eye.tracking = false;
-    CHECK(headline(s).sub == "Mouth  120 Hz");
-
-    s.worn = Worn::No;
-    CHECK(headline(s).word == "Paused");
-
-    s.mouth.health = Health::Off;
-    s.mouth.tracking = false;
-    CHECK(headline(s).word == "Tracking off");
-    CHECK(headline(s).sub == "Turn a feed on below");
-
-    s.steamvr = false;
-    CHECK(headline(s).word == "Waiting for SteamVR");
 }
 
 TEST_CASE("the visualizer button appears only when the visualizer is installed") {
@@ -311,7 +288,7 @@ TEST_CASE("the restart button on the settings page needs a second click") {
     view.render(c, s, rates(), std::nullopt);
     auto first = view.click(button);
     CHECK_FALSE(first.restart);
-    CHECK(first.redraw);   // shows "Click again to restart"
+    CHECK(first.redraw);   // shows "Confirm Restart"
     CHECK(view.restart_armed(babble::mono_ns()));
     view.render(c, s, rates(), std::nullopt);
     CHECK(view.click(button).restart);
@@ -325,9 +302,34 @@ TEST_CASE("the restart button on the settings page needs a second click") {
     view.set_page(DashboardView::Page::Settings);
     view.render(c, s, rates(), std::nullopt);
     CHECK_FALSE(view.click(button).restart);
+
+    // All other routes away from Settings must also cancel confirmation.
+    view.render(c, s, rates(), std::nullopt);
+    view.click({60, 70});
+    s.mouth_source = "usb";
+    for (const Point leave : {cog(), Point{1084, 74}, Point{600, 576}}) {
+        view.set_page(DashboardView::Page::Settings);
+        view.render(c, s, rates(), std::nullopt);
+        CHECK_FALSE(view.click(button).restart);
+        REQUIRE(view.restart_armed(babble::mono_ns()));
+        view.render(c, s, rates(), std::nullopt);
+        view.click(leave);
+        CHECK_FALSE(view.restart_armed(babble::mono_ns()));
+        if (view.page() == DashboardView::Page::Cameras || view.page() == DashboardView::Page::Diagnostics) {
+            view.render(c, s, rates(), std::nullopt);
+            CHECK(view.click(cog()).redraw);   // footer Dashboard button
+            CHECK(view.page() == DashboardView::Page::Home);
+            CHECK_FALSE(view.restart_armed(babble::mono_ns()));
+        }
+        view.set_page(DashboardView::Page::Settings);
+        view.render(c, s, rates(), std::nullopt);
+        CHECK_FALSE(view.click(button).restart);
+        view.render(c, s, rates(), std::nullopt);
+        view.click({60, 70});
+    }
 }
 
-TEST_CASE("the eye panel places the gaze dot and fills the openness bar") {
+TEST_CASE("the eye panel places gaze and fills labelled output meters") {
     DashboardView view;
     REQUIRE(view.load_fonts(kFonts));
     Canvas c(DashboardView::kWidth, DashboardView::kHeight);
@@ -337,29 +339,50 @@ TEST_CASE("the eye panel places the gaze dot and fills the openness bar") {
         return Color{p[0], p[1], p[2]};
     };
     auto is = [](Color a, uint32_t rgb) { return a.r == uint8_t(rgb >> 16) && a.g == uint8_t(rgb >> 8) && a.b == uint8_t(rgb); };
-    // Left eye group: 326 px wide, groups 110 apart, so it starts at (1200 - 762) / 2 = 219; plot 210 px at y 212.
-    const float gx = 219, top = 212, cx = gx + 105, cy = top + 105, half = 105 - 14, bar_x = gx + 210 + 24 + 18;
+    // Left panel: plot at (76, 204), 174 px wide; labelled meters start at x 276.
+    const float cx = 163, cy = 291, half = 75, meter_left = 276, meter_right = 568;
 
     view.render(c, s, rates(), std::nullopt);   // no data: no dot
-    CHECK_FALSE(is(px(cx + half, cy), 0x4d8dff));
+    CHECK_FALSE(is(px(cx + half, cy), 0x0073cf));
 
     s.eyes[0] = {true, true, 45, 0, 1.0};   // full right, eye open
     view.render(c, s, rates(), std::nullopt);
-    CHECK(is(px(cx + half, cy), 0x4d8dff));            // dot at the right edge
-    CHECK(is(px(bar_x, top + 10), 0x3fcf73));   // bar filled to the top
+    CHECK(is(px(cx + half, cy), 0x0073cf));         // dot at the right edge
+    CHECK(is(px(meter_right - 10, 249), 0x0073cf)); // openness fills the full meter
 
-    s.eyes[0].openness = 0.2;                          // mostly closed: top of the bar empty
+    s.eyes[0].openness = 0.2;                      // mostly closed: only the left fifth is filled
     view.render(c, s, rates(), std::nullopt);
-    CHECK_FALSE(is(px(bar_x, top + 10), 0x3fcf73));
-    CHECK(is(px(bar_x, top + 205), 0x3fcf73));
+    CHECK_FALSE(is(px(meter_right - 10, 249), 0x0073cf));
+    CHECK(is(px(meter_left + 10, 249), 0x0073cf));
 
-    const float widen_x = gx + 210 + 24 + 36 + 10 + 9;   // the slim widen bar
-    CHECK_FALSE(is(px(widen_x, top + 190), 0xf2b33d));
+    CHECK_FALSE(is(px(meter_left + 10, 322), 0x0073cf));
     s.eyes[0].openness = 1.0;
-    s.eyes[0].widen = 0.5;                             // half wide: lower half amber
+    s.eyes[0].widen = 0.5;
     view.render(c, s, rates(), std::nullopt);
-    CHECK(is(px(widen_x, top + 190), 0xf2b33d));
-    CHECK_FALSE(is(px(widen_x, top + 30), 0xf2b33d));
+    CHECK(is(px(meter_left + 10, 322), 0x0073cf));
+    CHECK_FALSE(is(px(meter_right - 10, 322), 0x0073cf));
+
+    // Dilation is hidden until its baseline is ready; the 50% baseline tick stays visible.
+    s.eyes[0].dilation = 0.8;
+    view.render(c, s, rates(), std::nullopt);
+    CHECK_FALSE(is(px(480, 395), 0xa78bfa));
+    CHECK(is(px(422, 395), 0xffffff));
+    s.eyes[0].dilation_ok = true;
+    view.render(c, s, rates(), std::nullopt);
+    CHECK(is(px(480, 395), 0xa78bfa));
+    CHECK_FALSE(is(px(meter_right - 10, 395), 0xa78bfa));
+
+    // Out-of-range readings never extend outside a meter or plot.
+    s.eyes[0].yaw_deg = 90;
+    s.eyes[0].openness = 2;
+    s.eyes[0].widen = -1;
+    s.eyes[0].dilation = -1;
+    view.render(c, s, rates(), std::nullopt);
+    CHECK(is(px(cx + half, cy), 0x0073cf));
+    CHECK(is(px(meter_right - 10, 249), 0x0073cf));
+    CHECK_FALSE(is(px(meter_right + 2, 249), 0x0073cf));
+    CHECK_FALSE(is(px(meter_left + 10, 322), 0x0073cf));
+    CHECK_FALSE(is(px(meter_left + 10, 395), 0xa78bfa));
 }
 
 TEST_CASE("the logo becomes the tab thumbnail, with a badge fallback") {
@@ -368,7 +391,7 @@ TEST_CASE("the logo becomes the tab thumbnail, with a badge fallback") {
     Canvas thumb(DashboardView::kThumb, DashboardView::kThumb);
     view.render_thumbnail(thumb);
     const uint8_t *centre = thumb.data() + (size_t(64) * DashboardView::kThumb + 20) * 4;
-    CHECK((centre[0] == 0x4d && centre[1] == 0x8d && centre[2] == 0xff));   // no icons: the blue "B" badge
+    CHECK((centre[0] == 0x00 && centre[1] == 0x73 && centre[2] == 0xcf));   // no icons: Baballonia's accent
 
     REQUIRE(view.load_icons(std::filesystem::path(BABBLE_RESOURCES_DIR) / "icons"));
     view.render_thumbnail(thumb);

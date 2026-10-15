@@ -335,15 +335,15 @@
     "settings": [
       {
         "id": "/sources/mouth/process_fps",
-        "label": "Mouth tracking rate",
-        "hint": "Updates per second. Lower rates save battery.",
+        "label": "Mouth Tracking Rate",
+        "hint": "Lower rates save battery.",
         "unit": "Hz",
         "options": [30, 60, 90, 120]
       },
       {
         "id": "/sources/eye/rate_divisor",
-        "label": "Eye tracking rate",
-        "hint": "A share of the eye camera rate, which follows the display refresh rate. Lower saves battery.",
+        "label": "Eye Tracking Rate",
+        "hint": "A share of the eye camera rate. Lower rates save battery.",
         "options": [1, 2, 3],
         "labels": ["1:1", "1:2", "1:3"]
       },
@@ -351,8 +351,8 @@
         "id": "/sinks/camera_stream/active",
         "page": "diagnostics",
         "persist": false,
-        "label": "Camera stream",
-        "hint": "MJPEG on TCP 9099 for infer.py (net:<headset>:9099). Off after a restart."
+        "label": "Camera Stream",
+        "hint": "Stream camera frames on TCP 9099 for diagnostics. Turns off after a restart."
       }
     ]
   }

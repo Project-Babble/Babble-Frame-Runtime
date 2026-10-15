@@ -585,7 +585,7 @@ int main(int argc, char **argv) {
     refresh_usb_cameras();
 
     // The "Babble" tab in the SteamVR dashboard: a debug overlay, shown while
-    // dashboard.enabled is on (the Debug Overlay toggle in SteamVR Settings).
+    // dashboard.enabled is on (the Show App Window toggle in SteamVR Settings).
     // The object lives for the whole run so its GPU objects outlive the
     // SteamVR connection; the setting only starts and stops the tab.
     const json dcfg = cfg.value("dashboard", json::object());
@@ -1226,7 +1226,7 @@ int main(int argc, char **argv) {
                 const double cam = s.src->camera_fps();
                 if (cam > 0 && cfg.contains(ptr) && cfg[ptr].is_number() && cfg[ptr].get<double>() >= 1) {
                     char buf[96];
-                    snprintf(buf, sizeof(buf), "%.0f Hz now, from a %.0f Hz camera (set by the display refresh rate).",
+                    snprintf(buf, sizeof(buf), "%.0f Hz now, from %.0f Hz eye cameras.",
                              cam / cfg[ptr].get<double>(), cam);
                     st.choice_hints[ptr.to_string()] = buf;
                 }

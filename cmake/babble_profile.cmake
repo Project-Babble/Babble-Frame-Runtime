@@ -94,7 +94,7 @@ function(babble_profile_generate src_dir out_dir)
         babble_json_remove_where(schema name /settings/driver_babble/mouthSource 0 values)
         babble_json_find(i "${schema}" name /settings/driver_babble/mouthTracking 0 values)
         string(JSON schema SET "${schema}" 0 values ${i} text
-            "\"Mouth tracking from a USB Babble face tracker plugged into the headset. Pick the camera in the Babble debug overlay's settings if more than one is connected.\"")
+            "\"Mouth tracking from a USB Babble face tracker plugged into the headset. Pick the camera in the Babble app window's settings if more than one is connected.\"")
         string(JSON vrdefaults REMOVE "${vrdefaults}" driver_babble mouthSource)
         string(JSON vrdefaults REMOVE "${vrdefaults}" driver_babble mouthRate)
     endif()

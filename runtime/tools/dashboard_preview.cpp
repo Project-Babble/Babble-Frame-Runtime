@@ -2,8 +2,8 @@
 //
 //   dashboard_preview OUT_DIR [FONTS_DIR]
 //
-// Writes one image per front-page state, the settings page (with a hovered
-// option) and the thumbnail. For reviewing the UI off the headset.
+// Writes examples of the optional debug dashboard, using synthetic readings
+// and demonstration devices. These are native UI renders, not live captures.
 #include "ui/dashboard_view.h"
 
 #pragma GCC diagnostic push
@@ -34,7 +34,7 @@ int main(int argc, char **argv) {
     DashboardView view;
     view.load_icons(fonts.parent_path() / "icons");
     if (!view.load_fonts(fonts)) {
-        fprintf(stderr, "fonts not found in %s\n", fonts.c_str());
+        fprintf(stderr, "fonts not found in %s\n", fonts.string().c_str());
         return 1;
     }
     Canvas c(DashboardView::kWidth, DashboardView::kHeight);
@@ -45,13 +45,13 @@ int main(int argc, char **argv) {
     };
 
     std::vector<Choice> choices = {
-        {"/sources/mouth/process_fps", "Mouth tracking rate", "Updates per second. Lower rates save battery.", "Hz",
+        {"/sources/mouth/process_fps", "Mouth Tracking Rate", "Lower rates save battery.", "Hz",
          {30, 60, 90, 120}, 120},
-        {"/sources/eye/rate_divisor", "Eye tracking rate",
-         "A share of the eye camera rate, which follows the display refresh rate. Lower saves battery.", "", {1, 2, 3}, 1,
+        {"/sources/eye/rate_divisor", "Eye Tracking Rate",
+         "A share of the eye camera rate. Lower rates save battery.", "", {1, 2, 3}, 1,
          false, false, {"1:1", "1:2", "1:3"}},
-        {"/sinks/camera_stream/active", "Camera stream",
-         "MJPEG on TCP 9099 for infer.py (net:<headset>:9099). Off after a restart.", "", {0, 1}, 1, true, true},
+        {"/sinks/camera_stream/active", "Camera Stream",
+         "Stream camera frames on TCP 9099 for diagnostics. Turns off after a restart.", "", {0, 1}, 1, true, true},
     };
     auto feed = [](Health h, double hz = 0, std::string detail = "", bool tracking = true) {
         FeedStatus f;
@@ -66,7 +66,7 @@ int main(int argc, char **argv) {
     tracking.visualizer = AppState::Stopped;
     tracking.eyes[0] = {true, true, -18, 6, 1.0, 0.6, true, 0.843, true, 0.742, 0.941, true, 0.62};   // looking left and up, wide
     tracking.eyes[1] = {true, true, -21, 5, 0.35, 0, true, 0.251, false, 0, 0, false, 0};   // half closed, calibrating
-    tracking.link = {true, true, "lan", "ChadBox", "192.168.0.149", 3.6};
+    tracking.link = {true, true, "lan", "Demo PC", "192.0.2.10", 3.6};
     Status paused{true, Worn::No, feed(Health::Paused), feed(Health::Paused)};
     Status fault{true, Worn::Yes, feed(Health::Working, 120),
                  feed(Health::Fault, 0, "cannot connect to dsp_service (is the eye tracking service running?)")};
@@ -81,7 +81,7 @@ int main(int argc, char **argv) {
     save(c, "home_tracking");
     // VRChat Native: on the PC Steam Link streams from, and on this headset with no data yet.
     Status native_pc = tracking;
-    native_pc.link = {true, true, "pc", "", "10.35.78.25", -1, true};
+    native_pc.link = {true, true, "pc", "", "192.0.2.10", -1, true};
     view.render(c, native_pc, choices, std::nullopt);
     save(c, "home_native_pc");
     Status native_frame = tracking;
@@ -123,9 +123,9 @@ int main(int argc, char **argv) {
     // Mouth from USB: the camera row, then its page with two cameras, the tracker streaming.
     Status usb = tracking;
     usb.mouth_source = "usb";
-    usb.cameras = {{"303a:8000:28372F18F94C", "ETVR openiristracker", "303a:8000 \u00b7 serial 28372F18F94C"},
-                   {"046d:0825:A1B2C3", "Logitech Webcam C270", "046d:0825 \u00b7 serial A1B2C3"}};
-    usb.camera = "303a:8000:28372F18F94C";
+    usb.cameras = {{"303a:8000:DEMO01", "Babble USB Tracker", "303a:8000 \u00b7 demo tracker"},
+                   {"046d:0825:DEMO02", "USB Webcam", "046d:0825 \u00b7 demo camera"}};
+    usb.camera = "303a:8000:DEMO01";
     usb.active_camera = usb.camera;
     view.render(c, usb, choices, std::nullopt);
     save(c, "settings_usb");
@@ -143,9 +143,14 @@ int main(int argc, char **argv) {
     none.active_camera.clear();
     view.render(c, none, choices, std::nullopt);
     save(c, "cameras_none");
+    Status missing = usb;
+    missing.cameras.clear();
+    missing.active_camera.clear();
+    view.render(c, missing, choices, std::nullopt);
+    save(c, "cameras_missing");
     Status diag = tracking;
     diag.verbose_minutes_left = 7;
-    diag.last_diagnostics = "/home/steamos/.local/state/babble-frame-runtime/diag-20260927-191502.txt";
+    diag.last_diagnostics = "diagnostics-demo.txt";
     diag.log_file = "/home/steamos/.local/state/babble-frame-runtime/runtime.log";
     diag.stats_file = "/home/steamos/.local/state/babble-frame-runtime/stats.jsonl";
     view.set_page(DashboardView::Page::Diagnostics);
@@ -169,6 +174,16 @@ int main(int argc, char **argv) {
         view.render(c, d, choices, std::nullopt);
         save(c, std::string("diagnostics_capture_") + name);
     }
+    diag.verbose_minutes_left = 0;
+    diag.last_diagnostics.clear();
+    choices[2].value = 0;
+    view.render(c, diag, choices, Point{1100, 222});
+    save(c, "diagnostics_off");
+    view.set_page(DashboardView::Page::Settings);
+    view.render(c, tracking, choices, std::nullopt);
+    view.click({1100, 666});
+    view.render(c, tracking, choices, std::nullopt);
+    save(c, "settings_restart_confirmation");
 
     // Render cost (what the dashboard thread pays per redraw).
     {

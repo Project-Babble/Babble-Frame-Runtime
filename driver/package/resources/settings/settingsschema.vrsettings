@@ -15,7 +15,7 @@
 				"name" : "/settings/driver_babble/mouthSource",
 				"control" : "segment",
 				"label" : "Mouth Source",
-				"text" : "Where mouth tracking comes from: the Frame's own mouth cameras (Frunk), or a USB camera such as a Babble face tracker. Pick the USB camera in the Babble debug overlay's settings.",
+				"text" : "Where mouth tracking comes from: the Frame's own mouth cameras (Frunk), or a USB camera such as a Babble face tracker. Pick the USB camera in the Babble app window's settings.",
 				"options" : [
 					{ "value" : "frunk", "label" : "Frunk" },
 					{ "value" : "usb", "label" : "USB" }
@@ -88,11 +88,10 @@
 			{
 				"name" : "/settings/driver_babble/debugOverlay",
 				"control" : "toggle",
-				"label" : "Debug Overlay",
-				"text" : "Adds a Babble tab to the SteamVR dashboard with live feed status and a visualizer launcher.",
+				"label" : "Show App Window",
+				"text" : "Adds a Babble tab to the SteamVR dashboard with live tracking status, settings and diagnostics.",
 				"on_label" : "On",
-				"off_label" : "Off",
-				"advanced_only" : true
+				"off_label" : "Off"
 			},
 			{
 				"name" : "/settings/driver_babble/version",

@@ -21,7 +21,8 @@ so a problem in the runtime never affects SteamVR.
 - **Outputs:**
   - OSC in the Baballonia format for VRCFaceTracking.
   - A plugin interface for other outputs, with a template.
-- **A debug overlay:** a SteamVR dashboard tab with live gaze and eye readouts, and a visualizer launcher.
+- **An app window:** a Babble tab in the SteamVR dashboard with live tracking status, settings and diagnostics. Turn it
+  on with Show App Window in SteamVR Settings, under Expression Tracking.
 - **Dataset capture:** an optional guided recording app, installed from the overlay's Diagnostics page. The runtime
   records every camera frame for it (lossless x264 through ffmpeg), then packages (hardware H.265), encrypts and
   uploads the sessions the user consented to.
