@@ -96,6 +96,7 @@ private:
     std::string reported_layout_error_;
     bool not_ready_ = false;   // last start found the control block not set up yet
     bool logged_gap_ = false;
+    bool logged_dsp_messages_ = false;
 
     RateStat frames_, processed_, side_l_, side_r_;
     Counter layout_faults_, restarts_, pool_exhausted_, late_detect_, half_pairs_;   // stats: lifetime totals

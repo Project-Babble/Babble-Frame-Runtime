@@ -27,7 +27,7 @@ uint32_t read_u32(const uint8_t *base, uint32_t off) {
 
 DspClient::~DspClient() { disconnect(); }
 
-bool DspClient::connect(uint32_t version) {
+bool DspClient::connect(uint32_t request, std::string_view name) {
     disconnect();
     sock_ = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if (sock_ < 0) {
@@ -36,16 +36,16 @@ bool DspClient::connect(uint32_t version) {
     }
     sockaddr_un addr{};
     addr.sun_family = AF_UNIX;
-    static const char kName[] = "\0dsp_service";
-    memcpy(addr.sun_path, kName, sizeof(kName) - 1);
-    socklen_t len = socklen_t(offsetof(sockaddr_un, sun_path) + sizeof(kName) - 1);
+    name = name.substr(0, sizeof(addr.sun_path) - 1);
+    memcpy(addr.sun_path + 1, name.data(), name.size());   // abstract: leading NUL
+    socklen_t len = socklen_t(offsetof(sockaddr_un, sun_path) + 1 + name.size());
     if (::connect(sock_, reinterpret_cast<sockaddr *>(&addr), len) != 0) {
         LOG.warn("dsp: connect to dsp_service failed: %s", strerror(errno));
         disconnect();
         return false;
     }
 
-    // The service sends the shared-memory fd(s) first, then expects our version.
+    // The service sends the shared-memory fd(s) first, then expects our request type.
     timeval tv{2, 0};
     setsockopt(sock_, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     char payload[256];
@@ -78,8 +78,8 @@ bool DspClient::connect(uint32_t version) {
         disconnect();
         return false;
     }
-    if (send(sock_, &version, sizeof(version), MSG_NOSIGNAL) != sizeof(version)) {
-        LOG.warn("dsp: sending version failed: %s", strerror(errno));
+    if (send(sock_, &request, sizeof(request), MSG_NOSIGNAL) != sizeof(request)) {
+        LOG.warn("dsp: sending the request type failed: %s", strerror(errno));
         disconnect();
         return false;
     }
@@ -112,6 +112,17 @@ void DspClient::disconnect() {
     if (sock_ >= 0)
         ::close(sock_);
     shm_fd_ = sock_ = -1;
+}
+
+size_t DspClient::drain() {
+    size_t total = 0;
+    char buf[4096];
+    for (;;) {
+        const ssize_t n = sock_ < 0 ? -1 : recv(sock_, buf, sizeof(buf), MSG_DONTWAIT);
+        if (n <= 0)
+            return total;
+        total += size_t(n);
+    }
 }
 
 bool DspClient::validate(const uint8_t *ctrl, size_t ctrl_size, const Layout &l, std::string *why) {

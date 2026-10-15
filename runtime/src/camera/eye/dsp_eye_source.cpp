@@ -116,7 +116,7 @@ const char *DspEyeSource::state_name() const {
 }
 
 bool DspEyeSource::start() {
-    if (!client_.connect(cfg_.value("dsp_version", 17u))) {
+    if (!client_.connect(cfg_.value("dsp_request", 0u))) {
         last_error_ = "cannot connect to dsp_service";
         return false;
     }
@@ -273,6 +273,13 @@ void DspEyeSource::run() {
             if (fps > 0)
                 wait_ns = uint64_t(0.5e9 / fps);
             next_fps_check = now + kFpsCheckNs;
+            // With request type 0 the service sends nothing; if it ever does, read it
+            // rather than let its socket fill (see DspClient::connect).
+            if (client_.drain() && !logged_dsp_messages_) {
+                LOG.warn("eye: dsp_service sent messages (request type %u); discarding them",
+                         cfg_.value("dsp_request", 0u));
+                logged_dsp_messages_ = true;
+            }
         }
         bool bad_l = idx.l != DspClient::kNotReady && idx.l >= layout_.slots;
         bool bad_r = idx.r != DspClient::kNotReady && idx.r >= layout_.slots;

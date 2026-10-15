@@ -5,6 +5,7 @@
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 
 namespace babble {
 
@@ -34,11 +35,26 @@ public:
         uint32_t l = kNotReady, r = kNotReady;
     };
 
+    // The service's abstract socket name (without the leading NUL).
+    static constexpr std::string_view kServiceName = "dsp_service";
+
     ~DspClient();
 
-    bool connect(uint32_t version);
+    // `request` is the word sent after the fds, which dsp_service reads as the
+    // client's request type, a bit set: 1 IMU Streaming, 2 ET Camera Streaming,
+    // 4 CDSP Operations, 8 Audio Streaming, 16 CDSP Gazenet, 32 Charger.
+    // Clients asking for 1 or 2 count towards keeping the IMU or the eye
+    // cameras streaming, and every client with a matching bit gets a
+    // "service_notification" message per DSP event, on a non-blocking socket.
+    // We only read the shared memory, which the fds give whatever the type,
+    // so 0: nothing is sent to us and we change no streaming state.
+    bool connect(uint32_t request, std::string_view name = kServiceName);
     void disconnect();
     bool connected() const { return ctrl_ != nullptr; }
+    // Reads and discards anything the service sent since; returns the bytes.
+    // Unread messages fill the socket and dsp_service logs an error per message
+    // it can no longer send.
+    size_t drain();
 
     // Finds the first candidate base whose control words look sane. Reads only.
     std::optional<Layout> probe(std::span<const uint32_t> candidates, std::string *why);

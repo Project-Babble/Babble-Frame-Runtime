@@ -25,6 +25,7 @@ TEST_CASE("built-in defaults parse and carry the key settings") {
     CHECK((*d)["sinks"]["record"]["encoder"][0] == "ffmpeg");
     CHECK((*d)["capture"]["app"]["repo"] == "Project-Babble/Babble-Guided-Dataset-Capture");
     CHECK((*d)["capture"]["upload"]["bucket"] == "babbledata");
+    CHECK((*d)["sources"]["eye"]["dsp_request"] == 0);   // no dsp_service subscriptions (see DspClient::connect)
     CHECK_FALSE((*d)["sources"]["eye"].contains("process_fps"));   // the eye rate is a share of SteamVR's camera rate
     CHECK_FALSE((*d)["sources"]["eye"].contains("request_fps"));
     CHECK((*d)["sources"]["eye"]["type"] == "frame_dsp_eye");
