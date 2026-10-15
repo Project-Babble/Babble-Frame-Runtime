@@ -20,14 +20,8 @@ so a problem in the runtime never affects SteamVR.
   tracking rate.
 - **Outputs:**
   - OSC in the Baballonia format for VRCFaceTracking.
-  - A plugin interface for other outputs, with a template.
-- **An app window:** a Babble tab in the SteamVR dashboard with live tracking status, settings and diagnostics. Turn it
-  on with Show App Window in SteamVR Settings, under Expression Tracking.
-- **Dataset capture:** an optional guided recording app, installed from the overlay's Diagnostics page. The runtime
-  records every camera frame for it (lossless x264 through ffmpeg), then packages (hardware H.265), encrypts and
-  uploads the sessions the user consented to.
-
-## Status
+  - A plugin interface for other outputs.
+- **Dataset capture:** an optional guided recording app, installed from the overlay's Diagnostics page. 
 
 Work in progress. The mouth and eye models are prototypes; the runtime keeps models swappable so better ones can be
 dropped in.
@@ -40,8 +34,7 @@ On the Steam Frame, switch to Desktop Mode, open Konsole and paste:
 curl -fsSL https://raw.githubusercontent.com/Project-Babble/Babble-Frame-Runtime/main/tools/get.sh | bash
 ```
 
-It downloads the newest release, checks it against the release's SHA-256 checksum, installs it in your home folder
-(no sudo) and restarts SteamVR. Updates after that appear in the SteamVR dashboard's Babble tab, next to the version.
+It downloads the newest release, checks it against the release's SHA-256 checksum, installs it in your home folder and restarts SteamVR. Updates after that appear in the SteamVR dashboard's Babble tab, next to the version.
 To uninstall, run `~/.local/share/babble-frame-runtime/uninstall.sh`.
 
 ## Building from source
@@ -51,17 +44,11 @@ To uninstall, run `~/.local/share/babble-frame-runtime/uninstall.sh`.
 3. Register the driver with `vrpathreg.sh`, then restart SteamVR.
 
 
-Once it runs, the runtime sends OSC to `127.0.0.1:8888`, which the Baballonia module for VRCFaceTracking reads. Other
-outputs can be added as plugins.
-
 ## Build profiles
 
 `-DBABBLE_PROFILE=release` (what releases ship) builds the USB Babble tracker as the only mouth and VRCFaceTracking as
 the only output; it leaves out the Frame's front-port mouth cameras and their camera arbiter, the VRChat-native output,
-the visualizer launcher, the camera-stream switch and the unused models. The default, `dev`, builds everything. The
-profile's `defaults.json` and SteamVR settings files are derived at configure time from the full ones
-(`cmake/babble_profile.cmake`), so there is one source of truth.
-
+the visualizer launcher, the camera-stream switch and the unused models. The default, `dev`, builds everything including unfinished features. 
 ## License
 
 Licensed under the [Babble Software Distribution License 1.0](LICENSE) non-commercial use only, and derivative works must be released under the same license with their source. Third-party code in `third_party/` keeps its own license.
