@@ -1,15 +1,5 @@
 #!/usr/bin/env python3
-"""Export the eye models (lid, pupil) to ExecuTorch .pte, fp32 and int8, and validate int8 against fp32.
-
-Run on the headset with its ExecuTorch venv so the exporter matches a known runtime, and with flatc on PATH:
-
-    PATH=~/edge-inference/.venv/bin:$PATH ~/edge-inference/.venv/bin/python tools/export/export_eye.py \
-        --models <dir with lid_mnv4_160.pt, pupil_cnx_160.pt> --frames <dir of eye_*.pgm dumps> --out <dir>
-
-Frames are DebugSink eye dumps (800x400: view 2 | view 3, already cropped to 400x400 each). Preprocessing is
-eye_osc_pc.py's prep_pair: view 3 rot90(2)+mirror, INTER_AREA to 160, (x/255 - 0.5)/0.25, batched [2,1,160,160].
-Even-numbered frames calibrate int8, odd-numbered frames validate it.
-"""
+"""Export the lid and pupil eye models to fp32 and int8 ExecuTorch .pte files, and compare int8 with fp32."""
 import argparse, glob, math, os, sys, time
 import cv2, numpy as np, torch
 from torchao.quantization.pt2e.quantize_pt2e import prepare_pt2e, convert_pt2e
@@ -33,14 +23,14 @@ def prep_pair(pane_l, pane_r):
 
 
 def load_frames(d, min_mean=15.0):
-    """Unlit frames (headset not worn: Valve's IR illuminators are off) would calibrate int8 on darkness."""
+    """Loads the eye frames and skips dark frames, because the IR illuminators are off when nobody wears the headset."""
     xs, dark = [], 0
     for p in sorted(glob.glob(os.path.join(d, "eye_*.pgm"))):
         g = cv2.imread(p, cv2.IMREAD_GRAYSCALE)
         if g[:, :400].mean() < min_mean or g[:, 400:800].mean() < min_mean:
             dark += 1
             continue
-        # numpy's [:, None] axis has stride 0, which ExecuTorch export rejects: force standard strides
+        # Use standard strides because ExecuTorch export does not accept the stride-0 axis from numpy [:, None].
         xs.append(torch.from_numpy(prep_pair(g[:, :400], g[:, 400:800])).clone(memory_format=torch.contiguous_format))
     if dark:
         print(f"skipped {dark} unlit frames (mean < {min_mean}); was the headset worn?")
@@ -107,7 +97,7 @@ def main():
             print(f"  pupil diameter |diff| px: mean {dpx.mean():.2f} p99 {np.percentile(dpx, 99):.2f} "
                   f"max {dpx.max():.2f} (fp32 diameter {px_of(ref).mean():.1f} px)")
         if key == "lid":
-            # How often int8 would flip the pupil gate (0.4 / 0.5 hysteresis) relative to fp32.
+            # Measure how frequently the int8 model changes the pupil gate decision of the fp32 model.
             flips = np.mean((ref < 0.4) != (q < 0.4)) * 100
             print(f"  lid gate (0.4) disagreement: {flips:.2f}% of eye samples")
 

@@ -11,31 +11,13 @@
 
 namespace babble {
 
-// Config type "fusionnet_mouth": the FusionNet stereo mouth model, with the
-// exact preprocessing and post-processing of mouth_osc_pc.py.
-//
-// Views: view 0 = left camera (face_l, /dev/video9), view 1 = right camera
-// mirrored; order swap -> flip -> rotate (rotation after the mirror), then
-// resize to 224 (INTER_LINEAR) -> equalizeHist -> /255. Signals: the 43
-// blendshapes in camelCase (the Baballonia module's addresses). A model's
-// 44th UserPresent output, if present, is ignored.
-//
-// Config: model, from, thread, swap (bool), flip ("r"|"l"|"lr"|"none"),
-// rotate (0|90|180|270, counter-clockwise), interp ("linear"|"area"),
-// one_euro ({min_cutoff 0.5, beta 3, d_cutoff 1} or false: the mouth's own
-// smoothing, tuned apart from the eyes'). Presence comes from the headset
-// (SteamVR proximity): the cameras pause while it's off and each new session
-// resets the filters.
-// calibration: {mode: "auto" (default)|"manual"|"raw", file: "calibration_mouth.json"},
-// probe_orientation (N > 0: for the first N frames also run all 8 rotate x
-// swap combinations and log them ranked by mean UserPresent, like
-// mouth_osc_pc.py --probe-orientation; tracking output is unaffected).
+// The "fusionnet_mouth" pipeline runs the FusionNet stereo mouth model with the processing of mouth_osc_pc.py.
 class FusionNetMouth : public PipelineBase {
 public:
     FusionNetMouth(const nlohmann::json &cfg, PipelineDeps deps) : PipelineBase(cfg, std::move(deps), "infM") {}
     bool init() override;
 
-    // Preprocess one stereo pair into the two model inputs (exposed for tests).
+    // Convert one stereo pair into the two model inputs, which is public for the tests.
     void prepare(const StereoFrame &sf, float *view0, float *view1);
 
 private:
@@ -53,11 +35,11 @@ private:
     std::vector<float> in0_, in1_;
     std::array<float, mouth::kNumChannels> out_{};
     std::atomic<bool> reset_pending_{false};
-    uint64_t last_capture_ns_ = 0;   // the previous frame's, for the filter's dt
+    uint64_t last_capture_ns_ = 0;   // This is the capture time of the previous frame, to calculate the filter dt.
 
     void probe(const StereoFrame &sf);
     int probe_left_ = 0, probe_total_ = 0;
     std::array<double, 8> probe_sum_{};
 };
 
-} // namespace babble
+}

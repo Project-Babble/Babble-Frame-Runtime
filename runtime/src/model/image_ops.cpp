@@ -9,19 +9,18 @@ namespace babble::img {
 
 namespace {
 
-// cvRound for float/double: round half to even, like the lrint OpenCV uses.
+// This is cvRound, which rounds half to even as the OpenCV lrint does.
 inline int round_even(double v) { return int(std::nearbyint(v)); }
 inline uint8_t sat_u8(int v) { return uint8_t(std::clamp(v, 0, 255)); }
 
-constexpr int kCoefBits = 11;              // INTER_RESIZE_COEF_BITS
-constexpr int kCoefScale = 1 << kCoefBits; // INTER_RESIZE_COEF_SCALE
+constexpr int kCoefBits = 11;              // This is INTER_RESIZE_COEF_BITS.
+constexpr int kCoefScale = 1 << kCoefBits; // This is INTER_RESIZE_COEF_SCALE.
 
-// Source index and fixed-point weights per destination coordinate, as in
-// OpenCV's resizeGeneric setup for INTER_LINEAR (ksize 2).
+// This table holds the source index and fixed-point weights for each destination coordinate, as OpenCV does.
 struct LinearTab {
     std::vector<int> ofs;
-    std::vector<int16_t> alpha;   // 2 per destination coordinate
-    int limit;                    // coordinates >= limit read a single source sample
+    std::vector<int16_t> alpha;   // There are 2 weights for each destination coordinate.
+    int limit;                    // A coordinate at or above limit reads one source sample.
 };
 
 LinearTab linear_tab(uint32_t ssize, uint32_t dsize) {
@@ -52,7 +51,7 @@ LinearTab linear_tab(uint32_t ssize, uint32_t dsize) {
     return t;
 }
 
-// ResizeArea table entry (computeResizeAreaTab).
+// This is one entry of the OpenCV computeResizeAreaTab table.
 struct AreaTab {
     int di, si;
     float alpha;
@@ -77,14 +76,14 @@ std::vector<AreaTab> area_tab(int ssize, int dsize, double scale) {
     return tab;
 }
 
-} // namespace
+}
 
 void resize_linear(View src, Mut dst) {
     const LinearTab xt = linear_tab(src.width, dst.width);
     const LinearTab yt = linear_tab(src.height, dst.height);
     const int dw = int(dst.width);
 
-    // Horizontal pass per source row into int buffers (HResizeLinear, fixed point).
+    // Resize each source row horizontally into int buffers, as the OpenCV HResizeLinear does.
     auto hresize = [&](int sy, std::vector<int> &row) {
         const uint8_t *S = src.data + size_t(sy) * src.stride;
         int dx = 0;
@@ -101,7 +100,7 @@ void resize_linear(View src, Mut dst) {
     for (uint32_t dy = 0; dy < dst.height; dy++) {
         int sy0 = yt.ofs[dy];
         int sy1 = std::min(sy0 + 1, int(src.height) - 1);
-        // Reuse horizontally resized rows across destination rows.
+        // Use the resized rows again for the next destination rows.
         if (have0 != sy0) {
             if (have1 == sy0) {
                 std::swap(r0, r1);
@@ -117,7 +116,7 @@ void resize_linear(View src, Mut dst) {
         }
         const int b0 = yt.alpha[dy * 2], b1 = yt.alpha[dy * 2 + 1];
         uint8_t *D = dst.data + size_t(dy) * dst.stride;
-        // VResizeLinear<uchar,int,short,FixedPtCast<...,22>>: OpenCV's exact rounding.
+        // Use the exact rounding of the OpenCV VResizeLinear.
         for (int x = 0; x < dw; x++)
             D[x] = uint8_t((((b0 * (r0[x] >> 4)) >> 16) + ((b1 * (r1[x] >> 4)) >> 16) + 2) >> 2);
     }
@@ -207,13 +206,13 @@ void rotate(View src, Mut dst, int q) {
             uint32_t sx, sy;
             switch (q) {
             case 0: sx = x; sy = y; break;
-            case 1: sx = w - 1 - y; sy = x; break;          // 90° counter-clockwise
-            case 2: sx = w - 1 - x; sy = h - 1 - y; break;  // 180°
-            default: sx = y; sy = h - 1 - x; break;         // 90° clockwise
+            case 1: sx = w - 1 - y; sy = x; break;          // This is 90° counter-clockwise.
+            case 2: sx = w - 1 - x; sy = h - 1 - y; break;  // This is 180°.
+            default: sx = y; sy = h - 1 - x; break;         // This is 90° clockwise.
             }
             D[x] = src.data[size_t(sy) * src.stride + sx];
         }
     }
 }
 
-} // namespace babble::img
+}

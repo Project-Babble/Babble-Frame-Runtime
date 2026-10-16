@@ -17,7 +17,7 @@ TEST_CASE("ExecuTorchRunner runs FusionNet and matches the Python ExecuTorch run
     ExecuTorchRunner r;
     REQUIRE(r.load(std::string(BABBLE_MODELS_DIR) + "/fusionnet_int8_xnnpack_qat_linear.pte"));
 
-    // Contract from mouth_osc_pc.py: two float32 [1,1,224,224] inputs, one [1,44] output.
+    // The contract from mouth_osc_pc.py is two float32 [1,1,224,224] inputs and one [1,44] output.
     REQUIRE(r.inputs().size() == 2);
     for (const auto &s : r.inputs()) {
         CHECK(s.dtype == DType::F32);
@@ -26,7 +26,7 @@ TEST_CASE("ExecuTorchRunner runs FusionNet and matches the Python ExecuTorch run
     REQUIRE(r.outputs().size() == 1);
     CHECK(r.outputs()[0].shape == std::vector<int64_t>{1, 44});
 
-    // Same synthetic input as tools/golden/make_runner_golden.py.
+    // This is the same synthetic input as in tools/golden/make_runner_golden.py.
     std::vector<std::vector<float>> in(2, std::vector<float>(224 * 224));
     for (size_t i = 0; i < 2; i++)
         for (size_t k = 0; k < in[i].size(); k++)
@@ -42,10 +42,10 @@ TEST_CASE("ExecuTorchRunner runs FusionNet and matches the Python ExecuTorch run
     float worst = 0;
     for (size_t k = 0; k < 44; k++)
         worst = std::max(worst, std::fabs(out[k] - golden[k]));
-    // int8 output step is ~0.0054; allow one step for XNNPACK version differences.
+    // The int8 output step is about 0.0054, and the test allows one step for XNNPACK version differences.
     CHECK_MESSAGE(worst <= 0.0055f, "max |diff| vs Python ExecuTorch = " << worst);
 
-    // Second run reuses the wrapped input tensors and must give the same result.
+    // The second run uses the wrapped input tensors again and must give the same result.
     std::vector<float> again(44);
     std::vector<TensorView> ov2{{again.data(), &r.outputs()[0]}};
     REQUIRE(r.run(iv, ov2));
@@ -58,7 +58,7 @@ TEST_CASE("ExecuTorchRunner runs the fp16 combined eye model and matches the Pyt
     ExecuTorchRunner r;
     REQUIRE(r.load(std::string(BABBLE_MODELS_DIR) + "/eye_split96_uncapped_fp16.pte"));
 
-    // Contract from its README: fp16 [2,1,96,96] in, fp16 [2,2] (lid, pupil per eye) out; lid uncapped.
+    // The README contract is fp16 [2,1,96,96] in and fp16 [2,2] (lid and pupil for each eye) out, with no cap on lid.
     REQUIRE(r.inputs().size() == 1);
     CHECK(r.inputs()[0].dtype == DType::F16);
     CHECK(r.inputs()[0].shape == std::vector<int64_t>{2, 1, 96, 96});

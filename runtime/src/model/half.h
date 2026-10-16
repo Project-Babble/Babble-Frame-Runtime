@@ -1,8 +1,6 @@
 #pragma once
 
-// float32 <-> IEEE binary16 for fp16 model inputs/outputs (round to nearest
-// even, like torch's .half()). Stored as uint16_t so buffers don't depend on
-// compiler support for _Float16 in headers.
+// Convert between float32 and IEEE binary16 with round to nearest even, as torch .half() does.
 
 #include <cstddef>
 #include <cstdint>
@@ -25,4 +23,4 @@ inline void from_half(const uint16_t *src, float *dst, size_t n) {
     }
 }
 
-} // namespace babble
+}

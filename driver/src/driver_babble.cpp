@@ -1,13 +1,4 @@
-// Babble SteamVR driver shim.
-//
-// Loaded by vrserver, which is always running on the Frame. The shim does not
-// add any tracked devices; it only supervises the Babble runtime as a separate
-// process so a runtime crash can never take down vrserver (and with it the
-// Frame shell).
-//
-// Lifetime: the runtime inherits the read end of a pipe as fd 3. vrserver holds
-// the write end, so if vrserver exits for any reason (including a crash) the
-// runtime sees EOF on fd 3 and shuts down. Cleanup() also sends SIGTERM.
+// This SteamVR driver shim runs the Babble runtime as a separate process, so that a runtime crash cannot stop vrserver.
 
 #include <openvr_driver.h>
 
@@ -47,11 +38,11 @@ namespace {
 
 constexpr int kParentFd = 3;
 constexpr auto kPollInterval = std::chrono::milliseconds(500);
-// Polls without driver.vrdrivermanifest before the folder counts as uninstalled.
+// The number of polls without driver.vrdrivermanifest before the shim thinks the app is uninstalled.
 constexpr int kUninstallPolls = 4;
 constexpr auto kTermGrace = std::chrono::seconds(3);
 constexpr int kMaxBackoffSeconds = 30;
-// A runtime that stays up this long is considered healthy and resets backoff.
+// A runtime that runs for this time resets the backoff.
 constexpr auto kHealthyUptime = std::chrono::seconds(60);
 
 void Log(const char *fmt, ...) {
@@ -64,7 +55,7 @@ void Log(const char *fmt, ...) {
         vr::VRDriverLog()->Log(buf);
 }
 
-// Directory containing this .so: <driver root>/bin/linuxarm64
+// Get the directory of this .so, which is <driver root>/bin/linuxarm64.
 std::string ModuleDir() {
     Dl_info info{};
     if (!dladdr(reinterpret_cast<void *>(&ModuleDir), &info) || !info.dli_fname)
@@ -74,7 +65,7 @@ std::string ModuleDir() {
     return slash == std::string::npos ? std::string(".") : path.substr(0, slash);
 }
 
-// $XDG_STATE_HOME/babble-frame-runtime, created if missing.
+// Get $XDG_STATE_HOME/babble-frame-runtime, and make it if it does not exist.
 std::string StateDir() {
     std::string base;
     if (const char *xdg = getenv("XDG_STATE_HOME"); xdg && *xdg)
@@ -89,7 +80,7 @@ std::string StateDir() {
     return dir;
 }
 
-// <driver root>: ModuleDir() is <root>/bin/linuxarm64.
+// Get the driver root, which is two levels above ModuleDir().
 std::string DriverRoot() {
     std::string dir = ModuleDir();
     for (int i = 0; i < 2; i++) {
@@ -105,12 +96,7 @@ bool DriverFolderPresent() {
     return access((DriverRoot() + "/driver.vrdrivermanifest").c_str(), F_OK) == 0;
 }
 
-// Steam deleted the driver folder (the app was uninstalled, or moved to
-// another library). Drop it from SteamVR's external driver list so the next
-// SteamVR start does not look for it, and remove the runtime's state dir
-// (logs, generated input manifests). User settings in the config dir stay,
-// so a reinstall keeps them; babble-setup --uninstall removes those too.
-// The shim itself stays loaded in vrserver, idle, until SteamVR restarts.
+// After Steam deletes the driver folder, remove it from the SteamVR driver list and remove the state dir.
 void ForgetInstall() {
     namespace fs = std::filesystem;
     const std::string root = DriverRoot();
@@ -196,8 +182,7 @@ private:
             while (!(exited = Reap(&status))) {
                 if (Sleep(kPollInterval))
                     break;
-                // Steam removing the folder under us is the uninstall signal:
-                // stop tracking now rather than at the next SteamVR restart.
+                // Stop the runtime now if Steam removes the driver folder, because that is an uninstall.
                 missing = DriverFolderPresent() ? 0 : missing + 1;
                 if (missing >= kUninstallPolls) {
                     Log("Babble: driver folder is gone (app uninstalled); stopping the runtime\n");
@@ -235,15 +220,12 @@ private:
             Log("Babble: pipe2 failed: %s\n", strerror(errno));
             return false;
         }
-        // The child's stderr: the runtime writes (and rotates) runtime.log itself,
-        // so this only catches what comes before its logger is up (a crash at
-        // start, a missing library). Trimmed when it passes 1 MB.
+        // The child stderr log gets only the output from before the runtime logger starts.
         struct stat logStat{};
         const bool trim = stat(logPath_.c_str(), &logStat) == 0 && logStat.st_size > (1 << 20);
         int logFd = open(logPath_.c_str(), O_WRONLY | O_CREAT | O_CLOEXEC | (trim ? O_TRUNC : O_APPEND), 0644);
 
-        // Everything the child needs is prepared before fork(): vrserver is
-        // multithreaded, so the child may only make async-signal-safe calls.
+        // Prepare all data before fork() because the child must use only async-signal-safe calls.
         const char *argv[] = {exe_.c_str(), nullptr};
         const char *exe = exe_.c_str();
         int readFd = fds[0];
@@ -259,8 +241,7 @@ private:
         }
         if (pid == 0) {
             setsid();
-            // Signal handlers reset on exec, but vrserver may have blocked or
-            // ignored signals the runtime relies on.
+            // Reset the signal mask because vrserver can block signals that the runtime needs.
             sigset_t none;
             sigemptyset(&none);
             sigprocmask(SIG_SETMASK, &none, nullptr);
@@ -274,8 +255,8 @@ private:
                 dup2(logFd, STDOUT_FILENO);
                 dup2(logFd, STDERR_FILENO);
             }
-            dup2(readFd, kParentFd); // dup2 clears O_CLOEXEC on the new fd
-            // Don't leak vrserver's descriptors into the runtime.
+            dup2(readFd, kParentFd); // dup2 clears O_CLOEXEC on the new fd.
+            // Do not give the vrserver descriptors to the runtime.
             syscall(SYS_close_range, kParentFd + 1, ~0U, 0);
             execv(exe, const_cast<char *const *>(argv));
             _exit(127);
@@ -290,8 +271,7 @@ private:
         return true;
     }
 
-    // Returns true once the child has exited. If vrserver ignores SIGCHLD the
-    // kernel auto-reaps and waitpid reports ECHILD, so fall back to kill(0).
+    // Return true after the child exits, and use kill(0) if waitpid reports ECHILD.
     bool Reap(int *status) {
         pid_t r = waitpid(pid_, status, WNOHANG);
         if (r == pid_)
@@ -328,7 +308,7 @@ private:
         }
     }
 
-    // Sleeps for up to `d`; returns true if Stop() was requested.
+    // Sleep for up to `d`, and return true if a Stop() request occurs.
     template <class Duration>
     bool Sleep(Duration d) {
         std::unique_lock<std::mutex> lock(mutex_);
@@ -350,10 +330,9 @@ public:
     vr::EVRInitError Init(vr::IVRDriverContext *context) override {
         VR_INIT_SERVER_DRIVER_CONTEXT(context);
         std::string exe = ModuleDir() + "/babble-runtime";
-        std::string log = StateDir() + "/shim.log";   // the runtime's early stderr; it writes runtime.log itself
+        std::string log = StateDir() + "/shim.log";   // This log holds the early stderr of the runtime.
         Log("Babble: driver shim " BABBLE_VERSION_DISPLAY " loaded\n");
-        // Failing to start the runtime is not fatal to SteamVR; stay loaded
-        // and report it rather than returning an init error.
+        // Do not return an init error if the runtime does not start, because SteamVR must continue.
         supervisor_.Start(exe, log);
         return vr::VRInitError_None;
     }
@@ -376,7 +355,7 @@ private:
 
 BabbleProvider g_provider;
 
-} // namespace
+}
 
 BABBLE_EXPORT void *HmdDriverFactory(const char *interfaceName, int *returnCode) {
     if (strcmp(interfaceName, vr::IServerTrackedDeviceProvider_Version) == 0)

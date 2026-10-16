@@ -9,7 +9,7 @@
 
 namespace {
 const babble::log::Logger LOG("settings");
-} // namespace
+}
 
 namespace babble {
 
@@ -29,14 +29,14 @@ std::optional<Type> type_of(const json &v) {
     return std::nullopt;
 }
 
-// The value as SteamVR stores it for this entry, or nullopt if the type doesn't fit.
+// Returns the value as SteamVR stores it for this entry, or nullopt if the type does not match.
 std::optional<json> normalize(Type t, const json &v) {
     if (type_of(v) != t)
         return std::nullopt;
     return t == Type::Int ? json(int32_t(std::lround(v.get<double>()))) : v;
 }
 
-} // namespace
+}
 
 std::vector<SteamVrSettingsBridge::Entry> SteamVrSettingsBridge::entries_from_config(const json &cfg) {
     std::vector<Entry> out;
@@ -117,7 +117,7 @@ std::vector<std::pair<std::string, json>> SteamVrSettingsBridge::poll(const json
         return changes;
     }
     if (connection_ != vr_.connection()) {
-        // New connection: SteamVR shows what the runtime is using.
+        // On a new connection, write the values of the runtime to SteamVR.
         known_.clear();
         for (const Entry &e : entries_) {
             auto v = normalize(e.type, cfg[json::json_pointer(e.id)]);
@@ -157,4 +157,4 @@ void SteamVrSettingsBridge::push(const std::string &id, const json &value) {
     }
 }
 
-} // namespace babble
+}

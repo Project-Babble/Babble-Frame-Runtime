@@ -1,8 +1,4 @@
-// babble-runtime: Babble mouth + eye tracking runtime for the Steam Frame.
-//
-// Normally spawned by the SteamVR driver shim (driver/src/driver_babble.cpp)
-// with a pipe on fd 3; EOF there or SIGTERM means shut down. --standalone
-// runs without the shim for development over SSH.
+// The Babble mouth and eye tracking runtime for the Steam Frame, which stops at EOF on fd 3 or at SIGTERM.
 
 #include "babble_version.h"
 #include "camera/tracking_source.h"
@@ -59,15 +55,13 @@
 
 namespace {
 const babble::log::Logger LOG("main");
-} // namespace
+}
 
 using namespace babble;
 
 namespace {
 
-// The platform's camera routing (the arbiter under /etc/babble-camera): only
-// the Frame's own mouth cameras depend on it, so builds without that source
-// have none, and everything that mentions it here is a no-op.
+// Polls the camera arbiter, which exists only in builds that have the Frame mouth cameras.
 struct ArbiterPoll {
 #if BABBLE_FRUNK_MOUTH
     CameraArbiterClient client;
@@ -84,14 +78,14 @@ struct ArbiterPoll {
         client.poll();
         next = now + (any_streaming ? streaming_ns : idle_ns);
     }
-    void recheck(uint64_t now) { next = now; }   // capture trouble: re-check the platform right away
+    void recheck(uint64_t now) { next = now; }   // Poll the arbiter again immediately after a capture problem.
     std::string state() const { return to_string(client.state()); }
 #else
     explicit ArbiterPoll(const json &) {}
     const CameraArbiterClient *ptr() const { return nullptr; }
     void tick(uint64_t, bool) {}
     void recheck(uint64_t) {}
-    std::string state() const { return {}; }   // "": no arbiter in this build
+    std::string state() const { return {}; }   // This build has no arbiter.
 #endif
 };
 
@@ -153,10 +147,10 @@ json load(const Options &opt) {
         LOG.warn("config: %s; using the default", fix.c_str());
     json &c = cl.config;
     if (opt.no_eye && c["sources"].contains("eye")) c["sources"]["eye"]["enabled"] = false;
-    // --no-mouth: no mouth tracker at all, the Frame's own cameras or a USB one.
+    // The --no-mouth option turns off the Frame mouth cameras and the USB mouth camera.
     for (const char *m : {"mouth", "face"})
         if (opt.no_mouth && c["sources"].contains(m)) c["sources"][m]["enabled"] = false;
-    // --dump-frames targets the "debug" output module (added if not configured).
+    // The --dump-frames option uses the "debug" output module and adds it if necessary.
     if (!opt.dump_dir.empty() || opt.dump_count >= 0) {
         json &d = c["sinks"]["debug"];
         if (!d.contains("type")) d["type"] = "debug";
@@ -172,7 +166,7 @@ json load(const Options &opt) {
     return cl.config;
 }
 
-// log_level (the default) and log_levels ({"usb": "debug", ...} per module).
+// Applies the default log_level and the log_levels for each module.
 void apply_log_level(const json &c) {
     log::Level lvl;
     std::string name = c.value("log_level", "info");
@@ -187,9 +181,7 @@ void apply_log_level(const json &c) {
     }
 }
 
-// One line from the stats JSON for the log: per pipeline the rate and
-// inference time (this interval), plus any counter that isn't zero among the
-// ones that mean trouble (drops, errors, restarts).
+// Makes one log line from the stats JSON with the pipeline rates, inference times and problem counters.
 std::string stats_summary(const std::string &stats_json) {
     std::string err;
     auto j = parse_json(stats_json, &err);
@@ -220,8 +212,7 @@ std::string stats_summary(const std::string &stats_json) {
            (trouble.empty() ? "" : "; counters: " + trouble);
 }
 
-// The log file: runtime.log in the state dir under the shim (standalone runs
-// get their own file, so they don't interleave with the supervised runtime).
+// Opens the log file, which is different for standalone runs so that the two logs stay separate.
 void open_log_file(const json &c, bool supervised) {
     const json f = section(c, "log_file");
     const double max_mb = f.value("max_mb", 8.0);
@@ -231,11 +222,7 @@ void open_log_file(const json &c, bool supervised) {
         LOG.warn("cannot write %s: %s; logging to stderr only", path.c_str(), strerror(errno));
 }
 
-// The settings panel's rows (config["dashboard"]["settings"]), with the
-// current values from the config. Rows whose setting doesn't exist (e.g. a
-// source that isn't configured) are left out.
-// Settings the debug overlay changes for this run only ("persist": false):
-// never written to settings.json.
+// Returns the settings with "persist": false, which the runtime never writes to settings.json.
 std::set<std::string> unsaved_settings(const json &cfg) {
     std::set<std::string> out;
     for (const json &row : section(cfg, "dashboard").value("settings", json::array()))
@@ -278,7 +265,7 @@ int add_epoll(int ep, int fd) {
     return epoll_ctl(ep, EPOLL_CTL_ADD, fd, &ev);
 }
 
-} // namespace
+}
 
 int main(int argc, char **argv) {
     Options opt;
@@ -309,7 +296,7 @@ int main(int argc, char **argv) {
         LOG.error("event setup failed: %s", strerror(errno));
         return 1;
     }
-    itimerspec its{{0, 100000000}, {0, 100000000}};   // 10 Hz housekeeping tick
+    itimerspec its{{0, 100000000}, {0, 100000000}};   // The housekeeping timer runs at 10 Hz.
     if (timerfd_settime(tfd, 0, &its, nullptr) != 0 || add_epoll(ep, sfd) != 0 || add_epoll(ep, tfd) != 0 ||
         (shim && add_epoll(ep, ShimLink::kFd) != 0)) {
         LOG.error("event setup failed: %s", strerror(errno));
@@ -319,7 +306,7 @@ int main(int argc, char **argv) {
     StatsRegistry stats;
     ExpressionState state;
     ArbiterPoll arbiter(cfg);
-    // The one SteamVR connection: headset presence (proximity sensor), IPD, gaze input.
+    // This is the only SteamVR connection of the runtime.
     SteamVrClient steamvr;
     {
         const json vc = cfg.value("steamvr", json::object());
@@ -331,8 +318,7 @@ int main(int argc, char **argv) {
         o.absent_after_s = vc.value("absent_after_s", o.absent_after_s);
         steamvr.start(thread_spec(threads, "steamvr", "bbl-steamvr"), o);
     }
-    // SteamVR's eye-service shared memory (independent gaze, native openness);
-    // it only reads while a pipeline asks for it.
+    // The client for the SteamVR eye-service shared memory reads only while a pipeline asks for it.
     EyeServerClient eye_server;
     {
         const json ec = cfg.value("eye_server", json::object());
@@ -341,15 +327,13 @@ int main(int argc, char **argv) {
         eye_server.start(thread_spec(threads, ec.value("thread", "eyesrv"), "bbl-eyesrv"), o, &stats);
     }
 
-    // One output slot per configured source; pipelines find theirs by name.
+    // Each configured source has one output slot, and pipelines find their slot by name.
     const json scfg = cfg.value("sources", json::object());
     std::map<std::string, std::unique_ptr<LatestSlot<StereoFrame>>> slots;
     for (auto it = scfg.begin(); it != scfg.end(); ++it)
         slots[it.key()] = std::make_unique<LatestSlot<StereoFrame>>();
 
-    // Output modules, built from config["sinks"] by type.
-    // Sinks with an "output" role ("vrcft", "vrc_native") run only while the
-    // Output setting (/output) picks that role; the rest always run.
+    // A sink with an "output" role runs only while the Output setting selects that role.
     struct SinkEntry {
         std::string name;
         std::unique_ptr<ISink> sink;
@@ -365,7 +349,7 @@ int main(int argc, char **argv) {
             continue;
         }
         if (!it.value().contains("type")) {
-            // Settings saved for an output this build doesn't have (e.g. VRChat native in a release build).
+            // Ignore saved settings for an output that this build does not have.
             LOG.info("sink %s: not part of this build; ignoring its saved settings", it.key().c_str());
             continue;
         }
@@ -378,9 +362,7 @@ int main(int argc, char **argv) {
         sinks.push_back({it.key(), std::move(sink), it.value().value("output", "")});
     }
 
-    // Model pipelines, built from config["pipelines"] by type. XNNPACK's
-    // threadpool is process-global and ignores per-thread pinning, so keep it
-    // at one thread: each model runs on its own pinned pipeline thread.
+    // Use one XNNPACK thread because its threadpool ignores thread pinning and each model has its own pinned thread.
     ExecuTorchRunner::set_threads(1);
     const std::filesystem::path models_dir = paths::resource_dir() / "models";
     auto slot_of = [&](const std::string &source) -> LatestSlot<StereoFrame> * {
@@ -406,7 +388,7 @@ int main(int argc, char **argv) {
     struct SourceEntry {
         std::string name;
         std::unique_ptr<ITrackingSource> src;
-        std::string last_state{};   // for logging state changes
+        std::string last_state{};   // The last state, which the log uses to show state changes.
     };
     std::vector<SourceEntry> sources;
     for (auto it = scfg.begin(); it != scfg.end(); ++it) {
@@ -415,7 +397,7 @@ int main(int argc, char **argv) {
             continue;
         }
         if (!it.value().contains("type")) {
-            // Settings saved for a source this build doesn't have (e.g. the Frame's mouth cameras in a release build).
+            // Ignore saved settings for a source that this build does not have.
             LOG.info("source %s: not part of this build; ignoring its saved settings", it.key().c_str());
             continue;
         }
@@ -425,20 +407,19 @@ int main(int argc, char **argv) {
             sources.push_back({it.key(), std::move(src)});
     }
 
-    // Where tracking goes: VRCFaceTracking (the PC link) or VRChat itself.
+    // The output is VRCFaceTracking through the PC link, or VRChat.
     auto output_choice = [&] {
         const json &o = cfg.value("output", json("vrcft"));
         return o.is_string() ? o.get<std::string>() : std::string("vrcft");
     };
-    // A saved choice this build has no module for (a release build with
-    // "output": "vrc_native" in settings.json) would leave no output at all.
+    // Use VRCFaceTracking if this build has no module for the saved output.
     if (std::none_of(sinks.begin(), sinks.end(), [&](const SinkEntry &k) { return k.output == output_choice(); })) {
         LOG.warn("output: %s is not available in this build; using VRCFaceTracking", output_choice().c_str());
         cfg["output"] = "vrcft";
     }
     for (auto it = sinks.begin(); it != sinks.end();) {
         if (!it->output.empty() && it->output != output_choice()) {
-            ++it;   // started when the Output setting picks it
+            ++it;   // This sink starts when the Output setting selects it.
             continue;
         }
         if (it->sink->start()) {
@@ -467,11 +448,11 @@ int main(int argc, char **argv) {
             }
         }
     };
-    // For the debug overlay's status line: the PC link and the native sender (the first of each).
+    // The status line of the debug overlay uses the first PC link and the first native sender.
     LinkSink *pc_link = nullptr;
     VrcNativeSink *vrc_native = nullptr;
     const SinkEntry *pc_link_entry = nullptr, *vrc_native_entry = nullptr;
-    uint64_t native_sent_last = 0;   // blobs sent at the last status refresh
+    uint64_t native_sent_last = 0;   // The number of blobs sent at the last status refresh.
     for (auto &k : sinks) {
         if (!pc_link && (pc_link = dynamic_cast<LinkSink *>(k.sink.get())))
             pc_link_entry = &k;
@@ -481,8 +462,7 @@ int main(int argc, char **argv) {
     for (auto &p : pipelines)
         p->start();
 
-    // A feed's user on/off: the source stops its cameras, and every pipeline
-    // of that feed (incl. SteamVR gaze for the eyes) goes neutral.
+    // When the user turns a feed off, its source stops the cameras and its pipelines send neutral values.
     auto set_feed_tracking = [&](const std::string &feed, bool on) {
         for (auto &s : sources)
             if (s.name == feed)
@@ -496,10 +476,7 @@ int main(int argc, char **argv) {
             set_feed_tracking(s.name, false);
 
 #if BABBLE_FRUNK_MOUTH
-    // The mouth comes from the Frame's own cameras, the "frunk" (source
-    // "mouth"), or a USB camera such as a Babble face tracker (source "face"),
-    // per "mouth_source". The Mouth Tracking switch (/sources/mouth/tracking)
-    // turns whichever it is on or off; the other one stays off.
+    // The mouth_source setting selects the Frame mouth cameras or a USB camera, and the other source stays off.
     auto setting_at = [&](const char *pointer, const json &fallback) {
         const json::json_pointer ptr(pointer);
         return cfg.contains(ptr) && std::string(cfg[ptr].type_name()) == fallback.type_name() ? cfg[ptr] : fallback;
@@ -511,8 +488,7 @@ int main(int argc, char **argv) {
         set_feed_tracking("face", on && mouth_from_usb());
     };
     route_mouth();
-    // The Mouth tracking rate applies to the USB camera too, capped at its own
-    // process_fps (the mono face model is costly: 30 by default).
+    // The Mouth tracking rate also applies to the USB camera, with its own process_fps as the maximum.
     ITrackingSource *face_source = nullptr;
     for (auto &s : sources)
         if (s.name == "face")
@@ -524,17 +500,14 @@ int main(int argc, char **argv) {
     };
     if (face_source)
         face_source->set_process_fps(usb_mouth_rate());
-    // The mouth feed as the overlay sees it: its source now, its label, and
-    // the setting its switch flips.
+    // These values show the mouth feed on the overlay.
     auto mouth_feed = [&] { return mouth_from_usb() ? "face" : ui::kFeedSources[0]; };
     auto mouth_label = [&] { return mouth_from_usb() ? "usb" : "frunk"; };
     const std::string mouth_tracking_id = "/sources/mouth/tracking";
-    // The settings that go through the mouth routing: nullopt = not one of
-    // them; false = rejected, nothing applied; true = applied (cfg updated).
+    // Returns nullopt for other settings, false if it rejects the setting, or true if it applies the setting.
     auto apply_mouth_setting = [&](const std::string &id, const json &value) -> std::optional<bool> {
         if (id == "/sources/face/tracking") {
-            // The USB camera follows Mouth Tracking and Mouth Source; switching it
-            // on by itself would run two mouth trackers at once.
+            // Reject this setting because it can cause two mouth trackers to run at the same time.
             LOG.warn("settings: ignoring %s: set /sources/mouth/tracking and /mouth_source instead", id.c_str());
             return false;
         }
@@ -556,16 +529,14 @@ int main(int argc, char **argv) {
         return true;
     };
 #else
-    // The USB Babble tracker is the mouth (source "face"): its on/off and rate
-    // are ordinary source settings, handled by the per-source loop below.
+    // In this build, the USB Babble tracker is the mouth and uses ordinary source settings.
     auto mouth_feed = [] { return "face"; };
     auto mouth_label = [] { return "usb"; };
     const std::string mouth_tracking_id = "/sources/face/tracking";
     auto apply_mouth_setting = [](const std::string &, const json &) -> std::optional<bool> { return std::nullopt; };
 #endif
 
-    // The USB camera source, and the camera list the debug overlay shows
-    // (read at start and whenever the overlay asks for a refresh).
+    // The runtime reads the USB camera list at start and when the overlay asks for a refresh.
     BabbleUsbSource *usb_source = nullptr;
     for (auto &s : sources)
         if (!usb_source)
@@ -584,10 +555,7 @@ int main(int argc, char **argv) {
     };
     refresh_usb_cameras();
 
-    // The "Babble" tab in the SteamVR dashboard: a debug overlay, shown while
-    // dashboard.enabled is on (the Show App Window toggle in SteamVR Settings).
-    // The object lives for the whole run so its GPU objects outlive the
-    // SteamVR connection; the setting only starts and stops the tab.
+    // The dashboard object stays for the whole run because its GPU objects must outlive the SteamVR connection.
     const json dcfg = cfg.value("dashboard", json::object());
     auto dashboard = std::make_unique<ui::Dashboard>();
     auto set_dashboard = [&](bool on) {
@@ -607,19 +575,16 @@ int main(int argc, char **argv) {
         LOG.info("dashboard: debug overlay %s", on ? "on" : "off");
     };
     set_dashboard(dcfg.value("enabled", false));
-    // The tracking visualizer the debug overlay can start.
+    // The debug overlay can start this tracking visualizer.
     AppLauncher visualizer(cfg.value("visualizer", json::object()),
                            (paths::state_dir() / "visualizer.log").string());
     const std::filesystem::path settings_file = default_settings_file();
 
-    // The driver's "Expression Tracking" section in SteamVR Settings.
+    // This client handles the "Expression Tracking" section of the driver in SteamVR Settings.
     SteamVrSettingsBridge steamvr_settings(steamvr, section(cfg, "steamvr_settings").value("section", "driver_babble"),
                                            SteamVrSettingsBridge::entries_from_config(cfg));
 
-    // One path for every live setting change: the Babble tab, SteamVR
-    // Settings, or a config reload (SIGHUP; not saved, the files already
-    // have it). Applies it, keeps cfg current, saves panel/SteamVR changes to
-    // settings.json, and shows the new value in the other places.
+    // Applies a live setting change from any origin, saves it if necessary, and shows the new value elsewhere.
     enum class Origin { Dashboard, SteamVr, Reload };
     auto origin_name = [](Origin o) {
         return o == Origin::Dashboard ? "the Babble tab" : o == Origin::SteamVr ? "SteamVR Settings" : "config reload";
@@ -648,7 +613,7 @@ int main(int argc, char **argv) {
                 applied = true;
             } else if (id.starts_with("/sources/" + s.name + "/") &&
                        s.src->set_option(id.substr(s.name.size() + 10), value)) {
-                applied = true;   // a module's own option (the USB camera choice)
+                applied = true;   // This is an option of the module, such as the USB camera choice.
             }
         }
         for (auto &p : pipelines) {
@@ -673,7 +638,7 @@ int main(int argc, char **argv) {
         }
         if (!applied) {
             LOG.warn("settings: ignoring %s = %s", id.c_str(), value.dump().c_str());
-            // SteamVR already shows the rejected value: put ours back.
+            // Send our value back because SteamVR already shows the rejected value.
             if (origin == Origin::SteamVr && cfg.contains(ptr))
                 steamvr_settings.push(id, cfg[ptr]);
             return;
@@ -692,11 +657,11 @@ int main(int argc, char **argv) {
                 LOG.error("settings: saving %s failed: %s", id.c_str(), err.c_str());
         }
         if (dashboard->started() && (value.is_number() || value.is_boolean()))
-            dashboard->set_choice(id, value.is_boolean() ? double(value.get<bool>()) : value.get<double>());   // feed switches follow the source's state
+            dashboard->set_choice(id, value.is_boolean() ? double(value.get<bool>()) : value.get<double>());
         if (origin != Origin::SteamVr)
             steamvr_settings.push(id, value);
     };
-    // A malformed id or a value of the wrong type is logged, never fatal.
+    // Log a malformed id or a value of the wrong type, and do not stop the runtime.
     auto apply_setting = [&](const std::string &id, const json &value, Origin origin) {
         try {
             apply_setting_unchecked(id, value, origin);
@@ -705,7 +670,7 @@ int main(int argc, char **argv) {
         }
     };
 
-    // Tracking rate per source: frames its pipelines processed per second.
+    // The tracking rate of a source is the number of frames per second that its pipelines processed.
     std::vector<uint64_t> processed_last(pipelines.size(), 0);
     for (size_t i = 0; i < pipelines.size(); i++)
         processed_last[i] = pipelines[i]->processed();
@@ -715,7 +680,7 @@ int main(int argc, char **argv) {
         ui::FeedStatus f;
         auto it = std::find_if(sources.begin(), sources.end(), [&](const SourceEntry &e) { return e.name == name; });
         if (it == sources.end())
-            return f;   // not configured or disabled: Off, no switch
+            return f;   // A source that is not configured or is disabled shows Off with no switch.
         f.available = true;
         f.tracking = it->src->tracking();
         switch (it->src->activity()) {
@@ -727,7 +692,7 @@ int main(int argc, char **argv) {
             f.detail = it->src->last_error();
             break;
         case SourceActivity::Streaming: {
-            // Streaming but nothing processed yet (or no pipeline reads it): still starting.
+            // A source that streams but has no processed frames yet shows Starting.
             auto hz = source_hz.find(name);
             f.hz = hz == source_hz.end() ? 0 : hz->second;
             f.health = f.hz > 0.5 ? ui::Health::Working : ui::Health::Starting;
@@ -737,10 +702,9 @@ int main(int argc, char **argv) {
         return f;
     };
 
-    // Diagnostics file (SIGUSR1, the Babble tab): everything needed to look
-    // into a problem report without the headset.
-    std::string last_stats = "{}";   // the latest stats render (JSON)
-    std::string last_diagnostics;    // the last diagnostics file written
+    // The diagnostics file has all the data to examine a problem report without the headset.
+    std::string last_stats = "{}";   // The latest stats in JSON.
+    std::string last_diagnostics;    // The path of the last diagnostics file.
     auto diagnostics_text = [&] {
         std::ostringstream o;
         const time_t wall = time(nullptr);
@@ -799,8 +763,7 @@ int main(int argc, char **argv) {
         return path;
     };
 
-    // Dataset recording for the capture app: the recorder module taps every
-    // source's frames, and the app drives it over a local socket.
+    // The recorder gets the frames of every source, and the capture app controls it over a local socket.
     RecordSink *recorder = nullptr;
     for (auto &k : sinks)
         if (auto *r = dynamic_cast<RecordSink *>(k.sink.get()); r && k.running)
@@ -808,7 +771,7 @@ int main(int argc, char **argv) {
     if (recorder) {
         for (auto &s : sources)
             s.src->set_frame_tap(recorder);
-        // Valve's eye-service samples go into the session as valve_eye.bin.
+        // The recorder writes the Valve eye-service samples to valve_eye.bin in the session.
         eye_server.set_listener([recorder](const eye_server::Sample &s) { recorder->add_eye_sample(s); });
     }
     auto find_source = [&](const std::string &name) -> ITrackingSource * {
@@ -826,15 +789,14 @@ int main(int argc, char **argv) {
         }
         return j;
     };
-    // Uploads of consented sessions, in the background; never while recording.
+    // The uploader sends consented sessions in the background, and never while the recorder records.
     const json capture_cfg = section(cfg, "capture");
     capture::Uploader uploader(capture_cfg.value("upload", json::object()),
                                recorder ? recorder->dir() : paths::data_dir() / "captures", threads,
                                [&] { return recorder && recorder->status().recording; });
     uploader.start();
     capture::FnBackend capture_backend;
-    // The eye camera rate follows the display refresh rate, which an XR app
-    // (the capture app included) can change, so status carries both live.
+    // The status has the live eye camera rate because an XR app can change the display refresh rate.
     auto eye_json = [&] {
         json eye = source_json("eye");
         if (eye.is_object() && steamvr.display_hz() > 0)
@@ -873,7 +835,7 @@ int main(int argc, char **argv) {
         spec.routine_def = req.value("routine_def", json(nullptr));
         spec.valve_eye = find_source("eye") != nullptr;
         for (auto &s : sources) {
-            // The rate the encoder is told; the stamps carry the real timing.
+            // The encoder gets this nominal rate, and the timestamps give the real timing.
             double fps = s.src->camera_fps();
             const json &sc = cfg["sources"][s.name];
             if (fps <= 0)
@@ -887,7 +849,7 @@ int main(int argc, char **argv) {
         spec.context["mouth_source"] = mouth_label();
         spec.context["eye_rate_divisor"] = cfg["sources"].value("eye", json::object()).value("rate_divisor", 1);
         if (spec.valve_eye)
-            eye_server.want(EyeServerClient::Record, true);   // until the session finishes
+            eye_server.want(EyeServerClient::Record, true);   // This stays on until the session finishes.
         const auto r = recorder->start_session(spec);
         if (!r.ok) {
             eye_server.want(EyeServerClient::Record, false);
@@ -913,8 +875,7 @@ int main(int argc, char **argv) {
             return capture::Result::fail("bad_request", "not recording");
         return capture::Result{};
     };
-    // The protocol names sources by role, as hello does: "eye", and "mouth"
-    // for the current mouth feed; any other recorded source keeps its name.
+    // The protocol uses "mouth" for the current mouth feed, and other sources keep their names.
     auto protocol_source = [&](const std::string &name) -> std::string {
         return name == mouth_feed() ? "mouth" : name;
     };
@@ -949,15 +910,13 @@ int main(int argc, char **argv) {
     };
     capture_backend.on_status = capture_status;
     capture_backend.on_upload = [&](const std::string &session) { return uploader.queue(session); };
-    // The app itself: an optional add-on, installed from its GitHub releases.
+    // The installer gets the optional capture app from its GitHub releases.
     const json app_cfg = capture_cfg.value("app", json::object());
     capture::AppInstaller installer(app_cfg, capture::kProtocol, threads);
     installer.start();
     const uint64_t app_check_ns = uint64_t(std::max(1.0, app_cfg.value("check_hours", 6.0)) * 3600e9);
     uint64_t app_checked_at = 0;
-    // The runtime's own updates (installs made by install.sh): checked a minute
-    // after start, then every few hours; installed and restarted into from the
-    // Babble tab's update pill.
+    // The updater checks for runtime updates one minute after start and then every few hours.
     const json update_cfg = section(cfg, "update");
     update::RuntimeUpdater updater(update_cfg,
                                    {BABBLE_VERSION, std::string(BABBLE_VERSION) != BABBLE_VERSION_DISPLAY,
@@ -967,9 +926,9 @@ int main(int argc, char **argv) {
     const uint64_t update_check_ns = uint64_t(std::max(1.0, update_cfg.value("check_hours", 6.0)) * 3600e9);
     uint64_t update_check_at = mono_ns() + 60'000'000'000ull;
     std::optional<AppLauncher> capture_app;
-    std::string capture_app_entry;   // what capture_app was built for
+    std::string capture_app_entry;   // The entry that capture_app uses.
     capture::Server capture_server(capture_backend);
-    std::vector<int> capture_fds;   // registered with epoll
+    std::vector<int> capture_fds;   // These descriptors are registered with epoll.
     auto sync_capture_fds = [&] {
         for (int fd : capture_fds)
             epoll_ctl(ep, EPOLL_CTL_DEL, fd, nullptr);
@@ -986,8 +945,7 @@ int main(int argc, char **argv) {
     }
     uint64_t next_capture_status = 0;
 
-    // Stats: the full set to stats.jsonl every interval; in the log, the status
-    // line when it changes and a short summary every summary_s.
+    // Write all stats to stats.jsonl at each interval, and write a short summary to the log.
     log::RotatingFile stats_file;
     {
         const json sf = section(cfg, "log_file");
@@ -1057,7 +1015,7 @@ int main(int argc, char **argv) {
         }
         if (capture_server.take_fds_changed())
             sync_capture_fds();
-        // The installed capture app's launcher, rebuilt when an install or remove changes it.
+        // Make the launcher again when an install or a removal changes the capture app.
         if (const std::string entry = installer.snapshot().entry; entry != capture_app_entry) {
             if (capture_app && capture_app->running())
                 capture_app->stop();
@@ -1076,8 +1034,7 @@ int main(int argc, char **argv) {
         for (auto &s : sources)
             any_streaming = any_streaming || s.src->streaming();
         arbiter.tick(now, any_streaming);
-        // Headset put on / taken off: pipelines publish neutral values and
-        // reset per-session state; sources pause on their own tick.
+        // When the user puts on or takes off the headset, the pipelines send neutral values and reset their state.
         if (Worn w = steamvr.worn(); w != Worn::Unknown && w != last_worn) {
             if (last_worn != Worn::Unknown || w == Worn::No)
                 for (auto &p : pipelines)
@@ -1087,7 +1044,7 @@ int main(int argc, char **argv) {
         for (auto &s : sources) {
             bool was = s.src->streaming();
             s.src->tick(now);
-            // Every state change, one uniform line (with the reason when there is one).
+            // Log each state change on one line, with the reason if there is one.
             if (const char *st_now = s.src->state_name(); s.last_state != st_now) {
                 LOG.info("source %s: %s -> %s%s", s.name.c_str(), s.last_state.empty() ? "(start)" : s.last_state.c_str(),
                          st_now,
@@ -1147,7 +1104,7 @@ int main(int argc, char **argv) {
             if (dashboard->take_diagnostics_request())
                 last_diagnostics = write_diagnostics("the Babble tab").string();
             if (dashboard->take_restart_request()) {
-                // A clean exit: the driver shim starts the runtime again.
+                // Exit cleanly so that the driver shim starts the runtime again.
                 if (!shim)
                     LOG.warn("restart requested, but no driver shim is supervising this runtime: it will just exit");
                 exit_reason = "restart requested from the Babble tab";
@@ -1169,7 +1126,7 @@ int main(int argc, char **argv) {
                 case U::Available: updater.install(); break;
                 case U::Downloading: updater.cancel(); break;
                 case U::Installed: updater.restart_steamvr(); break;
-                case U::Failed: updater.install(); break;   // checks again first if it never found one
+                case U::Failed: updater.install(); break;   // This checks again first if no release was found.
                 default: break;
                 }
             }
@@ -1221,7 +1178,7 @@ int main(int argc, char **argv) {
                 st.active_camera = usb_source->active_camera();
             }
             for (auto &s : sources) {
-                // The eye rate row is a share of the camera rate: say what that comes to.
+                // Show the eye rate that the share of the camera rate gives.
                 const json::json_pointer ptr("/sources/" + s.name + "/rate_divisor");
                 const double cam = s.src->camera_fps();
                 if (cam > 0 && cfg.contains(ptr) && cfg[ptr].is_number() && cfg[ptr].get<double>() >= 1) {
@@ -1236,7 +1193,7 @@ int main(int argc, char **argv) {
                 st.link = {true, ls.linked, ls.path, ls.module, ls.address, ls.rtt_ms};
                 st.link.no_data = ls.data == LinkSink::Data::Missing;
             } else if (vrc_native && vrc_native_entry->running) {
-                // Native: where the blob goes; "linked" while blobs are going out.
+                // The native output shows "linked" while it sends blobs.
                 const auto ns = vrc_native->status();
                 st.link.available = true;
                 st.link.native = true;
@@ -1245,7 +1202,7 @@ int main(int argc, char **argv) {
                 st.link.address = ns.address;
                 native_sent_last = ns.sent;
             }
-            {   // The dataset capture row.
+            {
                 using S = capture::AppInstaller::State;
                 using R = ui::CaptureRow::State;
                 const auto snap = installer.snapshot();
@@ -1268,7 +1225,7 @@ int main(int argc, char **argv) {
                     case S::Failed: row.state = R::Failed; break;
                     }
                 }
-                // Without a recorder there's nothing for the app to do, unless it's installed already.
+                // Hide the row if there is no recorder and the app is not installed.
                 if (!recorder && snap.installed.empty())
                     row.state = R::Hidden;
                 if (recorder) {
@@ -1282,7 +1239,7 @@ int main(int argc, char **argv) {
                 row.upload_stage = up.stage;
                 st.capture = row;
             }
-            {   // The update pill.
+            {
                 using U = update::RuntimeUpdater::State;
                 using N = ui::UpdateNotice::State;
                 const auto up = updater.snapshot();
@@ -1333,8 +1290,7 @@ int main(int argc, char **argv) {
     }
 
     LOG.info("shutting down: %s", exit_reason);
-    // Shutdown has a few seconds: if something hangs (SteamVR's VR_Shutdown has
-    // been seen to), exit anyway so the shim can start a fresh runtime.
+    // Exit after 5 s if the shutdown hangs, so that the shim can start a new runtime.
     std::thread([] {
         std::this_thread::sleep_for(std::chrono::seconds(5));
         LOG.error("shutdown is stuck after 5 s; exiting now. Threads:");
@@ -1345,9 +1301,9 @@ int main(int argc, char **argv) {
     dashboard->stop();
     capture_server.close();
     for (auto &s : sources)
-        s.src->set_frame_tap(nullptr);   // the recorder stops with the sinks
+        s.src->set_frame_tap(nullptr);   // The recorder stops with the sinks.
     eye_server.set_listener(nullptr);
-    // Order: consumers first so nothing holds frames when sources stop.
+    // Stop the consumers first so that nothing holds frames when the sources stop.
     for (auto &p : pipelines)
         p->stop();
     for (auto &k : sinks)
@@ -1358,7 +1314,7 @@ int main(int argc, char **argv) {
     pipelines.clear();
     eye_server.stop();
     steamvr.stop();
-    dashboard->release_gpu();   // OpenVR wants its Vulkan objects to outlive the connection
+    dashboard->release_gpu();   // OpenVR requires that its Vulkan objects outlive the connection.
     LOG.info("stopped");
     return 0;
 }

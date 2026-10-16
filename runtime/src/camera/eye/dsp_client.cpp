@@ -13,7 +13,7 @@
 
 namespace {
 const babble::log::Logger LOG("eye");
-} // namespace
+}
 
 namespace babble {
 
@@ -23,7 +23,7 @@ uint32_t read_u32(const uint8_t *base, uint32_t off) {
     return __atomic_load_n(reinterpret_cast<const uint32_t *>(base + off), __ATOMIC_ACQUIRE);
 }
 
-} // namespace
+}
 
 DspClient::~DspClient() { disconnect(); }
 
@@ -37,7 +37,7 @@ bool DspClient::connect(uint32_t request, std::string_view name) {
     sockaddr_un addr{};
     addr.sun_family = AF_UNIX;
     name = name.substr(0, sizeof(addr.sun_path) - 1);
-    memcpy(addr.sun_path + 1, name.data(), name.size());   // abstract: leading NUL
+    memcpy(addr.sun_path + 1, name.data(), name.size());   // An abstract socket name starts with a NUL byte.
     socklen_t len = socklen_t(offsetof(sockaddr_un, sun_path) + 1 + name.size());
     if (::connect(sock_, reinterpret_cast<sockaddr *>(&addr), len) != 0) {
         LOG.warn("dsp: connect to dsp_service failed: %s", strerror(errno));
@@ -45,7 +45,7 @@ bool DspClient::connect(uint32_t request, std::string_view name) {
         return false;
     }
 
-    // The service sends the shared-memory fd(s) first, then expects our request type.
+    // The service sends the shared-memory fds first and then waits for the request type.
     timeval tv{2, 0};
     setsockopt(sock_, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
     char payload[256];
@@ -134,8 +134,7 @@ bool DspClient::validate(const uint8_t *ctrl, size_t ctrl_size, const Layout &l,
         }
         return false;
     };
-    // Static bounds: every word we will touch, and every frame slot, must lie
-    // inside the 16 MB mappings.
+    // All the words and frame slots that the client uses must be in the 16 MB mappings.
     uint64_t ctrl_end = uint64_t(l.ctrl_base) + std::max(l.locks_r, l.locks_l) + 4ull * l.slots;
     if (ctrl_end > ctrl_size)
         return fail("control words end at 0x%x beyond mapping", uint32_t(ctrl_end));
@@ -152,9 +151,7 @@ bool DspClient::validate(const uint8_t *ctrl, size_t ctrl_size, const Layout &l,
         if (v >= l.slots && v != kNotReady)
             return fail("index word at +0x%x is 0x%x", off, v);
     }
-    // While the eye cameras are idle these words hold small values such as
-    // (4,4,1,8,0,0,0,0), not just 0/1; the start sequence then sets them to 1.
-    // Small integers pass, pointers and floats (what a wrong base yields) don't.
+    // Idle lock words hold small integers, but a wrong base gives pointers or floats.
     for (uint32_t base : {l.locks_l, l.locks_r}) {
         for (uint32_t i = 0; i < l.slots; i++) {
             uint32_t v = read_u32(b, base + 4 * i);
@@ -250,4 +247,4 @@ void DspClient::release(const Layout &l, bool right, uint32_t idx) {
     store32(l.ctrl_base + (right ? l.locks_r : l.locks_l) + 4 * idx, 1);
 }
 
-} // namespace babble
+}

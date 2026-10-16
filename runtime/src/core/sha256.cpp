@@ -21,7 +21,7 @@ constexpr uint32_t kK[64] = {
 
 inline uint32_t rotr(uint32_t x, int n) { return (x >> n) | (x << (32 - n)); }
 
-} // namespace
+}
 
 Sha256::Sha256()
     : h_{0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19} {}
@@ -129,4 +129,4 @@ std::optional<std::string> Sha256::file_hex(const std::filesystem::path &path) {
     return h.finish_hex();
 }
 
-} // namespace babble
+}

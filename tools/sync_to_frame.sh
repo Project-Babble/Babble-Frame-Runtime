@@ -35,7 +35,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-root="babble-frame-runtime"   # on the headset, relative to the home directory
+root="babble-frame-runtime"   # This path is on the headset, relative to the home directory.
 
 git -C "${repo}" describe --always --dirty --abbrev=7 > "${repo}/.babble-rev"
 echo "commit $(cat "${repo}/.babble-rev") -> ${host}:${root}/src"

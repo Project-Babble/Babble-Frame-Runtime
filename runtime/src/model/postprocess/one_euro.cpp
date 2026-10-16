@@ -64,4 +64,4 @@ double OneEuro::apply(double x, double dt_s) {
     return step(0, x, dt_s);
 }
 
-} // namespace babble
+}

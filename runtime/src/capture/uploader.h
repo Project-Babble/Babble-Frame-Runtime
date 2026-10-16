@@ -21,33 +21,10 @@
 
 namespace babble::capture {
 
-// Uploads consented recording sessions to Babble's dataset bucket, in the
-// background, resuming across restarts. Per session (docs/dataset-format.md):
-//
-//   1. package: make_package() turns the session into package.tar (H.265 from
-//      the hardware encoder, stills, metadata), on the recorder's cpus;
-//   2. encrypt: package.tar.bin, the envelope Baballonia uses
-//      ([i32 LE wrapped-key length][RSA-4096 OAEP-SHA256 wrapped AES key]
-//      [16 B IV][AES-256-CBC ciphertext]), so only the key holder can read it;
-//   3. upload: one PUT to the S3-compatible bucket (Garage), signed with
-//      SigV4, as {contributor}_{yyyyMMdd_HHmmss}_frame-{routine}-v2_{session}.tar.bin.
-//
-// openssl and curl are spawned; nothing new is linked. 4xx is permanent (the
-// session is marked failed); 5xx and network errors are retried with
-// backoff, from 30 s up to 30 min. A missing or busy hardware encoder is
-// retried the same way.
-//
-// State per session lives in its folder's upload.json: queued | uploading |
-// done | failed, the stage reached, and the object name. Nothing runs while a
-// recording is (paused() true); packaging stops and starts again later if a
-// recording begins mid-way.
+// Packages, encrypts and uploads consented sessions to the dataset bucket, and continues after a restart.
 class Uploader {
 public:
-    // An HTTP request through curl: method, url, a file to send, extra
-    // headers, and SigV4 signing (provider string for curl's --aws-sigv4,
-    // credentials as "key:secret"). Returns the HTTP status (0 = no response)
-    // and the response body. `progress` is called with 0..1 while a file goes
-    // out and with -1 now and then; returning false aborts the request.
+    // An HTTP request for curl, with optional SigV4 signing and credentials in the form "key:secret".
     struct Http {
         std::string method, url, body_file;
         std::map<std::string, std::string> headers;
@@ -62,10 +39,10 @@ public:
     using Packager = std::function<PackageResult(const std::filesystem::path &session, const PackagerOptions &)>;
 
     struct Snapshot {
-        int pending = 0;           // queued or uploading sessions
-        std::string active;        // the session being worked on
-        std::string stage;         // packaging | encrypting | uploading
-        float progress = 0;        // of the active stage
+        int pending = 0;           // The number of queued or active sessions.
+        std::string active;        // The session that the uploader works on now.
+        std::string stage;         // The current stage of the active session.
+        float progress = 0;        // The progress of the active stage.
         std::string last_error;
     };
 
@@ -75,16 +52,14 @@ public:
 
     void start();
     bool available() const;
-    Result queue(const std::string &session);   // main thread
+    Result queue(const std::string &session);   // Call this only from the main thread.
     Snapshot snapshot() const;
 
-    // Pure pieces, for the tests.
     enum class Outcome { Ok, Retry, Fatal };
     static Outcome classify(int http_status);
     static std::string object_name(const std::string &contributor, const std::string &routine,
                                    const std::string &session, time_t when);
-    // Encrypts `in` into `out` (written whole or not at all) for the holder of
-    // the private key matching public_key_pem (a PEM file).
+    // Encrypts `in` into `out` for the holder of the private key that matches the public_key_pem file.
     static bool make_envelope(const std::filesystem::path &in, const std::filesystem::path &out,
                               const std::filesystem::path &public_key_pem, std::string *err,
                               const std::string &openssl = "openssl");
@@ -93,7 +68,7 @@ public:
 
 private:
     void run();
-    bool upload_one(const std::filesystem::path &dir);   // false: retry later
+    bool upload_one(const std::filesystem::path &dir);   // Returns false if the session must be tried again later.
     std::string contributor_id();
     void count_pending();
     void set_stage(const std::string &stage, float progress);
@@ -114,8 +89,8 @@ private:
 
     mutable std::mutex snap_mutex_;
     Snapshot snap_;
-    std::map<std::string, uint64_t> retry_at_;   // session -> mono ns
+    std::map<std::string, uint64_t> retry_at_;   // This maps a session to its retry time in monotonic ns.
     std::map<std::string, uint64_t> backoff_;
 };
 
-} // namespace babble::capture
+}

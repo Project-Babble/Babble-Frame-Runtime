@@ -82,7 +82,7 @@ Connection::Output Connection::handle_line(const std::string &line, Backend &bac
         const Result r = backend.stop(kStoppedByApp);
         if (!r.ok)
             return fail(r.code, r.message), out;
-        stop_id_ = id.is_null() ? json(true) : id;   // "stopped" follows when the session is finished
+        stop_id_ = id.is_null() ? json(true) : id;   // The "stopped" event follows when the session is finished.
     } else if (op == "status") {
         json s = backend.status();
         s["op"] = "status";
@@ -97,4 +97,4 @@ Connection::Output Connection::handle_line(const std::string &line, Backend &bac
     return out;
 }
 
-} // namespace babble::capture
+}

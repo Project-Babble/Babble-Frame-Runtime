@@ -1,6 +1,4 @@
-// The Babble face tracker path: UVC over usbfs (descriptors, probe, frame
-// reassembly), JPEG decoding, the mono face model and its post-processing.
-// Test data comes from a real tracker (OpenIris, USB 303a:8000).
+// These tests use data from a real Babble face tracker (OpenIris, USB 303a:8000).
 #include <doctest/doctest.h>
 
 #include "camera/usb/jpeg.h"
@@ -30,7 +28,7 @@ std::vector<uint8_t> read_file(const std::string &name) {
     return std::vector<uint8_t>((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
 }
 
-// A binary PGM (P5, 8-bit): pixels, and sets width/height.
+// Reads a binary 8-bit PGM (P5) file and sets the width and height.
 std::vector<uint8_t> read_pgm(const std::string &name, int *w, int *h) {
     std::ifstream in(std::string(BABBLE_TEST_DATA_DIR) + "/" + name, std::ios::binary);
     std::string magic;
@@ -42,7 +40,7 @@ std::vector<uint8_t> read_pgm(const std::string &name, int *w, int *h) {
     return px;
 }
 
-// One UVC payload: a 2-byte header (FID, EOF, ERR bits) and data.
+// Makes one UVC payload with a 2-byte header (FID, EOF and ERR bits) and the data.
 std::vector<uint8_t> payload(int fid, bool eof, std::vector<uint8_t> data, bool err = false) {
     std::vector<uint8_t> p{2, uint8_t((fid & 1) | (eof ? 0x02 : 0) | (err ? 0x40 : 0) | 0x80)};
     p.insert(p.end(), data.begin(), data.end());
@@ -51,11 +49,11 @@ std::vector<uint8_t> payload(int fid, bool eof, std::vector<uint8_t> data, bool 
 
 bool push(uvc::FrameAssembler &a, const std::vector<uint8_t> &p) { return a.push(p.data(), p.size()); }
 
-} // namespace
+}
 
 TEST_CASE("UVC descriptors of the Babble tracker parse to its bulk MJPEG stream") {
     const auto all = read_file("babble_tracker_descriptors.bin");
-    REQUIRE(all.size() > 18);   // sysfs: device descriptor, then the configuration
+    REQUIRE(all.size() > 18);   // The sysfs file has the device descriptor and then the configuration.
     std::string err;
     auto info = uvc::parse_config(all.data() + 18, all.size() - 18, &err);
     REQUIRE_MESSAGE(info, err);
@@ -70,13 +68,13 @@ TEST_CASE("UVC descriptors of the Babble tracker parse to its bulk MJPEG stream"
     for (const auto &f : info->mjpeg_frames) {
         CHECK(f.width == 240);
         CHECK(f.height == 240);
-        CHECK(f.default_interval == 166666);   // 60 fps
+        CHECK(f.default_interval == 166666);   // The interval of 166666 is 60 fps.
     }
     const auto *pick = uvc::pick_frame(*info, 240, 240);
     REQUIRE(pick);
     CHECK(pick->index == 1);
 
-    // Not a video device: the CDC serial part alone.
+    // This is not a video device because it has only the CDC serial part.
     const uint8_t cdc_only[] = {9, 2, 18, 0, 1, 1, 0, 0x80, 50, 9, 4, 0, 0, 1, 2, 2, 0, 0};
     CHECK_FALSE(uvc::parse_config(cdc_only, sizeof(cdc_only), &err));
 }
@@ -110,13 +108,13 @@ TEST_CASE("UVC frames are rebuilt from payloads: EOF, FID toggles, errors, size 
     CHECK(push(a, payload(0, true, {3})));
     CHECK(a.frame() == std::vector<uint8_t>{1, 2, 3});
 
-    // A device that never sends EOF: the toggled FID ends the frame.
+    // If a device never sends EOF, the toggled FID ends the frame.
     CHECK_FALSE(push(a, payload(1, false, {4})));
     CHECK_FALSE(push(a, payload(1, false, {5})));
     CHECK(push(a, payload(0, false, {6})));
     CHECK(a.frame() == std::vector<uint8_t>{4, 5});
 
-    // An error bit drops that frame; the next one is fine.
+    // An error bit drops that frame, and the next frame is good.
     a.reset();
     const uint64_t dropped = a.dropped();
     CHECK_FALSE(push(a, payload(1, false, {7}, true)));
@@ -125,11 +123,11 @@ TEST_CASE("UVC frames are rebuilt from payloads: EOF, FID toggles, errors, size 
     CHECK(push(a, payload(0, true, {9})));
     CHECK(a.frame() == std::vector<uint8_t>{9});
 
-    // Bigger than the limit: dropped.
+    // A frame that is larger than the limit is dropped.
     CHECK_FALSE(push(a, payload(1, false, std::vector<uint8_t>(12, 1))));
     CHECK_FALSE(push(a, payload(1, true, std::vector<uint8_t>(8, 2))));
 
-    // A header that claims more than the payload holds is corrupt.
+    // A header that claims more bytes than the payload holds is corrupt.
     const std::vector<uint8_t> bad{40, 0x02, 1, 2};
     CHECK_FALSE(push(a, bad));
 }
@@ -144,7 +142,7 @@ TEST_CASE("a Babble tracker frame decodes to 240x240 grayscale") {
     CHECK(h == 240);
     const double mean = std::accumulate(px.begin(), px.end(), 0.0) / double(px.size());
     CHECK(mean == doctest::Approx(151.3).epsilon(0.02));
-    // Too small a buffer is refused rather than overrun.
+    // The decoder refuses a buffer that is too small and does not overrun it.
     CHECK_FALSE(jpeg::decode_gray(jpg.data(), jpg.size(), px.data(), 100, &w, &h));
     CHECK_FALSE(jpeg::decode_gray(jpg.data(), 10, px.data(), px.size(), &w, &h));
 }
@@ -191,14 +189,14 @@ TEST_CASE("the face One Euro filter passes the first sample and follows a step s
     for (int i = 0; i < 30; i++) {
         x = {1.0f};
         f.apply(x, 1.0 / 60);
-        CHECK(x[0] >= prev - 1e-6f);   // monotonic towards the step (up to float rounding once settled)
+        CHECK(x[0] >= prev - 1e-6f);   // The value increases towards the step, within float rounding.
         CHECK(x[0] <= 1.0f);
         prev = x[0];
     }
-    CHECK(prev > 0.9f);   // fast movement opens the filter (beta)
+    CHECK(prev > 0.9f);   // Fast movement opens the filter because of beta.
     f.reset();
     x = {0.25f};
-    f.apply(x, 1.0 / 60);   // after a reset: passes through again
+    f.apply(x, 1.0 / 60);   // After a reset, the filter passes the value through again.
     CHECK(x[0] == 0.25f);
 }
 
@@ -206,18 +204,18 @@ TEST_CASE("face calibration: auto scales by the session maximum, raw and manual 
     face::Calibration a(2, face::CalibMode::Auto);
     std::vector<float> x{0.3f, 0.8f};
     a.apply(x);
-    CHECK(x[0] == doctest::Approx(0.3f));   // below the 0.5 seed: raw
-    CHECK(x[1] == doctest::Approx(1.0f));   // its own maximum
+    CHECK(x[0] == doctest::Approx(0.3f));   // The value is below the 0.5 seed, so it stays raw.
+    CHECK(x[1] == doctest::Approx(1.0f));   // The value is its own maximum.
     x = {0.3f, 0.4f};
     a.apply(x);
-    CHECK(x[1] == doctest::Approx(0.5f));   // 0.4 / 0.8
+    CHECK(x[1] == doctest::Approx(0.5f));   // The result is 0.4 / 0.8.
     x = {0.3f, 0.9f};
-    a.apply(x, false);                      // not worn: the maximum stays
-    CHECK(x[1] == doctest::Approx(1.0f));   // clamped
+    a.apply(x, false);                      // When the headset is not worn, the maximum does not change.
+    CHECK(x[1] == doctest::Approx(1.0f));   // The value is clamped.
     a.reset();
     x = {0.3f, 0.4f};
     a.apply(x);
-    CHECK(x[1] == doctest::Approx(0.4f));   // forgot the old maximum
+    CHECK(x[1] == doctest::Approx(0.4f));   // The reset removed the old maximum.
 
     face::Calibration raw(1, face::CalibMode::Raw);
     x = {1.4f};
@@ -254,7 +252,7 @@ TEST_CASE("the mono face pipeline crops the ROI and rotates before resizing") {
         return p;
     };
 
-    // 240x240: a 100x100 square of 200 at (50, 60), 0 elsewhere.
+    // The 240x240 image has a 100x100 square of 200 at (50, 60) and 0 elsewhere.
     std::vector<uint8_t> px(240 * 240, 0);
     for (int y = 60; y < 160; y++)
         for (int x = 50; x < 150; x++)
@@ -270,14 +268,14 @@ TEST_CASE("the mono face pipeline crops the ROI and rotates before resizing") {
     for (float v : in)
         REQUIRE(v == doctest::Approx(200.0f / 255.0f));
 
-    // A ROI outside the image falls back to the whole image, like Baballonia.
+    // A ROI outside the image falls back to the whole image, as in Baballonia.
     auto outside = make({{"roi", {200, 200, 100, 100}}});
     outside->prepare(f, in.data());
     CHECK(in[0] == 0.0f);
     CHECK(in[112 * 224 + 90] == doctest::Approx(200.0f / 255.0f));
 
-    // Left half 255, right half 0; rotated 90 degrees counter-clockwise the
-    // bright half ends up at the bottom.
+    // The left half is 255 and the right half is 0, so a 90 degree counter-clockwise rotation
+    // puts the bright half at the bottom.
     for (int y = 0; y < 240; y++)
         for (int x = 0; x < 240; x++)
             px[size_t(y) * 240 + size_t(x)] = x < 120 ? 255 : 0;
@@ -286,7 +284,7 @@ TEST_CASE("the mono face pipeline crops the ROI and rotates before resizing") {
     CHECK(in[10 * 224 + 112] == 0.0f);
     CHECK(in[213 * 224 + 112] == 1.0f);
 
-    auto flip = make({{"flip", "h"}});   // mirrored: the bright half on the right
+    auto flip = make({{"flip", "h"}});   // The mirror puts the bright half on the right.
     flip->prepare(f, in.data());
     CHECK(in[112 * 224 + 10] == 0.0f);
     CHECK(in[112 * 224 + 213] == 1.0f);

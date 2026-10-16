@@ -1,6 +1,4 @@
-// BFR Link (sink/link_sink.h) against a fake VRCFT module on loopback. Two
-// fake interfaces, both 127.0.0.1, stand for the dongle and LAN paths; the
-// fake module can stop answering pings per path to force failover.
+// These tests run BFR Link against a fake VRCFT module, with two loopback interfaces for the dongle and LAN.
 #include <doctest/doctest.h>
 
 #include "core/metrics.h"
@@ -44,7 +42,7 @@ uint16_t local_port(int fd) {
     return ntohs(a.sin_port);
 }
 
-// The addresses in an OSC packet: a message, or a bundle of them.
+// Collects the addresses in an OSC packet, which is a message or a bundle of messages.
 void osc_addresses(const char *p, size_t n, std::set<std::string> *out, int *messages) {
     if (n >= 16 && memcmp(p, "#bundle", 8) == 0) {
         for (size_t at = 16; at + 4 <= n;) {
@@ -62,26 +60,23 @@ void osc_addresses(const char *p, size_t n, std::set<std::string> *out, int *mes
     }
 }
 
-// A stand-in for the VRCFT module: answers beacons with offers and pings
-// with pongs (with its received-data count), and collects the OSC data that
-// reaches its port; with drop_data it pretends a firewall eats the data.
+// Acts as the VRCFT module, answers beacons and pings, and collects the OSC data that reaches its port.
 struct FakeModule {
     uint16_t control_port = 0;
     int control = -1;
     std::string mid = "module-1";
     std::atomic<bool> busy{false}, answer_beacons{true}, drop_data{false};
     std::mutex mutex;
-    std::set<std::string> silent_paths;   // ping paths to ignore
+    std::set<std::string> silent_paths;   // The module ignores pings on these paths.
     std::set<std::string> data_addresses;
-    uint64_t rx = 0;                      // data datagrams received
+    uint64_t rx = 0;                      // The number of data datagrams that the module received.
     int data_messages = 0;
     int beacons = 0;
     std::thread thread;
     std::atomic<bool> stop{false};
 
     FakeModule() {
-        // Find a free port, then bind the module to it on 127.0.0.1; the
-        // link listens on 0.0.0.0 with the same port (both reuse the address).
+        // Bind the module to a free port on 127.0.0.1, and the link listens on 0.0.0.0 with the same port.
         const int probe = udp_socket(INADDR_LOOPBACK, 0);
         control_port = local_port(probe);
         close(probe);
@@ -108,7 +103,7 @@ struct FakeModule {
             sockaddr_in from{};
             socklen_t len = sizeof(from);
             const ssize_t n = recvfrom(control, buf, sizeof(buf), 0, reinterpret_cast<sockaddr *>(&from), &len);
-            if (n > 0 && buf[0] != '{') {   // data: OSC on the same port
+            if (n > 0 && buf[0] != '{') {   // OSC data comes on the same port.
                 if (drop_data)
                     continue;
                 std::lock_guard lock(mutex);
@@ -176,7 +171,7 @@ bool eventually(F f, int ms = 3000) {
 }
 
 std::vector<link::Interface> two_paths() {
-    // dongle0 and lan0, both loopback: two independent sockets to the module.
+    // The dongle0 and lan0 interfaces are both loopback, so they give two independent sockets to the module.
     const uint32_t lo = INADDR_LOOPBACK, mask = 0xFF000000;
     return {{"dongle0", lo, lo, mask}, {"lan0", lo, lo, mask}};
 }
@@ -187,7 +182,7 @@ json fast_config(uint16_t port) {
             {"name", "Test Frame"}};
 }
 
-} // namespace
+}
 
 TEST_CASE("link messages round trip and reject strangers") {
     link::Message m;
@@ -222,7 +217,7 @@ TEST_CASE("link messages round trip and reject strangers") {
     back = link::decode(pt.data(), pt.size());
     REQUIRE(back);
     CHECK(back->rx == 12345u);
-    pong.rx.reset();   // an older module: no count
+    pong.rx.reset();   // An older module does not send a count.
     const std::string old = link::encode(pong);
     back = link::decode(old.data(), old.size());
     REQUIRE(back);
@@ -248,23 +243,22 @@ TEST_CASE("link: finds the module, streams, fails over and back, and searches wh
     sink.set_interface_source(two_paths);
     REQUIRE(sink.start());
 
-    // Linked over the preferred path, and the current values are sent, as a
-    // bundle to the module's control port.
+    // The link uses the preferred path and sends the current values as a bundle to the control port of the module.
     CHECK(eventually([&] { return sink.active_path() == "dongle"; }));
     CHECK(eventually([&] { return module.got_data("/jawOpen"); }));
     CHECK_FALSE(module.got_data("/_internal"));
 
-    // The dongle path stops answering: fail over to the LAN, resending the state.
+    // When the dongle path stops answering, the link fails over to the LAN and sends the state again.
     module.clear_data();
     module.silence("dongle", true);
     CHECK(eventually([&] { return sink.active_path() == "lan"; }));
     CHECK(eventually([&] { return module.got_data("/jawOpen"); }));
 
-    // The dongle comes back: after 3 good pongs the link moves back to it.
+    // When the dongle comes back, the link moves back to it after 3 good pongs.
     module.silence("dongle", false);
     CHECK(eventually([&] { return sink.active_path() == "dongle"; }));
 
-    // Every path goes quiet: searching again, and no more data.
+    // When all paths are quiet, the link searches again and stops the data.
     module.silence("dongle", true);
     module.silence("lan", true);
     CHECK(eventually([&] { return sink.active_path().empty(); }));
@@ -289,7 +283,7 @@ TEST_CASE("link: a busy module is not used") {
     REQUIRE(sink.start());
     CHECK(eventually([&] { return module.beacon_count() >= 4; }));
     CHECK(sink.active_path().empty());
-    module.busy = false;   // free again: the next beacon links
+    module.busy = false;   // The module is free again, so the next beacon makes a link.
     CHECK(eventually([&] { return !sink.active_path().empty(); }));
     sink.stop();
 }
@@ -301,15 +295,16 @@ TEST_CASE("link: a module query gets an immediate beacon") {
     StatsRegistry stats;
     const json threads = json::object();
     json cfg = fast_config(module.control_port);
-    cfg["beacon_s"] = {30, 30};   // only the first beacon, unless asked
+    cfg["beacon_s"] = {30, 30};   // The sink sends only the first beacon unless it gets a query.
     LinkSink sink(cfg, SinkDeps{"pc", threads, state, stats});
     sink.set_interface_source(two_paths);
     REQUIRE(sink.start());
-    CHECK(eventually([&] { return module.beacon_count() >= 2; }));   // the first beacon, on both paths
+    CHECK(eventually([&] { return module.beacon_count() >= 2; }));   // The first beacon goes on both paths.
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
     const int before = module.beacon_count();
 
-    // The query goes to 127.0.0.2: it reaches the link's 0.0.0.0 listener, not the module's 127.0.0.1 socket.
+    // The query goes to 127.0.0.2, so it reaches the 0.0.0.0 listener of the link and not the
+    // 127.0.0.1 socket of the module.
     link::Message query;
     query.type = "query";
     query.mid = module.mid;
@@ -331,7 +326,7 @@ TEST_CASE("link: data goes out bundled, and missing data shows in the status") {
     StatsRegistry stats;
     const json threads = json::object();
     std::vector<SignalId> ids;
-    for (int i = 0; i < 60; i++)   // more than one bundle's worth
+    for (int i = 0; i < 60; i++)   // This is more signals than one bundle can hold.
         ids.push_back(state.add_signal("signal" + std::to_string(i)));
     LinkSink sink(fast_config(module.control_port), SinkDeps{"pc", threads, state, stats});
     sink.set_interface_source(two_paths);
@@ -339,7 +334,7 @@ TEST_CASE("link: data goes out bundled, and missing data shows in the status") {
     REQUIRE(eventually([&] { return sink.active_path() == "dongle"; }));
 
     std::atomic<bool> feeding{true};
-    std::thread feeder([&] {   // tracking at ~50 Hz
+    std::thread feeder([&] {   // The feeder sends tracking data at about 50 Hz.
         for (uint64_t t = 1; feeding; t++) {
             std::vector<std::pair<SignalId, Signal>> u;
             for (SignalId id : ids)
@@ -352,12 +347,11 @@ TEST_CASE("link: data goes out bundled, and missing data shows in the status") {
     {
         std::lock_guard lock(module.mutex);
         CHECK(module.data_addresses.count("/signal59"));
-        // Bundles: far fewer datagrams than values.
+        // Bundles make far fewer datagrams than values.
         CHECK(module.rx * 10 < uint64_t(module.data_messages));
     }
 
-    // Tracking pauses (headset off) and resumes: no false "missing" while the
-    // first pongs after the pause catch up.
+    // When tracking stops and starts again, the sink must not report "missing" while the pongs catch up.
     feeding = false;
     feeder.join();
     std::this_thread::sleep_for(std::chrono::milliseconds(3500));
@@ -376,10 +370,10 @@ TEST_CASE("link: data goes out bundled, and missing data shows in the status") {
         std::this_thread::sleep_for(std::chrono::milliseconds(25));
     }
 
-    // A firewall starts dropping the data: the pongs still come, the count stops.
+    // When a firewall drops the data, the pongs still come but the count stops.
     module.drop_data = true;
     CHECK(eventually([&] { return sink.status().data == LinkSink::Data::Missing; }, 8000));
-    CHECK(sink.active_path() == "dongle");   // still linked: control is fine
+    CHECK(sink.active_path() == "dongle");   // The link stays because the control path works.
     module.drop_data = false;
     CHECK(eventually([&] { return sink.status().data == LinkSink::Data::Arriving; }, 8000));
     feeding = false;
@@ -394,7 +388,7 @@ TEST_CASE("link: dongle beacons go only to stations on its own subnet") {
         return ntohl(a.s_addr);
     };
     const link::Interface dongle{"wlanap", ip("10.35.78.1"), ip("10.35.78.255"), ip("255.255.255.0")};
-    // The ARP table on the dongle can also list the PC's LAN and VPN addresses.
+    // The ARP table on the dongle can also list the LAN and VPN addresses of the PC.
     const auto out = link::on_subnet(dongle, {ip("10.35.78.25"), ip("192.168.0.149"), ip("100.71.126.17"),
                                               ip("10.35.78.1"), ip("10.35.78.255"), ip("10.35.78.30")});
     CHECK(out == std::vector<uint32_t>{ip("10.35.78.25"), ip("10.35.78.30")});

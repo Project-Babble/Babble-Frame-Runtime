@@ -27,7 +27,7 @@ std::string read_line(const fs::path &p) {
     return s;
 }
 
-// A value from /etc/os-release, unquoted.
+// Returns a value from /etc/os-release without its quotes.
 std::string os_release(const std::string &key) {
     std::ifstream in("/etc/os-release");
     std::string line;
@@ -41,7 +41,7 @@ std::string os_release(const std::string &key) {
     return "";
 }
 
-// Config keys whose values never go in the log (upload credentials and the like).
+// Returns true for config keys, such as upload credentials, whose values must not go in the log.
 bool secret_path(const std::string &path) {
     const std::string leaf = path.substr(path.rfind('/') + 1);
     for (const char *w : {"key", "secret", "password", "token", "credential"})
@@ -55,7 +55,7 @@ std::string short_value(const nlohmann::json &v) {
     return s.size() > 120 ? s.substr(0, 117) + "..." : s;
 }
 
-} // namespace
+}
 
 std::vector<std::string> session_info(const nlohmann::json &cfg, const fs::path &models_dir) {
     std::vector<std::string> out;
@@ -73,7 +73,7 @@ std::vector<std::string> session_info(const nlohmann::json &cfg, const fs::path 
                   os_release("PRETTY_NAME") + " (build " + os_release("BUILD_ID") + "), up " +
                   std::to_string(int(uptime / 60)) + " min");
 
-    // What the config changes from the built-in defaults.
+    // Log the changes that the config makes to the built-in defaults.
     std::string err;
     auto defaults = parse_json(kDefaultsJson, &err);
     if (defaults) {
@@ -109,7 +109,7 @@ std::vector<std::string> session_info(const nlohmann::json &cfg, const fs::path 
         char vp[16];
         snprintf(vp, sizeof(vp), "%04x:%04x", d.vendor, d.product);
         if (d.vendor == 0x1d6b)
-            continue;   // Linux root hubs
+            continue;   // Skip the Linux root hubs.
         devices += (devices.empty() ? "" : ", ") + std::string(vp) + " " + usb::device_label(d);
     }
     out.push_back("usb devices: " + (devices.empty() ? std::string("none") : devices));
@@ -153,7 +153,7 @@ fs::path write_file(const fs::path &dir, const std::string &text, int keep) {
         if (!f)
             return {};
     }
-    // Keep the newest few.
+    // Keep only the newest `keep` files.
     std::vector<fs::path> all;
     for (const auto &e : fs::directory_iterator(dir, ec))
         if (e.path().filename().string().rfind("diag-", 0) == 0)
@@ -164,4 +164,4 @@ fs::path write_file(const fs::path &dir, const std::string &text, int keep) {
     return path;
 }
 
-} // namespace babble::diag
+}

@@ -11,7 +11,7 @@ namespace babble {
 
 struct FrameStats {
     float mean = 0, p05 = 0, p95 = 0;
-    float clipped_frac = 0;   // fraction of samples at 255
+    float clipped_frac = 0;   // The fraction of samples at 255.
     uint64_t capture_ns = 0;
 };
 
@@ -23,8 +23,7 @@ struct ExposureCmd {
     std::optional<int64_t> analogue_gain;
 };
 
-// Internal auto-exposure hook for the mouth cameras. The source feeds it
-// statistics every few frames and applies whatever it asks for.
+// An internal auto-exposure hook that gets statistics from the mouth source and returns the next settings.
 class IExposureController {
 public:
     virtual ~IExposureController() = default;
@@ -32,7 +31,7 @@ public:
     virtual std::optional<ExposureCmd> next() = 0;
 };
 
-// Milestone 1: keeps the configured exposure and gain.
+// Keeps the configured exposure and gain.
 class FixedExposure : public IExposureController {
 public:
     void observe(const FrameStats &) override {}
@@ -41,4 +40,4 @@ public:
 
 std::unique_ptr<IExposureController> make_exposure_controller(const nlohmann::json &cfg);
 
-} // namespace babble
+}

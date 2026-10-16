@@ -1,14 +1,4 @@
-// Template output plugin: "udp_json".
-//
-// Sends the tracked values that changed, as one JSON line per update, to a
-// UDP port:  {"seq":123,"values":{"jawOpen":0.25,"LeftEyeLid":0.97}}
-//
-// It is small on purpose: it shows the whole plugin contract (the ABI in
-// sdk/include/babble/output_plugin.h) and is a working starting point.
-// Replace send_update() with your own output.
-//
-// Config (the "config" object of the sinks entry):
-//   "host": "127.0.0.1", "port": 9500, "max_rate_hz": 0 (0 = every update)
+// This template plugin sends the changed tracked values to a UDP port as one JSON line for each update.
 #include <babble/output_plugin.h>
 
 #include <arpa/inet.h>
@@ -28,8 +18,7 @@
 
 namespace {
 
-// Minimal config reading for the template's two flat keys. A real plugin
-// would use a JSON library (the runtime uses nlohmann/json).
+// This simple config parser reads only flat keys, so use a JSON library in a real plugin.
 std::string json_string(const std::string &json, const char *key, const std::string &fallback) {
     const std::string k = std::string("\"") + key + "\"";
     auto p = json.find(k);
@@ -60,7 +49,7 @@ struct Plugin {
 
     void log(int level, const std::string &msg) const { host->log(host->ctx, level, msg.c_str()); }
 
-    // The plugin's thread: wait for new values, send what changed.
+    // The plugin thread waits for new values and sends the values that changed.
     void run() {
         uint64_t seq = 0;
         std::vector<uint32_t> ids;
@@ -68,18 +57,17 @@ struct Plugin {
         std::vector<std::string> names;
         auto last_send = std::chrono::steady_clock::time_point{};
         while (!stop) {
-            seq = host->wait_update(host->ctx, seq, 200);   // wakes on each update, or every 200 ms
+            seq = host->wait_update(host->ctx, seq, 200);   // The call returns on each update or after 200 ms.
             if (stop)
                 break;
-            // Signals are registered by the runtime's pipelines as they start:
-            // pick up new ones (ids only ever grow).
+            // Add new signals because the pipelines register signals when they start.
             const uint32_t n = host->signal_count(host->ctx);
             while (ids.size() < n) {
                 const uint32_t id = uint32_t(ids.size());
                 ids.push_back(id);
                 const char *name = host->signal_name(host->ctx, id);
                 names.emplace_back(name ? name : "");
-                last.push_back(NAN);   // forces a first send
+                last.push_back(NAN);   // NAN makes sure that the first update sends the value.
             }
             if (ids.empty())
                 continue;
@@ -147,7 +135,7 @@ int start(void *self) {
 
 void stop(void *self) {
     auto *p = static_cast<Plugin *>(self);
-    p->stop = true;   // the thread notices within one wait_update timeout (200 ms)
+    p->stop = true;   // The thread stops in less than one wait_update timeout of 200 ms.
     if (p->thread.joinable())
         p->thread.join();
     if (p->sock >= 0)
@@ -159,6 +147,6 @@ void destroy(void *self) { delete static_cast<Plugin *>(self); }
 
 const babble_output_v1 kPlugin = {BABBLE_OUTPUT_ABI, "udp_json", "1.0", create, start, stop, destroy};
 
-} // namespace
+}
 
 extern "C" BABBLE_PLUGIN_EXPORT const babble_output_v1 *babble_output_plugin_v1(void) { return &kPlugin; }

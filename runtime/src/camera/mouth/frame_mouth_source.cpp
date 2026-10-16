@@ -11,7 +11,7 @@
 
 namespace {
 const babble::log::Logger LOG("mouth");
-} // namespace
+}
 
 namespace babble {
 
@@ -24,7 +24,7 @@ uint32_t fourcc_from(const std::string &s) {
            uint32_t(uint8_t(s[3])) << 24;
 }
 
-} // namespace
+}
 
 FrameMouthSource::FrameMouthSource(const nlohmann::json &cfg, SourceDeps deps)
     : cfg_(cfg), name_(deps.name), out_(deps.out), stats_(deps.stats), arbiter_(*deps.arbiter), steamvr_(deps.steamvr),
@@ -119,8 +119,7 @@ void FrameMouthSource::apply_control_set(const char *label, const nlohmann::json
 }
 
 bool FrameMouthSource::start() {
-    // Controls are optional: without the subdev the cameras still stream at
-    // whatever exposure the driver holds, which beats no tracking at all.
+    // The controls are optional because the cameras can stream without the subdev.
     std::vector<std::string> prefixes;
     for (const auto &p : cfg_.value("subdev_name_prefixes", nlohmann::json::array()))
         prefixes.push_back(p.get<std::string>());
@@ -132,9 +131,7 @@ bool FrameMouthSource::start() {
         LOG.warn("mouth: no sensor subdev matching the configured names; running without controls");
     }
     apply_control_set("start", cfg_.value("controls_on_start", nlohmann::json::object()));
-    // Remember what the strobe set overwrites so stop() can put it back.
-    // Some of these pins double as sensor enables (pwm_pad_mode on the
-    // primary powers the secondary sensor), so nothing may stay changed.
+    // Keep the old strobe values for stop() because pwm_pad_mode on the primary sensor also powers the secondary sensor.
     saved_strobe_.clear();
     const auto strobe_on = section(cfg_, "strobe").value("on", nlohmann::json::object());
     for (auto it = strobe_on.begin(); it != strobe_on.end(); ++it)
@@ -174,12 +171,11 @@ void FrameMouthSource::stop(const char *why) {
 
 void FrameMouthSource::tick(uint64_t now) {
     const bool routed = arbiter_.state() == ArbiterState::Routed;
-    // Only an explicit "not worn" pauses; unknown presence keeps streaming.
+    // Pause only if SteamVR reports that the headset is not worn.
     const bool absent = pause_when_absent_ && steamvr_ && steamvr_->worn() == Worn::No;
     const bool hold = !tracking_ || absent;
     const char *why = !tracking_ ? "tracking turned off" : "headset not worn";
-    // Unrouted cameras usually need user action (a reboot): report it as a
-    // fault once it lasts past a startup grace period.
+    // Report unrouted cameras as a fault after the grace period because the user must usually reboot.
     constexpr uint64_t kRouteGraceNs = 5000000000ull;
     if (routed)
         unrouted_since_ns_ = 0;
@@ -188,7 +184,7 @@ void FrameMouthSource::tick(uint64_t now) {
     route_fault_ = state_ == State::WaitingForRoute && unrouted_since_ns_ && now - unrouted_since_ns_ > kRouteGraceNs;
     if (route_fault_)
         route_error_ = arbiter_.describe();
-    // Mirror the pairer's totals into the stats counters (main thread only).
+    // Copy the totals of the pairer into the stats counters on the main thread.
     auto counts = pairer_.counts();
     if (counts.unmatched_left > unmatched_l_.get())
         unmatched_l_.add(counts.unmatched_left - unmatched_l_.get());
@@ -262,7 +258,7 @@ void FrameMouthSource::on_frame(FramePtr frame) {
     skew_.add(uint64_t(std::llabs(pair->skew_ns)));
     pair_latency_.add(now - std::min(pair->left->capture_ns, pair->right->capture_ns));
 
-    // A frame tap (the recorder) gets every pair, before the tracking-rate limiter.
+    // The frame tap gets all pairs before the rate limiter.
     if (IFrameTap *tap = tap_.load(std::memory_order_relaxed); tap && tap->tap_wanted())
         tap->tap_frames(name_, *pair);
 
@@ -283,4 +279,4 @@ void FrameMouthSource::on_frame(FramePtr frame) {
     out_.put(std::move(*pair));
 }
 
-} // namespace babble
+}

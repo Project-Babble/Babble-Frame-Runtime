@@ -16,13 +16,13 @@
 
 namespace {
 const babble::log::Logger LOG("osc");
-} // namespace
+}
 
 namespace babble {
 
 namespace {
-constexpr size_t kMaxDatagram = 1400;   // under a typical 1500-byte MTU: never fragmented
-} // namespace
+constexpr size_t kMaxDatagram = 1400;   // This is less than a 1500-byte MTU, so the network does not fragment it.
+}
 
 SharedSocket::~SharedSocket() {
     if (fd >= 0)
@@ -143,7 +143,7 @@ void OscSink::send_datagram(const uint8_t *buf, size_t n, size_t values) {
         messages_.tick(values);
         return;
     }
-    // Nobody listening, or the socket buffer is full: drop it; the next update supersedes it.
+    // Drop the datagram if it fails, because the next update replaces it.
     send_errors_.add();
     uint64_t now = mono_ns();
     if (now - last_error_log_ns_ > 5000000000ull) {
@@ -157,12 +157,12 @@ void OscSink::send_datagram(const uint8_t *buf, size_t n, size_t values) {
 void OscSink::run() {
     const uint64_t min_period_ns = max_rate_hz_ > 0 ? uint64_t(1e9 / max_rate_hz_) : 0;
     uint64_t seq = 0, last_batch_ns = 0, generation = 0;
-    std::vector<uint64_t> last_sent_t;   // per signal: t_ns of the value last sent
-    std::vector<std::string> addresses;  // per signal: final OSC address, "" = excluded
+    std::vector<uint64_t> last_sent_t;   // The t_ns of the last value that the sink sent for each signal.
+    std::vector<std::string> addresses;  // The OSC address for each signal, or "" if the signal is excluded.
 
     while (!stop_) {
         if (test_pattern_) {
-            // ~120 Hz of smooth, distinct motion per signal, independent of tracking.
+            // Send the test pattern at about 120 Hz.
             sleep_ns(8333333);
         } else {
             seq = state_.wait_update(seq, std::chrono::milliseconds(200));
@@ -178,17 +178,17 @@ void OscSink::run() {
         if (destination_) {
             uint64_t g = 0;
             if (!destination_->get(&dest_, &g, &via_))
-                continue;   // no receiver: send nothing
+                continue;   // Send nothing if there is no receiver.
             resend_all = g != generation;
             generation = g;
         }
 
         auto snap = state_.snapshot();
         if (addresses.size() != snap.names.size()) {
-            // Signals are registered before streaming starts; rebuild the address table if that changes.
+            // Make the address table again if the number of signals changes.
             addresses.clear();
             for (const auto &nm : snap.names) {
-                // A leading '_' marks an internal (debug) signal, never sent.
+                // Never send a signal whose name starts with '_', because it is an internal signal.
                 if (nm.starts_with('_') || std::find(exclude_.begin(), exclude_.end(), nm) != exclude_.end()) {
                     addresses.emplace_back();
                     continue;
@@ -198,7 +198,7 @@ void OscSink::run() {
             }
             last_sent_t.assign(snap.names.size(), 0);
         }
-        if (resend_all)   // a new receiver or path: send every current value once
+        if (resend_all)   // Send each current value once to a new receiver or path.
             std::fill(last_sent_t.begin(), last_sent_t.end(), 0);
 
         for (size_t i = 0; i < snap.signals.size(); i++) {
@@ -207,7 +207,7 @@ void OscSink::run() {
             if (test_pattern_) {
                 double t = double(now) / 1e9;
                 float v = float(0.5 + 0.5 * std::sin(t * 1.5 + double(i) * 0.7));
-                // Gaze-style signals (…EyeX / …EyeY) span -1..1; everything else 0..1.
+                // The EyeX and EyeY signals use the range -1 to 1, and the other signals use 0 to 1.
                 const std::string &nm = snap.names[i];
                 if (nm.size() > 4 && (nm.ends_with("EyeX") || nm.ends_with("EyeY")))
                     v = v * 2.0f - 1.0f;
@@ -216,13 +216,13 @@ void OscSink::run() {
             }
             const Signal &s = snap.signals[i];
             if (s.t_ns == 0 || s.t_ns == last_sent_t[i])
-                continue;   // never set, or unchanged since the last send
+                continue;   // The signal has no value or did not change after the last send.
             last_sent_t[i] = s.t_ns;
             send(addresses[i], s.value);
         }
         flush();
-        via_.reset();   // don't keep a path's socket alive between batches
+        via_.reset();   // Do not keep the socket of a path open between batches.
     }
 }
 
-} // namespace babble
+}

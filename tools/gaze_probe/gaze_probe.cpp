@@ -1,10 +1,4 @@
-// gaze_probe: can a background OpenVR client read SteamVR's eye tracking?
-//
-//   gaze_probe [seconds] [binding-path]      (default 10 s, "/user/head/eyetracking")
-//
-// Connects as VRApplication_Background (never starts SteamVR, not a Steam app),
-// registers a one-action manifest (an "eyetracking" action bound on frame_hmd)
-// and prints what IVRInput::GetEyeTrackingDataRelativeToNow returns.
+// gaze_probe connects as a background OpenVR client and prints the results of GetEyeTrackingDataRelativeToNow.
 #include <openvr.h>
 
 #include <chrono>

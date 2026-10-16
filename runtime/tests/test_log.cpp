@@ -1,4 +1,4 @@
-// The logger: module levels, repeats, rate limits, the file and its rotation.
+// These tests cover the logger with module levels, repeats, rate limits, the log file and its rotation.
 #include <doctest/doctest.h>
 
 #include "core/clock.h"
@@ -45,29 +45,29 @@ struct TempLog {
     }
 };
 
-} // namespace
+}
 
 TEST_CASE("log lines carry wall time, module and level; module levels override the default") {
     TempLog t;
     const log::Logger usb("test.usb"), link("test.link");
     log::set_module_level("test.usb", log::Level::Debug);
     usb.debug("usb detail %d", 1);
-    link.debug("link detail");   // default level is Info: dropped
+    link.debug("link detail");   // The default level is Info, so the logger drops this line.
     link.info("link up");
     const std::string text = slurp(t.path);
     CHECK(text.find("usb detail 1") != std::string::npos);
     CHECK(text.find("link detail") == std::string::npos);
     CHECK(text.find(" I test.link ") != std::string::npos);
     CHECK(text.find(" D test.usb ") != std::string::npos);
-    CHECK(text.substr(0, 2) == "20");   // starts with the wall-clock date
+    CHECK(text.substr(0, 2) == "20");   // The line starts with the wall-clock date.
 
-    // A level set before the module first logs applies once it does.
+    // A level that you set before the module logs for the first time applies when it logs.
     log::set_module_level("test.later", log::Level::Error);
     const log::Logger later("test.later");
     CHECK_FALSE(later.enabled(log::Level::Warn));
     CHECK(later.enabled(log::Level::Error));
 
-    // Verbose: everything at debug for a while.
+    // Verbose mode logs everything at debug for a short time.
     log::verbose_until(mono_ns() + 1'000'000'000);
     CHECK(later.enabled(log::Level::Debug));
     log::verbose_until(0);
@@ -93,7 +93,7 @@ TEST_CASE("repeated lines collapse and recent() keeps the latest") {
 }
 
 TEST_CASE("Every lets one message through per period and counts the rest") {
-    log::Every every(50'000'000);   // 50 ms
+    log::Every every(50'000'000);   // The interval is 50 ms.
     CHECK(every());
     CHECK_FALSE(every());
     CHECK_FALSE(every());
@@ -110,7 +110,7 @@ TEST_CASE("the log file rotates at its size limit and keeps the newest files") {
     CHECK(std::filesystem::exists(t.path));
     CHECK(std::filesystem::exists(t.dir / "test.log.1"));
     CHECK(std::filesystem::exists(t.dir / "test.log.2"));
-    CHECK_FALSE(std::filesystem::exists(t.dir / "test.log.3"));   // keep = 2
+    CHECK_FALSE(std::filesystem::exists(t.dir / "test.log.3"));   // The value of keep is 2.
     CHECK(std::filesystem::file_size(t.path) < 2200);
     CHECK(slurp(t.path).find("line 099") != std::string::npos);
 }
@@ -123,7 +123,7 @@ TEST_CASE("a crash writes the signal and a backtrace to the log, then dies as us
     const pid_t child = fork();
     REQUIRE(child >= 0);
     if (child == 0) {
-        // The child: install the handler, log a line, then crash.
+        // The child installs the handler, logs a line and then crashes.
         babble::crash::install();
         log::open_file(path);
         log::mirror_stderr(false);
@@ -131,11 +131,11 @@ TEST_CASE("a crash writes the signal and a backtrace to the log, then dies as us
         l.info("about to crash");
         volatile int *p = nullptr;
         *p = 1;
-        _exit(0);   // not reached
+        _exit(0);   // This line is not reached.
     }
     int status = 0;
     REQUIRE(waitpid(child, &status, 0) == child);
-    CHECK(WIFSIGNALED(status));   // the default action still ran
+    CHECK(WIFSIGNALED(status));   // The default signal action still ran.
     CHECK(WTERMSIG(status) == SIGSEGV);
     const std::string text = slurp(path);
     CHECK(text.find("about to crash") != std::string::npos);

@@ -27,10 +27,10 @@ FeedStatus on(Health h, double hz = 0) {
     return f;
 }
 
-// Centre of the cog, as the view places it.
+// Gives the centre of the cog at the position where the view puts it.
 Point cog() { return {84, DashboardView::kHeight - 84.f}; }
 
-} // namespace
+}
 
 TEST_CASE("canvas anti-aliased shapes cover what they should") {
     Canvas c(64, 64);
@@ -39,10 +39,10 @@ TEST_CASE("canvas anti-aliased shapes cover what they should") {
     auto at = [&](int x, int y) { return c.data()[(size_t(y) * 64 + x) * 4]; };
     CHECK(at(32, 32) == 255);
     CHECK(at(2, 2) == 0);
-    const int edge = at(42, 32);   // on the rim: partial coverage
+    const int edge = at(42, 32);   // This pixel is on the rim and has partial coverage.
     CHECK(edge > 0);
     CHECK(edge < 255);
-    CHECK(c.data()[3] == 255);     // stays opaque
+    CHECK(c.data()[3] == 255);     // The pixel stays opaque.
 }
 
 TEST_CASE("the cog opens settings, a choice reports its value, the cog goes back") {
@@ -54,11 +54,11 @@ TEST_CASE("the cog opens settings, a choice reports its value, the cog goes back
 
     view.render(c, s, choices, std::nullopt);
     CHECK(view.page() == DashboardView::Page::Home);
-    CHECK_FALSE(view.click({600, 300}).redraw);   // nothing clickable there
+    CHECK_FALSE(view.click({600, 300}).redraw);   // There is nothing to click at that point.
     CHECK(view.click(cog()).redraw);
     CHECK(view.page() == DashboardView::Page::Settings);
 
-    // Find the "60 Hz" segment of the first row by scanning its row for a hit.
+    // Scan the first row for a hit to find its "60 Hz" segment.
     view.render(c, s, choices, std::nullopt);
     std::optional<std::pair<size_t, double>> picked;
     for (float x = 500; x < DashboardView::kWidth && !picked; x += 8)
@@ -95,7 +95,7 @@ TEST_CASE("text is drawn and long details are shortened to fit") {
     broken.detail = std::string(400, 'x');
     Status s{true, Worn::Yes, on(Health::Working, 120), broken};
     view.render(c, s, rates(), std::nullopt);
-    // The fault text must stay inside its card (right half, above the card's right edge).
+    // The fault text must stay inside the right half of its card, before the right edge of the card.
     const int right_edge = DashboardView::kWidth - 56;
     int stray = 0;
     for (int y = 560; y < 600; y++)
@@ -111,11 +111,11 @@ TEST_CASE("each feed card has an on/off switch; unconfigured feeds have none") {
     Status s{true, Worn::Yes, on(Health::Working, 120), on(Health::Working, 90)};
     view.render(c, s, rates(), std::nullopt);
 
-    // The switch sits at the right end of each card (cards span y 470..602).
+    // The switch is at the right end of each card, and the cards span y 470..602.
     auto r = view.click({540, 536});
     REQUIRE(r.toggle);
     CHECK(r.toggle->first == 0);
-    CHECK(r.toggle->second == false);   // on -> turn off
+    CHECK(r.toggle->second == false);   // The switch was on, so the click turns it off.
     r = view.click({1100, 536});
     REQUIRE(r.toggle);
     CHECK(r.toggle->first == 1);
@@ -125,12 +125,12 @@ TEST_CASE("each feed card has an on/off switch; unconfigured feeds have none") {
     view.render(c, s, rates(), std::nullopt);
     r = view.click({1100, 536});
     REQUIRE(r.toggle);
-    CHECK(r.toggle->second == true);    // off -> turn on
+    CHECK(r.toggle->second == true);    // The switch was off, so the click turns it on.
 
-    s.mouth = FeedStatus{};            // not configured
+    s.mouth = FeedStatus{};            // The mouth feed is not configured.
     view.render(c, s, rates(), std::nullopt);
     CHECK_FALSE(view.click({540, 536}).toggle);
-    CHECK(view.page() == DashboardView::Page::Home);   // switches never change the page
+    CHECK(view.page() == DashboardView::Page::Home);   // A switch never changes the page.
 }
 
 TEST_CASE("the visualizer button appears only when the visualizer is installed") {
@@ -138,19 +138,20 @@ TEST_CASE("the visualizer button appears only when the visualizer is installed")
     REQUIRE(view.load_fonts(kFonts));
     Canvas c(DashboardView::kWidth, DashboardView::kHeight);
     Status s{true, Worn::Yes, on(Health::Working, 120), on(Health::Working, 90)};
-    const Point button{DashboardView::kWidth - 100.f, DashboardView::kHeight - 84.f};   // bottom right
+    // The button is at the bottom right.
+    const Point button{DashboardView::kWidth - 100.f, DashboardView::kHeight - 84.f};
 
-    view.render(c, s, rates(), std::nullopt);   // Unavailable by default
+    view.render(c, s, rates(), std::nullopt);   // The default state is Unavailable.
     CHECK_FALSE(view.click(button).visualizer);
 
     s.visualizer = AppState::Stopped;
     view.render(c, s, rates(), std::nullopt);
     CHECK(view.click(button).visualizer);
-    s.visualizer = AppState::Running;   // same button closes it
+    s.visualizer = AppState::Running;   // The same button closes the visualizer.
     view.render(c, s, rates(), std::nullopt);
     CHECK(view.click(button).visualizer);
 
-    view.set_page(DashboardView::Page::Settings);   // front page only
+    view.set_page(DashboardView::Page::Settings);   // The button is only on the front page.
     view.render(c, s, rates(), std::nullopt);
     CHECK_FALSE(view.click(button).visualizer);
 }
@@ -166,13 +167,13 @@ TEST_CASE("the settings page switches the mouth source and picks a USB camera on
     s.cameras = {{"303a:8000:ABC", "ETVR openiristracker", "303a:8000"}, {"046d:0825:X", "Webcam", "046d:0825"}};
     DashboardView::ClickResult r;
     SUBCASE("the source is a choice (dev builds)") {
-        // The mouth source row sits under the two rate rows (y 160 + 2 x 124): Frunk | USB, right-aligned.
+        // The mouth source row (Frunk | USB) is right-aligned under the two rate rows at y 160 + 2 x 124.
         view.render(c, s, rates(), std::nullopt);
         r = view.click(usb_segment);
         REQUIRE(r.mouth_source);
         CHECK(*r.mouth_source == "usb");
 
-        // With USB, a camera row opens the camera page and asks for a fresh list.
+        // With USB, a camera row opens the camera page and asks for a new list.
         s.mouth_source = "usb";
         view.render(c, s, rates(), std::nullopt);
         r = view.click({600, 532 + 44});
@@ -180,7 +181,7 @@ TEST_CASE("the settings page switches the mouth source and picks a USB camera on
         CHECK(view.page() == DashboardView::Page::Cameras);
     }
     SUBCASE("the USB camera is the only mouth (release builds)") {
-        // No Frunk/USB row: the camera row takes its place, whatever mouth_source says.
+        // Without the Frunk/USB row, the camera row takes its place for all values of mouth_source.
         s.mouth_source_selectable = false;
         view.render(c, s, rates(), std::nullopt);
         r = view.click(usb_segment);
@@ -189,17 +190,17 @@ TEST_CASE("the settings page switches the mouth source and picks a USB camera on
         CHECK(view.page() == DashboardView::Page::Cameras);
     }
 
-    // Rows: Automatic, then each camera (150 + 92 per row).
+    // The rows are Automatic and then each camera, at y 150 + 92 per row.
     view.render(c, s, rates(), std::nullopt);
     r = view.click({600, 150 + 92 + 40});
     REQUIRE(r.camera);
     CHECK(*r.camera == "303a:8000:ABC");
     r = view.click({600, 150 + 40});
     REQUIRE(r.camera);
-    CHECK(r.camera->empty());   // automatic
+    CHECK(r.camera->empty());   // An empty value is Automatic.
     CHECK(view.click({DashboardView::kWidth - 56.f - 60, 74}).refresh_cameras);
 
-    // Back goes to Settings, not the front page.
+    // Back goes to Settings and not to the front page.
     view.click({60, 70});
     CHECK(view.page() == DashboardView::Page::Settings);
 }
@@ -211,21 +212,21 @@ TEST_CASE("the diagnostics page switches verbose logging and asks for a file") {
     Status s{true, Worn::Yes, on(Health::Working, 120), on(Health::Working, 90)};
     view.set_page(DashboardView::Page::Settings);
     view.render(c, s, rates(), std::nullopt);
-    view.click({DashboardView::kWidth - 56.f - 60, 74});   // Diagnostics, top right
+    view.click({DashboardView::kWidth - 56.f - 60, 74});   // The Diagnostics button is at the top right.
     REQUIRE(view.page() == DashboardView::Page::Diagnostics);
 
     view.render(c, s, rates(), std::nullopt);
-    auto r = view.click({DashboardView::kWidth - 56.f - 46, 160 + 62});   // the verbose switch
+    auto r = view.click({DashboardView::kWidth - 56.f - 46, 160 + 62});   // This point is the verbose switch.
     REQUIRE(r.verbose);
     CHECK(*r.verbose);
     s.verbose_minutes_left = 9;
     view.render(c, s, rates(), std::nullopt);
     r = view.click({DashboardView::kWidth - 56.f - 46, 160 + 62});
     REQUIRE(r.verbose);
-    CHECK_FALSE(*r.verbose);   // on: the same switch turns it off
+    CHECK_FALSE(*r.verbose);   // The switch is on, so the same switch turns it off.
     CHECK(view.click({DashboardView::kWidth - 56.f - 60, 284 + 62}).write_diagnostics);
 
-    view.click({60, 70});   // back to Settings
+    view.click({60, 70});   // Go back to Settings.
     CHECK(view.page() == DashboardView::Page::Settings);
 }
 
@@ -237,7 +238,7 @@ TEST_CASE("the dataset capture row: hidden, or its button and Remove by state") 
     view.set_page(DashboardView::Page::Diagnostics);
     using A = DashboardView::ClickResult::CaptureAction;
     using S = CaptureRow::State;
-    // Under verbose logging and the file row (112 px rows from y 160): the buttons are right-aligned.
+    // The buttons are right-aligned under the verbose logging row and the file row, with 112 px rows from y 160.
     const Point primary{DashboardView::kWidth - 56.f - 40, 160 + 2 * 112 + 56};
     auto scan_remove = [&] {
         for (float x = 600; x < DashboardView::kWidth - 56.f - 40; x += 8)
@@ -246,7 +247,7 @@ TEST_CASE("the dataset capture row: hidden, or its button and Remove by state") 
         return false;
     };
 
-    view.render(c, s, rates(), std::nullopt);   // Hidden by default
+    view.render(c, s, rates(), std::nullopt);   // The default state is Hidden.
     CHECK(view.click(primary).capture == A::None);
 
     for (S st : {S::NotInstalled, S::Installed, S::UpdateAvailable, S::Running, S::Downloading, S::Failed}) {
@@ -260,7 +261,7 @@ TEST_CASE("the dataset capture row: hidden, or its button and Remove by state") 
         view.render(c, s, rates(), std::nullopt);
         CHECK(scan_remove() == (st == S::Installed || st == S::UpdateAvailable));
     }
-    for (S st : {S::Checking, S::Installing}) {   // busy: nothing to press
+    for (S st : {S::Checking, S::Installing}) {   // The installer is busy, so there is nothing to press.
         s.capture.state = st;
         view.render(c, s, rates(), std::nullopt);
         CHECK(view.click(primary).capture == A::None);
@@ -282,28 +283,29 @@ TEST_CASE("the restart button on the settings page needs a second click") {
     REQUIRE(view.load_fonts(kFonts));
     Canvas c(DashboardView::kWidth, DashboardView::kHeight);
     Status s{true, Worn::Yes, on(Health::Working, 120), on(Health::Working, 90)};
-    const Point button{DashboardView::kWidth - 100.f, DashboardView::kHeight - 84.f};   // bottom right
+    // The button is at the bottom right.
+    const Point button{DashboardView::kWidth - 100.f, DashboardView::kHeight - 84.f};
 
     view.set_page(DashboardView::Page::Settings);
     view.render(c, s, rates(), std::nullopt);
     auto first = view.click(button);
     CHECK_FALSE(first.restart);
-    CHECK(first.redraw);   // shows "Confirm Restart"
+    CHECK(first.redraw);   // The view shows "Confirm Restart".
     CHECK(view.restart_armed(babble::mono_ns()));
     view.render(c, s, rates(), std::nullopt);
     CHECK(view.click(button).restart);
     CHECK_FALSE(view.restart_armed(babble::mono_ns()));
 
-    // Leaving the page disarms it: one click after coming back only arms it again.
+    // When the user leaves the page, the view disarms the restart.
     view.render(c, s, rates(), std::nullopt);
     CHECK_FALSE(view.click(button).restart);
     view.render(c, s, rates(), std::nullopt);
-    view.click({60, 70});   // Back
+    view.click({60, 70});   // Go back.
     view.set_page(DashboardView::Page::Settings);
     view.render(c, s, rates(), std::nullopt);
     CHECK_FALSE(view.click(button).restart);
 
-    // All other routes away from Settings must also cancel confirmation.
+    // All other routes away from Settings must also cancel the confirmation.
     view.render(c, s, rates(), std::nullopt);
     view.click({60, 70});
     s.mouth_source = "usb";
@@ -317,7 +319,7 @@ TEST_CASE("the restart button on the settings page needs a second click") {
         CHECK_FALSE(view.restart_armed(babble::mono_ns()));
         if (view.page() == DashboardView::Page::Cameras || view.page() == DashboardView::Page::Diagnostics) {
             view.render(c, s, rates(), std::nullopt);
-            CHECK(view.click(cog()).redraw);   // footer Dashboard button
+            CHECK(view.click(cog()).redraw);   // This is the Dashboard button in the footer.
             CHECK(view.page() == DashboardView::Page::Home);
             CHECK_FALSE(view.restart_armed(babble::mono_ns()));
         }
@@ -339,18 +341,18 @@ TEST_CASE("the eye panel places gaze and fills labelled output meters") {
         return Color{p[0], p[1], p[2]};
     };
     auto is = [](Color a, uint32_t rgb) { return a.r == uint8_t(rgb >> 16) && a.g == uint8_t(rgb >> 8) && a.b == uint8_t(rgb); };
-    // Left panel: plot at (76, 204), 174 px wide; labelled meters start at x 276.
+    // The left panel has the plot at (76, 204), 174 px wide, and the labelled meters start at x 276.
     const float cx = 163, cy = 291, half = 75, meter_left = 276, meter_right = 568;
 
-    view.render(c, s, rates(), std::nullopt);   // no data: no dot
+    view.render(c, s, rates(), std::nullopt);   // Without data, the view shows no dot.
     CHECK_FALSE(is(px(cx + half, cy), 0x0073cf));
 
-    s.eyes[0] = {true, true, 45, 0, 1.0};   // full right, eye open
+    s.eyes[0] = {true, true, 45, 0, 1.0};   // The eye looks fully right and is open.
     view.render(c, s, rates(), std::nullopt);
-    CHECK(is(px(cx + half, cy), 0x0073cf));         // dot at the right edge
-    CHECK(is(px(meter_right - 10, 249), 0x0073cf)); // openness fills the full meter
+    CHECK(is(px(cx + half, cy), 0x0073cf));         // The dot is at the right edge.
+    CHECK(is(px(meter_right - 10, 249), 0x0073cf)); // The openness fills the full meter.
 
-    s.eyes[0].openness = 0.2;                      // mostly closed: only the left fifth is filled
+    s.eyes[0].openness = 0.2;                      // The eye is mostly closed, so only the left fifth fills.
     view.render(c, s, rates(), std::nullopt);
     CHECK_FALSE(is(px(meter_right - 10, 249), 0x0073cf));
     CHECK(is(px(meter_left + 10, 249), 0x0073cf));
@@ -362,7 +364,7 @@ TEST_CASE("the eye panel places gaze and fills labelled output meters") {
     CHECK(is(px(meter_left + 10, 322), 0x0073cf));
     CHECK_FALSE(is(px(meter_right - 10, 322), 0x0073cf));
 
-    // Dilation is hidden until its baseline is ready; the 50% baseline tick stays visible.
+    // The view hides dilation until its baseline is ready, but the 50% baseline tick stays visible.
     s.eyes[0].dilation = 0.8;
     view.render(c, s, rates(), std::nullopt);
     CHECK_FALSE(is(px(480, 395), 0xa78bfa));
@@ -372,7 +374,7 @@ TEST_CASE("the eye panel places gaze and fills labelled output meters") {
     CHECK(is(px(480, 395), 0xa78bfa));
     CHECK_FALSE(is(px(meter_right - 10, 395), 0xa78bfa));
 
-    // Out-of-range readings never extend outside a meter or plot.
+    // Readings out of range never go outside a meter or plot.
     s.eyes[0].yaw_deg = 90;
     s.eyes[0].openness = 2;
     s.eyes[0].widen = -1;
@@ -391,11 +393,12 @@ TEST_CASE("the logo becomes the tab thumbnail, with a badge fallback") {
     Canvas thumb(DashboardView::kThumb, DashboardView::kThumb);
     view.render_thumbnail(thumb);
     const uint8_t *centre = thumb.data() + (size_t(64) * DashboardView::kThumb + 20) * 4;
-    CHECK((centre[0] == 0x00 && centre[1] == 0x73 && centre[2] == 0xcf));   // no icons: Baballonia's accent
+    // Without icons, the view uses the accent colour of Baballonia.
+    CHECK((centre[0] == 0x00 && centre[1] == 0x73 && centre[2] == 0xcf));
 
     REQUIRE(view.load_icons(std::filesystem::path(BABBLE_RESOURCES_DIR) / "icons"));
     view.render_thumbnail(thumb);
-    CHECK(centre[1] > centre[0]);   // the logo's green background
+    CHECK(centre[1] > centre[0]);   // This is the green background of the logo.
     CHECK(centre[1] > centre[2]);
 }
 
@@ -412,11 +415,11 @@ TEST_CASE("an on/off setting shows as a switch that reports the flipped value") 
     view.render(c, s, choices, std::nullopt);
     view.click(cog());
     view.render(c, s, choices, std::nullopt);
-    // Not on the Settings page: its third row is Mouth source (the default, selectable layout).
+    // On the Settings page, the third row is Mouth source in the default selectable layout.
     const Point sw{DashboardView::kWidth - 56.f - 46, 160 + 2 * 124 + 62};
     CHECK_FALSE(view.click(sw).setting);
 
-    // On Diagnostics, after verbose logging and the file row.
+    // On Diagnostics, the switch is after the verbose logging row and the file row.
     view.click({DashboardView::kWidth - 56.f - 60, 74});
     view.render(c, s, choices, std::nullopt);
     REQUIRE(view.page() == DashboardView::Page::Diagnostics);

@@ -7,7 +7,7 @@
 
 namespace {
 const babble::log::Logger LOG("pipeline");
-} // namespace
+}
 
 namespace babble {
 
@@ -63,4 +63,4 @@ void NullPipeline::process(const StereoFrame &sf) {
     publish(updates);
 }
 
-} // namespace babble
+}

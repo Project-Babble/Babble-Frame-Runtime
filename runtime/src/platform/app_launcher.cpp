@@ -16,7 +16,7 @@
 
 namespace {
 const babble::log::Logger LOG("launcher");
-} // namespace
+}
 
 extern char **environ;
 
@@ -58,7 +58,7 @@ bool AppLauncher::start() {
     posix_spawn_file_actions_addopen(&fa, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
     posix_spawn_file_actions_addopen(&fa, STDOUT_FILENO, log_.c_str(), O_WRONLY | O_CREAT | O_APPEND, 0644);
     posix_spawn_file_actions_adddup2(&fa, STDOUT_FILENO, STDERR_FILENO);
-    posix_spawn_file_actions_addclose(&fa, 3);   // the shim link is the runtime's alone
+    posix_spawn_file_actions_addclose(&fa, 3);   // Close fd 3 because only the runtime can use the shim link.
 
     posix_spawnattr_t at;
     posix_spawnattr_init(&at);
@@ -75,7 +75,7 @@ bool AppLauncher::start() {
     for (auto &a : argv_)
         argv.push_back(a.data());
     argv.push_back(nullptr);
-    // The runtime's environment plus the configured "env" entries.
+    // Use the environment of the runtime and add the configured "env" entries.
     std::vector<std::string> env_store;
     for (char **e = environ; e && *e; e++) {
         std::string kv = *e;
@@ -109,9 +109,9 @@ AppLauncher::~AppLauncher() {
 void AppLauncher::stop() {
     if (!running())
         return;
-    // Its own session: the group holds the script and the app it exec'd or started.
+    // Signal the process group because the child session holds the script and the app that it started.
     kill(-pid_, SIGTERM);
     LOG.info("launcher: stopping %s (pid %d)", argv_[0].c_str(), int(pid_));
 }
 
-} // namespace babble
+}

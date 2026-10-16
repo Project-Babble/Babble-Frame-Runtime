@@ -8,10 +8,7 @@
 
 namespace babble {
 
-// Single-producer/single-consumer "latest wins" slot. put() never blocks and
-// overwrites an unread value (counted as a drop); the consumer takes the
-// newest value or waits for one. Tracking wants the freshest frame, never a
-// backlog.
+// A single-producer, single-consumer slot that keeps only the newest value, because tracking needs the newest frame.
 template <class T>
 class LatestSlot {
 public:
@@ -32,7 +29,7 @@ public:
         return v;
     }
 
-    // Waits up to `timeout` for a value; returns nullopt on timeout or close.
+    // Waits up to `timeout` for a value and returns nullopt on timeout or close.
     std::optional<T> wait_take(std::chrono::nanoseconds timeout) {
         std::unique_lock<std::mutex> lock(mutex_);
         cv_.wait_for(lock, timeout, [this] { return value_.has_value() || closed_; });
@@ -77,4 +74,4 @@ private:
     uint64_t dropped_ = 0;
 };
 
-} // namespace babble
+}

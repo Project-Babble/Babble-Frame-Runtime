@@ -13,7 +13,7 @@ inline uint64_t mono_ns() {
     return uint64_t(ts.tv_sec) * 1000000000ull + uint64_t(ts.tv_nsec);
 }
 
-// Wall-clock time (CLOCK_REALTIME), for records that must be dated.
+// Returns the CLOCK_REALTIME time for records that must have a date.
 inline uint64_t wall_ns() {
     timespec ts{};
     clock_gettime(CLOCK_REALTIME, &ts);
@@ -40,4 +40,4 @@ inline void sleep_ns(uint64_t ns) {
     }
 }
 
-} // namespace babble
+}

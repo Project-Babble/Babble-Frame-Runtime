@@ -6,26 +6,22 @@ namespace babble::paths {
 
 std::filesystem::path exe_path();
 
-// $XDG_CONFIG_HOME/babble-frame-runtime (created on first call)
+// Returns $XDG_CONFIG_HOME/babble-frame-runtime and makes it on the first call.
 std::filesystem::path config_dir();
 
-// $XDG_STATE_HOME/babble-frame-runtime (created on first call)
+// Returns $XDG_STATE_HOME/babble-frame-runtime and makes it on the first call.
 std::filesystem::path state_dir();
 
-// $XDG_DATA_HOME/babble-frame-runtime (created on first call): recordings,
-// installed add-on apps.
+// Returns $XDG_DATA_HOME/babble-frame-runtime for recordings and add-on apps, and makes it on the first call.
 std::filesystem::path data_dir();
 
-// $XDG_RUNTIME_DIR/babble-frame-runtime, mode 0700 (created on first call);
-// state_dir() when there's no XDG_RUNTIME_DIR. For sockets.
+// Returns the 0700 socket folder in $XDG_RUNTIME_DIR, or state_dir() if XDG_RUNTIME_DIR is not set.
 std::filesystem::path runtime_dir();
 
-// A leading "~/" becomes $HOME/ (config paths); anything else is unchanged.
+// Changes a leading "~/" into $HOME/ and keeps all other paths unchanged.
 std::string expand_home(const std::string &path);
 
-// Runtime resources. Inside the driver folder the binary lives at
-// <driver>/bin/<platform>/babble-runtime and resources at
-// <driver>/resources/runtime; standalone builds fall back to <exe dir>/resources.
+// Returns <driver>/resources/runtime in the driver folder, or <exe dir>/resources for a standalone build.
 std::filesystem::path resource_dir();
 
-} // namespace babble::paths
+}

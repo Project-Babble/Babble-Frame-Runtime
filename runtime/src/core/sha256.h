@@ -10,17 +10,16 @@
 
 namespace babble {
 
-// SHA-256 (FIPS 180-4), streamed. Checks downloads and describes recorded
-// files; on its own it shows a file arrived intact, not who made it.
+// A streamed SHA-256 that shows that a file is intact, but not who made it.
 class Sha256 {
 public:
     Sha256();
     void update(const void *data, size_t n);
-    std::array<uint8_t, 32> finish();   // the object is spent afterwards
+    std::array<uint8_t, 32> finish();   // Do not use the object after this call.
     std::string finish_hex();
 
     static std::string hex(std::string_view data);
-    // The file's digest as lowercase hex; nullopt if it can't be read.
+    // Returns the digest of the file as lowercase hex, or nullopt if the file is not readable.
     static std::optional<std::string> file_hex(const std::filesystem::path &path);
 
 private:
@@ -32,4 +31,4 @@ private:
     uint64_t total_ = 0;
 };
 
-} // namespace babble
+}

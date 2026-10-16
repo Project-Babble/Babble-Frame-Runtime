@@ -20,7 +20,7 @@ float round_box_sdf(float px, float py, Rect r, float radius) {
     return std::sqrt(ox * ox + oy * oy) + std::min(std::max(qx, qy), 0.f) - radius;
 }
 
-} // namespace
+}
 
 Canvas::Canvas(int w, int h) : w_(w), h_(h), px_(size_t(w) * h * 4) {}
 
@@ -44,7 +44,7 @@ void Canvas::blend(int x, int y, Color c, float coverage) {
 
 void Canvas::fill_rect(Rect r, Color c, float radius) {
     radius = std::min({radius, r.w / 2, r.h / 2});
-    // Fully covered: whole pixels inside the rect that are clear of the corners.
+    // These bounds hold the whole pixels inside the rect that are clear of the corners.
     const float ix0 = r.x + radius, ix1 = r.x + r.w - radius, iy0 = r.y + radius, iy1 = r.y + r.h - radius;
     const float ox0 = r.x, ox1 = r.x + r.w, oy0 = r.y, oy1 = r.y + r.h;
     fill_sdf(
@@ -88,7 +88,7 @@ void Canvas::image(const Image &img, int x, int y, float radius) {
     for (int iy = 0; iy < img.height; iy++)
         for (int ix = 0; ix < img.width; ix++) {
             const uint8_t *s = &img.rgba[(size_t(iy) * img.width + ix) * 4];
-            // Rounded-corner coverage (1 inside, AA at the edge), times the image's own alpha.
+            // The coverage is the rounded-corner coverage multiplied by the alpha of the image.
             float cov = 1.0f;
             if (rad > 0)
                 cov = std::clamp(0.5f - round_box_sdf(x + ix + 0.5f, y + iy + 0.5f, r, rad), 0.f, 1.f);
@@ -97,13 +97,13 @@ void Canvas::image(const Image &img, int x, int y, float radius) {
 }
 
 void Canvas::cog(float cx, float cy, float r, Color c) {
-    // Ring body plus eight rounded teeth, minus the hub hole.
+    // The cog is a ring with eight rounded teeth and a hole at the hub.
     constexpr int kTeeth = 8;
     const float body = r * 0.74f, hole = r * 0.34f, tooth_w = r * 0.42f;
     fill_sdf(cx - r, cy - r, cx + r, cy + r, c, [&](float x, float y) {
         float px = x - cx, py = y - cy;
         float dist = std::hypot(px, py);
-        // Fold the angle into one tooth sector, then measure against a box along +x.
+        // Fold the angle into one tooth sector, then measure the distance to a box along +x.
         float sector = 2 * std::numbers::pi_v<float> / kTeeth;
         float a = std::atan2(py, px);
         a = std::fmod(a + sector * 0.5f + 8 * std::numbers::pi_v<float>, sector) - sector * 0.5f;
@@ -114,4 +114,4 @@ void Canvas::cog(float cx, float cy, float r, Color c) {
     });
 }
 
-} // namespace babble::ui
+}

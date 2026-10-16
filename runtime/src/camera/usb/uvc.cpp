@@ -21,13 +21,13 @@ void put32(uint8_t *p, uint32_t v) {
         p[i] = uint8_t(v >> (8 * i));
 }
 
-} // namespace
+}
 
 std::optional<Info> parse_config(const uint8_t *data, size_t size, std::string *error) {
     Info info;
-    // The interface the descriptors below it belong to.
+    // The interface of the descriptors that follow.
     uint8_t cur_iface = 0xff, cur_alt = 0, cur_class = 0, cur_sub = 0;
-    uint8_t cur_mjpeg = 0;   // format index while inside an MJPEG format's frame descriptors
+    uint8_t cur_mjpeg = 0;   // The format index inside the frame descriptors of an MJPEG format.
     for (size_t i = 0; i + 2 <= size;) {
         const uint8_t len = data[i], type = data[i + 1];
         if (len < 2 || i + len > size)
@@ -45,8 +45,7 @@ std::optional<Info> parse_config(const uint8_t *data, size_t size, std::string *
                 info.stream_iface = cur_iface;
         } else if (type == kEndpoint && len >= 7 && cur_class == kVideoClass && cur_sub == kStreamingSub &&
                    cur_iface == info.stream_iface && (d[2] & 0x80)) {
-            // Bulk streaming lives in alternate setting 0; isochronous ones in
-            // later settings: prefer bulk, else the largest isochronous packet.
+            // Use bulk if possible, or else the isochronous endpoint with the largest packet.
             const bool bulk = (d[3] & 0x03) == 0x02;
             const uint16_t max_packet = u16(d + 4) & 0x7ff;
             if (!info.endpoint || (bulk && !info.bulk) || (!bulk && !info.bulk && max_packet > info.endpoint_max_packet)) {
@@ -74,7 +73,7 @@ std::optional<Info> parse_config(const uint8_t *data, size_t size, std::string *
                 info.mjpeg_frames.push_back(f);
             } else if (cur_sub == kStreamingSub && sub != kVsFrameMjpeg) {
                 if (sub != kVsFormatMjpeg)
-                    cur_mjpeg = 0;   // another format's descriptors
+                    cur_mjpeg = 0;   // These descriptors are for a different format.
             }
         }
         i += len;
@@ -153,14 +152,13 @@ bool FrameAssembler::push(const uint8_t *payload, size_t size) {
         return false;
     const uint8_t header_len = payload[0], info = payload[1];
     if (header_len < 2 || header_len > size) {
-        bad_ = true;   // corrupt header: this frame can't be trusted
+        bad_ = true;   // A corrupt header makes the full frame bad.
         return false;
     }
     const int fid = info & 0x01;
     const bool eof = info & 0x02, err = info & 0x40;
     bool completed = false;
-    // A toggled frame ID starts a new frame: finish the previous one (a device
-    // that doesn't send EOF ends frames this way).
+    // A changed frame ID starts a new frame, because some devices do not send EOF.
     if (fid_ >= 0 && fid != fid_ && (!building_.empty() || bad_))
         completed = finish();
     fid_ = fid;
@@ -175,7 +173,7 @@ bool FrameAssembler::push(const uint8_t *payload, size_t size) {
     }
     if (eof) {
         completed = finish() || completed;
-        fid_ = -1;   // after EOF, the next payload starts a frame whatever its FID
+        fid_ = -1;   // After EOF, the next payload starts a frame with any FID.
     }
     return completed;
 }
@@ -184,4 +182,4 @@ bool looks_like_jpeg(const uint8_t *data, size_t size) {
     return size >= 4 && data[0] == 0xff && data[1] == 0xd8 && data[size - 2] == 0xff && data[size - 1] == 0xd9;
 }
 
-} // namespace babble::uvc
+}

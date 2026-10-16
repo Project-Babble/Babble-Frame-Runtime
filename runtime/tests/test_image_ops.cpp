@@ -22,7 +22,7 @@ struct Pgm {
     img::View view() const { return {px.data(), w, h, w}; }
 };
 
-// Minimal binary PGM (P5, maxval 255) reader; skips comment lines.
+// Reads a binary PGM (P5, maxval 255) and skips comment lines.
 Pgm read_pgm(const std::string &name) {
     std::ifstream in(std::string(BABBLE_TEST_DATA_DIR) + "/" + name, std::ios::binary);
     REQUIRE_MESSAGE(in.good(), name);
@@ -49,7 +49,7 @@ Pgm read_pgm(const std::string &name) {
     return p;
 }
 
-// Returns the number of differing pixels and the largest difference.
+// Returns the number of pixels that are different and the largest difference.
 std::pair<size_t, int> diff(const std::vector<uint8_t> &a, const std::vector<uint8_t> &b) {
     size_t n = 0;
     int worst = 0;
@@ -63,7 +63,7 @@ std::pair<size_t, int> diff(const std::vector<uint8_t> &a, const std::vector<uin
     return {n, worst};
 }
 
-} // namespace
+}
 
 TEST_CASE("image ops match OpenCV 5.0.0 bit for bit") {
     for (const char *name : {"noise", "mouth", "eye"}) {
@@ -88,7 +88,7 @@ TEST_CASE("image ops match OpenCV 5.0.0 bit for bit") {
         auto [n3, w3] = diff(area, want_area.px);
         CHECK_MESSAGE(n3 == 0, "INTER_AREA: " << n3 << " px differ, max " << w3);
 
-        // 400 -> 96 (the combined eye model): a non-integer 4.1667 ratio.
+        // The resize from 400 to 96 for the combined eye model has a ratio of 4.1667, which is not an integer.
         Pgm want_area96 = read_pgm(std::string(name) + "_area96.pgm");
         std::vector<uint8_t> area96(96 * 96);
         img::resize_area(in.view(), {area96.data(), 96, 96, 96});
@@ -98,7 +98,7 @@ TEST_CASE("image ops match OpenCV 5.0.0 bit for bit") {
 }
 
 TEST_CASE("flips and rotations") {
-    const uint8_t src[6] = {1, 2, 3, 4, 5, 6};   // 3 wide, 2 high
+    const uint8_t src[6] = {1, 2, 3, 4, 5, 6};   // The image is 3 wide and 2 high.
     img::View v{src, 3, 2, 3};
     uint8_t out[6];
 
@@ -108,7 +108,7 @@ TEST_CASE("flips and rotations") {
     CHECK(std::vector<uint8_t>(out, out + 6) == std::vector<uint8_t>{4, 5, 6, 1, 2, 3});
     img::rotate(v, {out, 3, 2, 3}, 2);
     CHECK(std::vector<uint8_t>(out, out + 6) == std::vector<uint8_t>{6, 5, 4, 3, 2, 1});
-    // 90° counter-clockwise: the right column becomes the top row.
+    // A 90° counter-clockwise rotation makes the right column the top row.
     img::rotate(v, {out, 2, 3, 2}, 1);
     CHECK(std::vector<uint8_t>(out, out + 6) == std::vector<uint8_t>{3, 6, 2, 5, 1, 4});
     img::rotate(v, {out, 2, 3, 2}, 3);

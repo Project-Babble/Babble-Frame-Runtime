@@ -1,10 +1,4 @@
-// Times a model the way the runtime runs it: ExecuTorchRunner, pinned to one
-// core, with the process-wide XNNPACK threadpool at the given size.
-//
-//   model_bench <model.pte> [--core N] [--threads N] [--runs N]
-//
-// Inputs are a fixed pattern (the model's own shapes and dtypes); prints the
-// median, mean and 90th percentile of the run time after a warm-up.
+// Times a model as the runtime runs it, with ExecuTorchRunner on one core and the XNNPACK threadpool at the given size.
 #include "model/executorch_runner.h"
 #include "core/clock.h"
 
@@ -49,7 +43,7 @@ int main(int argc, char **argv) {
     for (const auto &s : r.inputs()) {
         in.emplace_back(bytes(s));
         for (size_t k = 0; k < in.back().size(); k++)
-            in.back()[k] = uint8_t((k * 37 + 13) % 251 / 4);   // small positive values in any dtype
+            in.back()[k] = uint8_t((k * 37 + 13) % 251 / 4);   // Use small positive values for all dtypes.
     }
     for (const auto &s : r.outputs())
         out.emplace_back(bytes(s));
@@ -58,7 +52,7 @@ int main(int argc, char **argv) {
     for (size_t i = 0; i < out.size(); i++)
         ov.push_back({out[i].data(), &r.outputs()[i]});
 
-    for (int i = 0; i < 20; i++)   // warm-up: weight packing, caches, clocks
+    for (int i = 0; i < 20; i++)   // The warm-up runs prepare the weight packing, caches and clocks.
         if (!r.run(iv, ov))
             return 1;
     std::vector<double> ms;

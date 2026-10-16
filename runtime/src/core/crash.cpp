@@ -15,7 +15,7 @@
 
 namespace {
 const babble::log::Logger LOG("crash");
-} // namespace
+}
 
 namespace babble::crash {
 
@@ -32,8 +32,7 @@ const char *signal_name(int sig) {
     return "?";
 }
 
-// Everything in the handler must be async-signal-safe: no allocation, no
-// locks; fixed buffers and write(2) only.
+// Everything in the handler must be async-signal-safe, so use only fixed buffers and write(2).
 void on_fatal(int sig) {
     char name[16] = "?";
     pthread_getname_np(pthread_self(), name, sizeof(name));
@@ -47,7 +46,7 @@ void on_fatal(int sig) {
         backtrace_symbols_fd(frames, n, fd);
     backtrace_symbols_fd(frames, n, 2);
     log::write_raw_signal_safe("*** end of backtrace\n");
-    // SA_RESETHAND restored the default action: re-raise to crash as usual.
+    // Raise the signal again because SA_RESETHAND restored the default action.
     raise(sig);
 }
 
@@ -63,18 +62,17 @@ void on_terminate() {
     } else {
         LOG.error("terminate called without an exception");
     }
-    std::abort();   // -> on_fatal(SIGABRT): the backtrace
+    std::abort();   // The on_fatal handler writes the backtrace for SIGABRT.
 }
 
-} // namespace
+}
 
 void install() {
-    // backtrace() loads libgcc on first use, which isn't safe inside a
-    // handler: do it now.
+    // Call backtrace() now because it loads libgcc on first use, which is not safe in a handler.
     void *warm[1];
     backtrace(warm, 1);
 
-    // Its own stack, so a stack overflow can still be reported.
+    // Use a separate stack so that the handler can report a stack overflow.
     static char alt[64 * 1024];
     stack_t ss{};
     ss.ss_sp = alt;
@@ -90,4 +88,4 @@ void install() {
     std::set_terminate(on_terminate);
 }
 
-} // namespace babble::crash
+}

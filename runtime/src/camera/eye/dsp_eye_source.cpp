@@ -10,7 +10,7 @@
 
 namespace {
 const babble::log::Logger LOG("eye");
-} // namespace
+}
 
 namespace babble {
 
@@ -18,9 +18,9 @@ namespace {
 
 constexpr uint32_t kMaxLayoutFaults = 3;
 constexpr uint32_t kMaxDivisor = 3;
-constexpr uint64_t kFpsCheckNs = 500000000ull;   // how often the camera rate word is re-read
+constexpr uint64_t kFpsCheckNs = 500000000ull;   // The interval to read the camera rate word again.
 
-} // namespace
+}
 
 DspEyeSource::DspEyeSource(const nlohmann::json &cfg, SourceDeps deps)
     : cfg_(cfg), name_(deps.name), thread_spec_(thread_spec(deps.threads, "eye", "bbl-eye")), out_(deps.out),
@@ -73,7 +73,7 @@ void DspEyeSource::set_process_fps(double fps) {
 }
 
 bool DspEyeSource::set_option(const std::string &key, const nlohmann::json &value) {
-    // A whole number; the Babble tab sends numbers as doubles.
+    // The value must be a whole number, but the Babble tab sends numbers as doubles.
     if (key != "rate_divisor" || !value.is_number())
         return false;
     const double v = value.get<double>();
@@ -123,16 +123,13 @@ bool DspEyeSource::start() {
     std::string why;
     auto layout = client_.probe(candidates_, &why);
     if (!layout) {
-        // Never write to a control block we can't validate; look again later
-        // (read-only, with backoff). Right after boot the block is still blank
-        // until the service sets up the eye cameras: that's "not ready", not
-        // an unknown layout.
+        // Do not write to a control block that the probe cannot validate.
         not_ready_ = DspClient::fps_unset(client_.ctrl(), DspClient::kRegionBytes, candidates_);
         if (not_ready_) {
             last_error_ = "waiting for dsp_service to set up the eye cameras";
         } else {
             last_error_ = "unrecognized dsp_service layout (" + why + ")";
-            if (last_error_ != reported_layout_error_)   // once per distinct reason
+            if (last_error_ != reported_layout_error_)   // Log each different reason one time.
                 LOG.error("eye: %s", last_error_.c_str());
             reported_layout_error_ = last_error_;
         }
@@ -153,7 +150,7 @@ bool DspEyeSource::start() {
     }
     LOG.info("eye: dsp_service layout at ctrl base 0x%x", layout_.ctrl_base);
 
-    // Two frames per stereo pair, a few pairs in flight downstream.
+    // The pool holds two frames for each stereo pair and some pairs that are downstream.
     size_t bytes = size_t(std::max(crop_l_.w * crop_l_.h, crop_r_.w * crop_r_.h));
     pool_ = FramePool::create_owned(12, bytes);
 
@@ -195,7 +192,7 @@ bool DspEyeSource::copy_view(bool right, uint32_t idx, uint64_t now, uint32_t se
     frame->height = c.h;
     frame->stride = c.w;
     frame->size = size_t(c.w) * c.h;
-    frame->capture_ns = now;   // no DSP timestamp known; detection time
+    frame->capture_ns = now;   // The DSP gives no timestamp, so use the detection time.
     frame->arrival_ns = now;
     frame->seq = seq;
     *out = std::move(frame);
@@ -209,8 +206,7 @@ void DspEyeSource::run() {
     uint64_t last_frame = mono_ns();
     uint32_t seq = 0;
 
-    // Frame-timed polling state (see class comment).
-    uint64_t interval_ns = 0;          // smoothed frame interval, 0 = unknown
+    uint64_t interval_ns = 0;          // The smoothed frame interval, or 0 if it is not known.
     uint64_t margin_ns = margin_min_ns;
     uint64_t last_change_ns = 0;
     uint32_t on_time = 0;
@@ -218,13 +214,12 @@ void DspEyeSource::run() {
     auto on_new_frame = [&](uint64_t now) {
         if (last_change_ns) {
             uint64_t dt = now - last_change_ns;
-            if (dt < 100000000ull)   // ignore gaps (stalls, restarts)
+            if (dt < 100000000ull)   // Ignore gaps from stalls and restarts.
                 interval_ns = interval_ns ? (interval_ns * 7 + dt) / 8 : dt;
         }
         last_change_ns = now;
         if (after_coarse_sleep) {
-            // The frame landed while we slept: detection was late by up to
-            // the margin. Wake earlier from now on.
+            // The frame came during the sleep, so wake earlier from now on.
             late_detect_.add();
             margin_ns = std::min<uint64_t>(margin_ns + 250000ull, interval_ns / 2);
             on_time = 0;
@@ -246,7 +241,7 @@ void DspEyeSource::run() {
     };
 
     if (!logged_gap_) {
-        // Research aid: the 64 bytes between frame end and next slot may hold metadata.
+        // Log the 64 bytes after the frame because they can hold metadata.
         const uint8_t *s = client_.slot_ptr(layout_, false, 0) + layout_.frame_bytes;
         char hex[3 * 64 + 1] = {0};
         for (int i = 0; i < 64; i++)
@@ -256,13 +251,13 @@ void DspEyeSource::run() {
     }
 
     uint64_t next_fps_check = 0;
-    uint64_t wait_ns = 5000000ull;   // how long a lone side may wait for the other: half a frame period
+    uint64_t wait_ns = 5000000ull;   // A lone side waits for the other side for half a frame period.
     uint32_t pair_count = 0;
     while (!stop_) {
         auto idx = client_.read_indices(layout_);
         uint64_t now = mono_ns();
         if (now >= next_fps_check) {
-            // SteamVR re-sets the camera rate on every headset-on and display mode change.
+            // SteamVR sets the camera rate again when the user puts on the headset or changes the display mode.
             const float fps = client_.read_fps(layout_);
             if (fps != camera_fps_.load(std::memory_order_relaxed)) {
                 if (fps > 0)
@@ -273,8 +268,7 @@ void DspEyeSource::run() {
             if (fps > 0)
                 wait_ns = uint64_t(0.5e9 / fps);
             next_fps_check = now + kFpsCheckNs;
-            // With request type 0 the service sends nothing; if it ever does, read it
-            // rather than let its socket fill (see DspClient::connect).
+            // Read all messages from the service so that its socket does not fill.
             if (client_.drain() && !logged_dsp_messages_) {
                 LOG.warn("eye: dsp_service sent messages (request type %u); discarding them",
                          cfg_.value("dsp_request", 0u));
@@ -293,7 +287,7 @@ void DspEyeSource::run() {
             sleep_ns(poll_ns);
             continue;
         }
-        consecutive_faults_ = 0;   // a sane index read: only a run of bad reads is fatal
+        consecutive_faults_ = 0;   // Only a series of bad index reads stops the source.
 
         const EyePairer::Step step = pairer_.feed(idx.l, idx.r, now, wait_ns);
         if (step.new_l)
@@ -301,8 +295,7 @@ void DspEyeSource::run() {
         if (step.new_r)
             side_r_.tick();
         if (step.result == EyePairer::Result::Half) {
-            // One camera published and the other never followed: hand the
-            // lone slot back unused rather than pair it with a stale image.
+            // Give the lone slot back unused because a pair with an old image is not correct.
             half_pairs_.add();
             if (step.half_l)
                 client_.release(layout_, false, idx.l);
@@ -318,7 +311,7 @@ void DspEyeSource::run() {
                 return;
             }
             if (pairer_.waiting())
-                sleep_ns(poll_ns);   // the other side is due any moment: poll finely
+                sleep_ns(poll_ns);   // The other side comes soon, so poll at short intervals.
             else
                 idle_sleep(now);
             continue;
@@ -329,11 +322,10 @@ void DspEyeSource::run() {
         last_frame = now;
         IFrameTap *tap = tap_.load(std::memory_order_relaxed);
         const bool want_tap = tap && tap->tap_wanted();
-        // The tracking rate is every Nth pair, counted rather than timed, so
-        // 1:1 never drops a pair to jitter.
+        // Count the pairs instead of a timer, so that jitter does not cause a dropped pair.
         const bool forward = pair_count++ % divisor_.load(std::memory_order_relaxed) == 0;
         if (!forward && !want_tap) {
-            // Skip the copy, but hand the slots back exactly as a consumed pair would.
+            // Skip the copy, but give the slots back as a used pair does.
             client_.release(layout_, false, idx.l);
             client_.release(layout_, true, idx.r);
             continue;
@@ -342,10 +334,7 @@ void DspEyeSource::run() {
         uint64_t t0 = mono_ns();
         StereoFrame sf;
         seq++;
-        // Both copies always run: each hands its ring slot back to dsp_service
-        // whether it succeeds or not (a short-circuit here leaked the right slot).
-        // Each view is stamped when its index was first seen to advance; the
-        // pair with the midpoint, as StereoFrame defines it.
+        // Run both copies because each copy must give its ring slot back to dsp_service.
         const bool ok_l = copy_view(false, idx.l, step.l_ns, seq, &sf.left);
         const bool ok_r = copy_view(true, idx.r, step.r_ns, seq, &sf.right);
         if (!ok_l || !ok_r)
@@ -363,7 +352,7 @@ void DspEyeSource::run() {
 }
 
 void DspEyeSource::tick(uint64_t now) {
-    // Only an explicit "not worn" pauses; unknown presence keeps streaming.
+    // Pause only if SteamVR reports that the headset is not worn.
     const bool absent = pause_when_absent_ && steamvr_ && steamvr_->worn() == Worn::No;
     const bool hold = !tracking_ || absent;
     const char *why = !tracking_ ? "tracking turned off" : "headset not worn";
@@ -430,4 +419,4 @@ void DspEyeSource::shutdown() {
     }
 }
 
-} // namespace babble
+}

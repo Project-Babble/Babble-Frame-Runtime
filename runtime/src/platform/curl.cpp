@@ -15,7 +15,7 @@ std::string trimmed(std::string s) {
         s.pop_back();
     return s;
 }
-} // namespace
+}
 
 bool fetch(const std::string &url, std::string *out, std::string *err) {
     std::string e;
@@ -59,4 +59,4 @@ bool download(const std::string &url, uint64_t size, const fs::path &to, std::st
     return true;
 }
 
-} // namespace babble::curl
+}

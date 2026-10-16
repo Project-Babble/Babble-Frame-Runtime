@@ -13,7 +13,7 @@
 
 namespace {
 const babble::log::Logger LOG("apps");
-} // namespace
+}
 
 namespace babble::capture {
 
@@ -243,7 +243,7 @@ void AppInstaller::do_install() {
     fs::rename(fresh, dir_, ec);
     if (ec) {
         std::error_code ec2;
-        fs::rename(old, dir_, ec2);   // put the previous version back
+        fs::rename(old, dir_, ec2);   // Put the previous version back.
         return fail("cannot install to " + dir_.string() + ": " + ec.message());
     }
     fs::remove_all(old, ec);
@@ -288,4 +288,4 @@ void AppInstaller::run() {
     }
 }
 
-} // namespace babble::capture
+}

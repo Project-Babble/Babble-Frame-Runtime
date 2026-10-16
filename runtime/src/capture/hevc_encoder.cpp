@@ -17,7 +17,7 @@ namespace babble::capture {
 namespace {
 
 constexpr uint32_t kOutBufs = 8, kCapBufs = 8;
-constexpr int kStallMs = 3000;   // no buffer back for this long: the encoder is stuck
+constexpr int kStallMs = 3000;   // The encoder is stuck if no buffer comes back for this time.
 
 int xioctl(int fd, unsigned long req, void *arg) {
     int r;
@@ -41,12 +41,11 @@ std::string sysfs_name(int n) {
     return s;
 }
 
-} // namespace
-
+}
 HevcEncoder::~HevcEncoder() { close(); }
 
 std::string HevcEncoder::find_device() {
-    // By the sysfs name, so no camera node is ever opened to ask.
+    // Use the sysfs name so that the search never opens a camera node.
     for (int n = 0; n < 64; n++) {
         if (sysfs_name(n) != "qcom-iris-encoder")
             continue;
@@ -100,7 +99,7 @@ bool HevcEncoder::open(const Settings &s, PacketFn on_packet, std::string *err, 
         driver_ = std::string(reinterpret_cast<const char *>(cap.driver)) + ver;
     }
 
-    // The stream format first, then the frames (the driver derives one from the other).
+    // Set the stream format before the frame format because the driver derives one from the other.
     v4l2_format cf{};
     cf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
     cf.fmt.pix_mp.width = s_.width;
@@ -116,14 +115,14 @@ bool HevcEncoder::open(const Settings &s, PacketFn on_packet, std::string *err, 
     of.fmt.pix_mp.height = s_.height;
     of.fmt.pix_mp.pixelformat = V4L2_PIX_FMT_NV12;
     of.fmt.pix_mp.num_planes = 1;
-    // Gray goes into Y unchanged: full range. The driver writes this into the VUI.
+    // Gray goes into Y unchanged, so the stream is full range.
     of.fmt.pix_mp.colorspace = V4L2_COLORSPACE_REC709;
     of.fmt.pix_mp.ycbcr_enc = V4L2_YCBCR_ENC_709;
     of.fmt.pix_mp.xfer_func = V4L2_XFER_FUNC_709;
     of.fmt.pix_mp.quantization = V4L2_QUANTIZATION_FULL_RANGE;
     if (xioctl(fd_, VIDIOC_S_FMT, &of) < 0)
         return bad("setting the frame format");
-    // The driver pads (800x400 becomes 800x416 with an 896-byte stride): use what it says.
+    // Use the padded layout that the driver returns, for example 800x416 with an 896-byte stride for 800x400.
     stride_ = of.fmt.pix_mp.plane_fmt[0].bytesperline;
     padded_h_ = of.fmt.pix_mp.height;
     out_bytes_ = of.fmt.pix_mp.plane_fmt[0].sizeimage;
@@ -137,13 +136,12 @@ bool HevcEncoder::open(const Settings &s, PacketFn on_packet, std::string *err, 
     sp.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
     sp.parm.output.timeperframe.numerator = 1000;
     sp.parm.output.timeperframe.denominator = uint32_t(s_.fps * 1000 + 0.5);
-    xioctl(fd_, VIDIOC_S_PARM, &sp);   // a rate hint only
+    xioctl(fd_, VIDIOC_S_PARM, &sp);   // This is only a rate hint.
 
     set_ctrl(fd_, V4L2_CID_MPEG_VIDEO_GOP_SIZE, s_.gop);
     set_ctrl(fd_, V4L2_CID_MPEG_VIDEO_B_FRAMES, 0);
     set_ctrl(fd_, V4L2_CID_MPEG_VIDEO_HEADER_MODE, V4L2_MPEG_VIDEO_HEADER_MODE_JOINED_WITH_1ST_FRAME);
-    // Constant QP: the driver ignores FRAME_RC_ENABLE=0, so pin every QP limit
-    // under VBR with a bitrate cap it never reaches.
+    // Pin every QP limit under VBR for constant QP because the driver ignores FRAME_RC_ENABLE=0.
     bool qp_ok = set_ctrl(fd_, V4L2_CID_MPEG_VIDEO_FRAME_RC_ENABLE, 1) &&
                  set_ctrl(fd_, V4L2_CID_MPEG_VIDEO_BITRATE_MODE, V4L2_MPEG_VIDEO_BITRATE_MODE_VBR) &&
                  set_ctrl(fd_, V4L2_CID_MPEG_VIDEO_BITRATE, 240000000) &&
@@ -185,7 +183,7 @@ bool HevcEncoder::open(const Settings &s, PacketFn on_packet, std::string *err, 
     if (!map_bufs(V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE, kCapBufs, &cap_))
         return bad("stream buffers");
     for (size_t i = 0; i < out_.size(); i++) {
-        // Chroma is constant: fill it once. Y's padding rows stay black.
+        // Fill the constant chroma one time.
         auto *y = static_cast<uint8_t *>(out_[i].p);
         const size_t luma = size_t(stride_) * padded_h_;
         memset(y, 0, luma);
@@ -221,7 +219,7 @@ bool HevcEncoder::service(int timeout_ms, std::string *err) {
     if (pr < 0 && errno != EINTR)
         return fail(err, std::string("poll: ") + strerror(errno));
     bool progress = false;
-    for (;;) {   // frames the encoder is done with
+    for (;;) {   // Take back the frames that the encoder has finished.
         v4l2_plane pl[1]{};
         v4l2_buffer b{};
         b.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
@@ -233,7 +231,7 @@ bool HevcEncoder::service(int timeout_ms, std::string *err) {
         free_out_.push_back(int(b.index));
         progress = true;
     }
-    for (;;) {   // stream packets
+    for (;;) {   // Send the stream packets.
         v4l2_plane pl[1]{};
         v4l2_buffer b{};
         b.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
@@ -291,7 +289,7 @@ bool HevcEncoder::encode(const uint8_t *gray, std::string *err) {
     if (xioctl(fd_, VIDIOC_QBUF, &b) < 0)
         return fail(err, std::string("queueing a frame: ") + strerror(errno));
     frames_in_++;
-    return service(0, err);   // collect whatever is ready, so packets don't pile up
+    return service(0, err);   // Collect the ready packets so that they do not accumulate.
 }
 
 bool HevcEncoder::finish(std::string *err) {
@@ -327,7 +325,7 @@ void HevcEncoder::close() {
             v4l2_requestbuffers rq{};
             rq.type = type;
             rq.memory = V4L2_MEMORY_MMAP;
-            xioctl(fd_, VIDIOC_REQBUFS, &rq);   // count 0: free them
+            xioctl(fd_, VIDIOC_REQBUFS, &rq);   // A count of 0 frees the buffers.
         }
         ::close(fd_);
     }
@@ -339,4 +337,4 @@ void HevcEncoder::close() {
     frames_in_ = packets_out_ = 0;
 }
 
-} // namespace babble::capture
+}

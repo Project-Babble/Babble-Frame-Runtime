@@ -31,14 +31,14 @@ struct Fixture {
     ~Fixture() { fs::remove_all(dir); }
 
     std::unique_ptr<RecordSink> make(json extra = json::object()) {
-        // A raw passthrough instead of ffmpeg: the "video" is the frames as written.
+        // Use a raw passthrough and not ffmpeg, so the "video" is the frames as written.
         json cfg = {{"type", "record"}, {"dir", dir.string()}, {"encoder", {"dd", "of={out}", "status=none"}},
                     {"container", "raw"}, {"min_free_gb", 0}};
         cfg.merge_patch(extra);
         return std::make_unique<RecordSink>(cfg, SinkDeps{"record", threads, state, stats, "V-test", "dev"});
     }
 
-    // A w x h frame with stride w + 8, every pixel = value (the padding is 0xEE).
+    // Makes a w x h frame with stride w + 8, every pixel equal to value and the padding equal to 0xEE.
     FramePtr frame(FrameOrigin o, uint32_t w, uint32_t h, uint8_t value, uint32_t seq) {
         auto f = pool->acquire();
         REQUIRE(f);
@@ -71,14 +71,14 @@ std::string slurp(const fs::path &p) {
     return std::string(std::istreambuf_iterator<char>(f), {});
 }
 
-} // namespace
+}
 
 TEST_CASE("record: a session writes each source's frames, stamps, labels and a manifest") {
     Fixture fx;
     auto rec = fx.make();
     REQUIRE(rec->available());
     REQUIRE(rec->start());
-    CHECK_FALSE(rec->tap_wanted());   // nothing to copy until a session starts
+    CHECK_FALSE(rec->tap_wanted());   // The sink copies nothing until a session starts.
 
     RecordSink::SessionSpec spec;
     spec.routine = "eye";
@@ -113,12 +113,12 @@ TEST_CASE("record: a session writes each source's frames, stamps, labels and a m
     CHECK(fin->status == "complete");
     CHECK(fin->sources["eye"].frames == n);
     CHECK(fin->sources["face"].frames == n);
-    CHECK_FALSE(rec->add_label("Late", 1, 2, &err));   // not recording any more
+    CHECK_FALSE(rec->add_label("Late", 1, 2, &err));   // The sink does not record now.
 
     const fs::path sdir = r.dir;
     const std::string eye = slurp(sdir / "eye.raw");
     REQUIRE(eye.size() == size_t(n) * 32 * 8);
-    // Side by side, stride padding gone: row 0 of frame 3 is 16 x 3 then 16 x 103.
+    // The frames are side by side without stride padding, so row 0 of frame 3 is 16 x 3 and then 16 x 103.
     CHECK(uint8_t(eye[3 * 256 + 0]) == 3);
     CHECK(uint8_t(eye[3 * 256 + 15]) == 3);
     CHECK(uint8_t(eye[3 * 256 + 16]) == 103);
@@ -137,9 +137,9 @@ TEST_CASE("record: a session writes each source's frames, stamps, labels and a m
 
     const json m = json::parse(slurp(sdir / "session.json"));
     CHECK(m["format"] == 2);
-    CHECK(m["stop_reason"].is_null());   // stopped without a reason
+    CHECK(m["stop_reason"].is_null());   // The session stopped without a reason.
     CHECK(m["device"].is_object());
-    CHECK_FALSE(m.contains("routine_file"));   // no routine_def
+    CHECK_FALSE(m.contains("routine_file"));   // The session has no routine_def.
     CHECK_FALSE(m.contains("valve_eye"));
     CHECK(m["status"] == "complete");
     CHECK(m["routine"] == "eye");
@@ -162,7 +162,7 @@ TEST_CASE("record format 2: routine.json, step/phase labels and Valve eye sample
     auto rec = fx.make();
     REQUIRE(rec->start());
     eye_server::Sample early;
-    rec->add_eye_sample(early);   // no session: ignored
+    rec->add_eye_sample(early);   // The sink ignores a sample when there is no session.
     RecordSink::SessionSpec spec;
     spec.routine = "eye";
     spec.routine_def = {{"steps", {{{"log", "eye_closed"}, {"pose", {{"EyeClosed", 1.0}}}}}}};
@@ -189,7 +189,7 @@ TEST_CASE("record format 2: routine.json, step/phase labels and Valve eye sample
     rec->tap_frames("eye", sf);
     REQUIRE(rec->stop_session("stopped by the app"));
     CHECK_FALSE(rec->wants_eye_samples());
-    rec->add_eye_sample(early);   // after stop: ignored
+    rec->add_eye_sample(early);   // The sink ignores a sample after the stop.
     REQUIRE(wait_for([&] { return rec->take_finished().has_value(); }));
 
     const fs::path sdir = r.dir;
@@ -207,10 +207,10 @@ TEST_CASE("record format 2: routine.json, step/phase labels and Valve eye sample
     uint32_t flags;
     memcpy(&rx, rec3 + 0, 8);
     memcpy(&t, rec3 + 8, 8);
-    memcpy(&gx, rec3 + 16, 4);                // gaze[left].x
-    memcpy(&prz, rec3 + 40 + 4 * 5, 4);       // pre_fusion_gaze[right].z
-    memcpy(&fz, rec3 + 64 + 8, 4);            // fixation.z
-    memcpy(&open_r, rec3 + 80, 4);            // openness[right]
+    memcpy(&gx, rec3 + 16, 4);                // This field is gaze[left].x.
+    memcpy(&prz, rec3 + 40 + 4 * 5, 4);       // This field is pre_fusion_gaze[right].z.
+    memcpy(&fz, rec3 + 64 + 8, 4);            // This field is fixation.z.
+    memcpy(&open_r, rec3 + 80, 4);            // This field is openness[right].
     memcpy(&flags, rec3 + 84, 4);
     CHECK(rx == 1003);
     CHECK(t == 5.5);
@@ -246,7 +246,7 @@ TEST_CASE("record: a slow encoder drops frames instead of blocking the camera, a
     StereoFrame odd;
     odd.left = fx.frame(FrameOrigin::Face, 32, 32, 1, 999);
     rec->tap_frames("face", odd);
-    CHECK(mono_ns() - t0 < 500000000ull);   // never waited on the encoder
+    CHECK(mono_ns() - t0 < 500000000ull);   // The sink never waited for the encoder.
     const auto st = rec->status();
     REQUIRE(st.sources.count("face"));
     CHECK(st.sources.at("face").dropped > 0);

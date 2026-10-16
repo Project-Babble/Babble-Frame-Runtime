@@ -14,7 +14,7 @@
 
 namespace {
 const babble::log::Logger LOG("pipe.gaze");
-} // namespace
+}
 
 namespace babble {
 
@@ -22,7 +22,7 @@ namespace gaze {
 
 namespace {
 
-// Applies the roll, yaw and pitch offsets to a head-space vector (forward = +z here).
+// Apply the roll, yaw and pitch offsets to a head-space vector with forward along +z.
 void rotate(double &x, double &y, double &z, const Offsets &off) {
     const double ro = off.roll_deg * M_PI / 180, yo = off.yaw_deg * M_PI / 180, po = off.pitch_deg * M_PI / 180;
     const double cr = std::cos(ro), sr = std::sin(ro), cy = std::cos(yo), sy = std::sin(yo), cp = std::cos(po),
@@ -37,20 +37,20 @@ void rotate(double &x, double &y, double &z, const Offsets &off) {
     y = ny, z = nz;
 }
 
-// Limits an angle to +-max_deg and scales it for the module.
+// Limit an angle to +-max_deg and scale it for the module.
 double scale(double a, double max_deg, Scaling scaling) {
     const double max_rad = max_deg * M_PI / 180;
     a = std::max(-max_rad, std::min(max_rad, a));
     return scaling == Scaling::Tangent ? std::tan(a) : a / max_rad;
 }
 
-} // namespace
+}
 
 std::optional<std::array<double, 3>> convert(double x, double y, double z, double ipd, double max_deg, bool flip_y,
                                              const Offsets &off, Scaling scaling) {
     if (std::sqrt(x * x + y * y + z * z) < 0.01)
         return std::nullopt;
-    z = std::fabs(z);   // forward is -z in OpenVR; eyes never look backwards
+    z = std::fabs(z);   // Use the absolute value because an eye never looks backwards.
     if (flip_y)
         y = -y;
     rotate(x, y, z, off);
@@ -71,7 +71,7 @@ std::optional<std::array<double, 2>> from_direction(double x, double y, double z
     return std::array<double, 2>{scale(std::atan2(x, z), max_deg, scaling), scale(std::atan2(y, z), max_deg, scaling)};
 }
 
-} // namespace gaze
+}
 
 SteamVrGaze::SteamVrGaze(const nlohmann::json &cfg, PipelineDeps deps)
     : name_(deps.name), cfg_(cfg), deps_(std::move(deps)), feed_(cfg.value("feed", "eye")) {
@@ -97,7 +97,7 @@ std::optional<bool> parse_gaze_source(const nlohmann::json &v) {
     return std::nullopt;
 }
 
-} // namespace
+}
 
 bool SteamVrGaze::init() {
     if (!deps_.steamvr) {
@@ -169,7 +169,7 @@ void SteamVrGaze::publish(double lx, double ly, double rx, double ry, uint64_t n
     deps_.state.update(u);
 }
 
-// Each eye's own direction from the eye-service shared memory.
+// Get the direction of each eye from the eye-service shared memory.
 bool SteamVrGaze::tick_independent(uint64_t now) {
     auto s = deps_.eye_server->latest(uint64_t(stale_ns_));
     if (!s)
@@ -184,7 +184,7 @@ bool SteamVrGaze::tick_independent(uint64_t now) {
     return true;
 }
 
-// SteamVR's fused gaze through IVRInput, split per eye by the IPD.
+// Get the fused SteamVR gaze through IVRInput and split it for each eye with the IPD.
 bool SteamVrGaze::tick_combined(uint64_t now) {
     SteamVrClient &vrc = *deps_.steamvr;
     if (!vrc.connected())
@@ -195,7 +195,7 @@ bool SteamVrGaze::tick_combined(uint64_t now) {
     }
     action_ = vrc.gaze_action();
     action_set_ = vrc.action_set();
-    if (!action_)   // the client's input manifest isn't ready (yet)
+    if (!action_)   // The input manifest of the client is not ready.
         return false;
     const double ipd = ipd_override_ ? *ipd_override_ : (vrc.ipd() > 0 ? vrc.ipd() : 0.063);
 
@@ -218,7 +218,7 @@ bool SteamVrGaze::tick_combined(uint64_t now) {
         invalid_.add();
         return false;
     }
-    // World -> head: p = R^T (target - position).
+    // Move the target from world space to head space with p = R^T (target - position).
     const auto &m = hmd.mDeviceToAbsoluteTracking.m;
     const double t[3] = {d.vGazeTarget.v[0] - m[0][3], d.vGazeTarget.v[1] - m[1][3], d.vGazeTarget.v[2] - m[2][3]};
     double p[3];
@@ -241,11 +241,11 @@ void SteamVrGaze::run() {
 
     while (!stop_) {
         const uint64_t now = mono_ns();
-        // The eye-service reader only runs while independent gaze is wanted.
+        // The eye-service reader runs only while the pipeline needs independent gaze.
         const bool want_independent = tracking_ && independent_ && deps_.eye_server;
         if (deps_.eye_server)
             deps_.eye_server->want(EyeServerClient::Gaze, want_independent);
-        if (!tracking_) {   // eye feed turned off by the user
+        if (!tracking_) {   // The user turned the eye feed off.
             if (!centred) {
                 publish(0, 0, 0, 0, now);
                 centred = true;
@@ -270,7 +270,7 @@ void SteamVrGaze::run() {
             using_ = used;
             last_valid = now;
             centred = false;
-        } else if (!centred && now - last_valid > uint64_t(stale_ns_)) {   // back to centre once, like the reference
+        } else if (!centred && now - last_valid > uint64_t(stale_ns_)) {   // Go back to centre one time, as the reference does.
             publish(0, 0, 0, 0, now);
             centred = true;
         }
@@ -278,4 +278,4 @@ void SteamVrGaze::run() {
     }
 }
 
-} // namespace babble
+}

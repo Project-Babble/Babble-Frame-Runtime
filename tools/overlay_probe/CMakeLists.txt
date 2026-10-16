@@ -1,7 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(overlay_probe CXX)
-# Research tool: does the Frame's shell show a SteamVR dashboard overlay tab,
-# and does the laser deliver mouse events to it? Not part of the runtime build.
+# This research tool is not part of the runtime build, and it tests a SteamVR dashboard overlay on the Frame.
 set(CMAKE_CXX_STANDARD 17)
 set(OPENVR ${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/openvr)
 add_executable(overlay_probe overlay_probe.cpp)

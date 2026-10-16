@@ -16,7 +16,7 @@
 
 namespace {
 const babble::log::Logger LOG("package");
-} // namespace
+}
 
 namespace babble::capture {
 
@@ -55,10 +55,10 @@ struct Job {
     std::string name, file, stamps;
     uint32_t w = 0, h = 0;
     double fps = 30;
-    uint64_t records = 0;   // stamps records: the frame count the video must have
+    uint64_t records = 0;   // The number of stamps records, which is the frame count that the video must have.
 };
 
-} // namespace
+}
 
 double psnr(const uint8_t *a, const uint8_t *b, size_t n) {
     double se = 0;
@@ -114,7 +114,7 @@ PackageResult make_package(const fs::path &sdir, const PackagerOptions &o) {
         if (ec || !fs::exists(sdir / j.file, ec))
             return fail("source " + name + ": " + j.file + " or " + j.stamps + " is missing");
         j.records = sb / 24;
-        total_frames += 2 * j.records;   // encoded, then decoded again to verify
+        total_frames += 2 * j.records;   // Each frame is encoded and then decoded again for the check.
         jobs.push_back(j);
     }
     if (jobs.empty())
@@ -138,7 +138,7 @@ PackageResult make_package(const fs::path &sdir, const PackagerOptions &o) {
         const size_t frame_bytes = size_t(j.w) * j.h;
         const uint64_t still_every = std::max<uint64_t>(1, uint64_t(std::llround(o.still_every_s * j.fps)));
         const uint64_t stills_total = (j.records + still_every - 1) / still_every;
-        const uint64_t check_every = std::max<uint64_t>(1, stills_total / 16);   // at most ~16 stills kept for the check
+        const uint64_t check_every = std::max<uint64_t>(1, stills_total / 16);   // Keep about 16 stills for the check.
         const std::string out_name = j.name + ".hevc.mkv", ref_name = j.name + ".ref.mkv";
         const fs::path out = pdir / out_name, ref = pdir / ref_name;
         std::string err;
@@ -177,7 +177,7 @@ PackageResult make_package(const fs::path &sdir, const PackagerOptions &o) {
         driver = enc.driver();
 
         std::vector<uint8_t> frame(frame_bytes);
-        std::map<uint64_t, std::vector<uint8_t>> kept;   // frame index -> lossless still
+        std::map<uint64_t, std::vector<uint8_t>> kept;   // This maps a frame index to its lossless still.
         uint64_t n = 0;
         for (;;) {
             const int r = dec.read_stdout_exact(frame.data(), frame_bytes, 30000);
@@ -213,7 +213,7 @@ PackageResult make_package(const fs::path &sdir, const PackagerOptions &o) {
             return fail("the encoder returned " + std::to_string(packets) + " packets for " + std::to_string(n) +
                         " frames");
 
-        // Verify: tagged full range, every frame there, stills where they should be.
+        // Make sure that the file is full range and has every frame and every still.
         std::string range, perr;
         Process::run({o.ffprobe, "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=color_range", "-of",
                       "default=nw=1:nk=1", out.string()},
@@ -274,7 +274,7 @@ PackageResult make_package(const fs::path &sdir, const PackagerOptions &o) {
                            {"bits_per_pixel", std::round(bpp * 1000) / 1000}};
     }
 
-    // The rest of the session, as recorded.
+    // Copy the rest of the session as it was recorded.
     std::vector<std::string> copy;
     for (const Job &j : jobs)
         copy.push_back(j.stamps);
@@ -334,4 +334,4 @@ PackageResult make_package(const fs::path &sdir, const PackagerOptions &o) {
     return res;
 }
 
-} // namespace babble::capture
+}

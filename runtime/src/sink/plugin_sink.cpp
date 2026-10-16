@@ -10,7 +10,7 @@
 
 namespace {
 const babble::log::Logger LOG("plugin");
-} // namespace
+}
 
 namespace babble {
 
@@ -91,7 +91,7 @@ void PluginSink::refresh_visible() {
     const size_t n = state_.count();
     for (size_t id = seen_count_; id < n; id++) {
         std::string nm = state_.name(SignalId(id));
-        if (nm.empty() || nm[0] == '_')   // internal signals stay inside the runtime
+        if (nm.empty() || nm[0] == '_')   // Internal signals stay in the runtime.
             continue;
         visible_.push_back(SignalId(id));
         names_.push_back(std::move(nm));
@@ -119,7 +119,7 @@ uint64_t PluginSink::host_read(void *ctx, const uint32_t *ids, uint32_t n, float
     {
         std::lock_guard<std::mutex> lock(self->visible_mutex_);
         self->refresh_visible();
-        for (uint32_t i = 0; i < n; i++)   // unknown ids map past the end and read as 0
+        for (uint32_t i = 0; i < n; i++)   // An unknown id reads as 0.
             mapped[i] = ids[i] < self->visible_.size() ? self->visible_[ids[i]] : SignalId(~0u);
     }
     std::vector<Signal> out(n);
@@ -150,4 +150,4 @@ void PluginSink::host_log(void *ctx, int level, const char *message) {
 
 const char *PluginSink::host_state_dir(void *ctx) { return static_cast<PluginSink *>(ctx)->state_dir_.c_str(); }
 
-} // namespace babble
+}

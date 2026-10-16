@@ -13,8 +13,7 @@
 namespace babble {
 
 namespace face {
-// Baballonia's mono face model outputs ("prod FT layout",
-// Services/DefaultInferenceRunner.cs), also the signal names.
+// The outputs of the Baballonia mono face model are also the signal names.
 inline constexpr std::array<const char *, 45> kShapes = {
     "cheekPuffLeft",   "cheekPuffRight",   "cheekSuckLeft",     "cheekSuckRight",     "jawOpen",
     "jawForward",      "jawLeft",          "jawRight",          "noseSneerLeft",      "noseSneerRight",
@@ -26,28 +25,17 @@ inline constexpr std::array<const char *, 45> kShapes = {
     "tongueDown",      "tongueLeft",       "tongueRight",       "tongueRoll",         "tongueBendDown",
     "tongueCurlUp",    "tongueSquish",     "tongueFlat",        "tongueTwistLeft",    "tongueTwistRight",
 };
-// Baballonia's smoothing for this model (its OneEuroFilter defaults).
+// These are the Baballonia OneEuroFilter defaults for this model.
 inline constexpr OneEuroParams kOneEuro{0.5, 3.0, 1.0};
-} // namespace face
+}
 
-// Config type "babble_mono_face": Baballonia's single-camera face model on a
-// Babble face tracker (source type "babble_usb"). One grayscale 224x224
-// input, pixel/255, 45 blendshapes out, as Baballonia runs it
-// (Services/Inference/Transformers/ImageTransformer.cs).
-//
-// Config: model, from, thread,
-//   roi [x, y, w, h]        crop of the camera image before anything else (default: all of it)
-//   gain (1.0)              Baballonia's "Gamma": a linear brightness gain, saturating
-//   rotate (0|90|180|270)   counter-clockwise
-//   flip ("none"|"h"|"v"|"hv")
-//   one_euro {min_cutoff 0.5, beta 3, d_cutoff 1} or false
-//   calibration {mode: "auto" (default)|"raw"|"manual", ranges: {"jawOpen": [min, max], ...}}
+// The "babble_mono_face" pipeline runs the Baballonia single-camera face model on a Babble face tracker.
 class BabbleMonoFace : public PipelineBase {
 public:
     BabbleMonoFace(const nlohmann::json &cfg, PipelineDeps deps) : PipelineBase(cfg, std::move(deps), "infM") {}
     bool init() override;
 
-    // Preprocess one camera image into the model input (exposed for tests).
+    // Convert one camera image into the model input, which is public for the tests.
     void prepare(const Frame &f, float *input);
 
 private:
@@ -75,4 +63,4 @@ private:
     std::atomic<bool> reset_pending_{false};
 };
 
-} // namespace babble
+}

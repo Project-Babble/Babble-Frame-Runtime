@@ -11,7 +11,7 @@
 
 namespace {
 const babble::log::Logger LOG("model");
-} // namespace
+}
 
 namespace babble {
 
@@ -24,9 +24,9 @@ using executorch::runtime::Error;
 struct ExecuTorchRunner::Impl {
     std::unique_ptr<Module> module;
     std::string path;
-    uint64_t failures = 0;   // run() failures so far (logged sparsely)
+    uint64_t failures = 0;   // This is the number of run() failures.
     bool first_done = false;
-    // Input tensors wrap the caller's buffers; rebuilt only if a buffer moves.
+    // The input tensors wrap the caller buffers and change only if a buffer moves.
     std::vector<TensorPtr> in_tensors;
     std::vector<const void *> in_ptrs;
     std::vector<EValue> in_values;
@@ -52,7 +52,7 @@ ScalarType to_scalar(DType d) {
     return ScalarType::Float;
 }
 
-} // namespace
+}
 
 ExecuTorchRunner::ExecuTorchRunner() : impl_(std::make_unique<Impl>()) {}
 ExecuTorchRunner::~ExecuTorchRunner() = default;
@@ -103,7 +103,7 @@ bool ExecuTorchRunner::load(const std::filesystem::path &model) {
     impl_->in_ptrs.assign(inputs_.size(), nullptr);
     impl_->in_values.assign(inputs_.size(), EValue());
 
-    // The model's contract, for the log: "[1,1,224,224] f16 -> [1,45] f16".
+    // Write the model contract to the log, for example "[1,1,224,224] f16 -> [1,45] f16".
     auto describe_all = [](const std::vector<TensorSpec> &specs) {
         std::string out;
         for (const auto &s : specs) {
@@ -130,7 +130,7 @@ bool ExecuTorchRunner::run(std::span<const TensorView> in, std::span<TensorView>
             impl_->in_values[i] = EValue(*impl_->in_tensors[i]);
         }
     }
-    // Failures log on the 1st, 2nd, 4th, 8th... occurrence: visible, never a flood at frame rate.
+    // Log only the failures with a count of 1, 2, 4, 8 and so on, to prevent a flood of messages.
     auto fail = [&](const std::string &why) {
         const uint64_t n = ++impl_->failures;
         if ((n & (n - 1)) == 0)
@@ -140,7 +140,7 @@ bool ExecuTorchRunner::run(std::span<const TensorView> in, std::span<TensorView>
     const uint64_t t0 = impl_->first_done ? 0 : mono_ns();
     auto result = impl_->module->execute("forward", impl_->in_values);
     if (!impl_->first_done && result.ok()) {
-        // The first run includes XNNPACK's weight packing: worth knowing when a model starts slowly.
+        // The first run includes the XNNPACK weight packing, which can make the start slow.
         impl_->first_done = true;
         LOG.info("%s: first inference %.1f ms", impl_->path.c_str(), double(mono_ns() - t0) / 1e6);
     }
@@ -160,4 +160,4 @@ bool ExecuTorchRunner::run(std::span<const TensorView> in, std::span<TensorView>
     return true;
 }
 
-} // namespace babble
+}

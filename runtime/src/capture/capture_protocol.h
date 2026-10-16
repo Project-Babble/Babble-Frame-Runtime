@@ -12,12 +12,11 @@ namespace babble::capture {
 
 constexpr int kProtocol = 2;
 
-// Why a recording stopped, as session.json and the stopped event report it.
+// The reasons for a stop that session.json and the stopped event report.
 inline constexpr const char *kStoppedByApp = "stopped by the app";
 inline constexpr const char *kAppDisconnected = "the app disconnected";
 
-// What a request did: ok with data for the reply, or an error code
-// (busy | no_source | disk | unavailable | bad_request | protocol | io) and message.
+// The result of a request, which is ok with reply data or an error code with a message.
 struct Result {
     bool ok = true;
     std::string code, message;
@@ -26,30 +25,28 @@ struct Result {
     static Result fail(std::string code, std::string message) { return {false, std::move(code), std::move(message), {}}; }
 };
 
-// One labelled span from the app. step and phase are optional (protocol 2):
-// the routine step index and its phase (practice, hold, alternate_on...).
+// One labelled time span from the app, with an optional routine step index and phase.
 struct Segment {
     std::string label;
     uint64_t start_ns = 0, end_ns = 0;
     std::optional<int64_t> step;
-    std::string phase;   // "" = not given
+    std::string phase;   // The value "" means that the app did not give a phase.
 };
 
-// The runtime side of the dataset capture app's requests (main implements it).
+// The runtime side of the requests from the capture app, which main implements.
 class Backend {
 public:
     virtual ~Backend() = default;
-    virtual nlohmann::json hello_info() = 0;   // merged into the hello reply
-    virtual Result start(const nlohmann::json &request) = 0;   // data: session, dir
+    virtual nlohmann::json hello_info() = 0;   // The connection merges this into the hello reply.
+    virtual Result start(const nlohmann::json &request) = 0;   // The reply data holds session and dir.
     virtual Result segment(const Segment &segment) = 0;
-    // Finishes asynchronously: "stopped" is sent as an event later. reason is
-    // kStoppedByApp or kAppDisconnected.
+    // Finishes later and sends a "stopped" event, with reason kStoppedByApp or kAppDisconnected.
     virtual Result stop(const std::string &reason) = 0;
     virtual nlohmann::json status() = 0;
     virtual Result queue_upload(const std::string &session) = 0;
 };
 
-// A Backend made of functions (main wires its lambdas in).
+// A Backend made of functions, so that main can give it lambdas.
 struct FnBackend : Backend {
     std::function<nlohmann::json()> on_hello;
     std::function<Result(const nlohmann::json &)> on_start;
@@ -66,13 +63,7 @@ struct FnBackend : Backend {
     Result queue_upload(const std::string &s) override { return on_upload(s); }
 };
 
-// One client connection's protocol state. JSON lines in, JSON objects out;
-// pure, so it's tested without sockets (capture_server.h does the I/O).
-//
-// Requests: hello (first), start, segment, stop, status, upload. start may
-// carry routine_def (the routine the app runs, saved as routine.json). Replies echo
-// the request's "id". hello with another protocol number is refused and the
-// connection closed.
+// The protocol state of one client connection, without socket I/O so that tests can use it directly.
 class Connection {
 public:
     struct Output {
@@ -82,7 +73,7 @@ public:
 
     Output handle_line(const std::string &line, Backend &backend);
     bool greeted() const { return greeted_; }
-    // The id of the stop request whose "stopped" event is still due (null if none).
+    // The id of the stop request that still waits for its "stopped" event, or null.
     const nlohmann::json &pending_stop_id() const { return stop_id_; }
     void clear_pending_stop() { stop_id_ = nullptr; }
 
@@ -93,4 +84,4 @@ private:
     nlohmann::json stop_id_;
 };
 
-} // namespace babble::capture
+}

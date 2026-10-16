@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# Renders the logo SVG to the PNG sizes the runtime loads (the runtime has no
-# SVG renderer). The SVG's "BFR" is text in IBM Plex Sans Bold Italic, so run
-# this where that font is installed, or the letters fall back to another face.
+# Render the logo SVG to PNG files, on a computer that has the IBM Plex Sans Bold Italic font.
 set -euo pipefail
 cd "$(dirname "$0")/../../runtime/resources/icons"
 fonts=$(fc-list)

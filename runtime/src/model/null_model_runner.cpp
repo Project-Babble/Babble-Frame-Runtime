@@ -15,4 +15,4 @@ bool NullModelRunner::run(std::span<const TensorView> in, std::span<TensorView> 
     return true;
 }
 
-} // namespace babble
+}

@@ -21,7 +21,7 @@ RouteCheck check_sensor_routes(const std::string &media_dev, const std::vector<s
         return out;
     }
 
-    // Two calls: counts first, then the arrays. Retry if the graph changed in between.
+    // Get the counts, then the arrays, and try again if the graph changed between the two calls.
     std::vector<media_v2_entity> entities;
     std::vector<media_v2_pad> pads;
     std::vector<media_v2_link> links;
@@ -56,7 +56,7 @@ RouteCheck check_sensor_routes(const std::string &media_dev, const std::vector<s
     std::map<uint32_t, const media_v2_entity *> by_id;
     for (const auto &e : entities)
         by_id[e.id] = &e;
-    // Enabled data links as entity -> downstream entities.
+    // This map holds the enabled data links from each entity to its downstream entities.
     std::multimap<uint32_t, uint32_t> next;
     for (const auto &l : links) {
         if ((l.flags & MEDIA_LNK_FL_LINK_TYPE) != MEDIA_LNK_FL_DATA_LINK || !(l.flags & MEDIA_LNK_FL_ENABLED))
@@ -74,7 +74,7 @@ RouteCheck check_sensor_routes(const std::string &media_dev, const std::vector<s
                 sensor = &e;
         bool routed = false;
         if (sensor) {
-            // Breadth-first walk along enabled links until a capture I/O node.
+            // Walk breadth-first along the enabled links until the walk finds a capture I/O node.
             std::set<uint32_t> seen{sensor->id};
             std::vector<uint32_t> frontier{sensor->id};
             while (!frontier.empty() && !routed) {
@@ -100,4 +100,4 @@ RouteCheck check_sensor_routes(const std::string &media_dev, const std::vector<s
     return out;
 }
 
-} // namespace babble
+}

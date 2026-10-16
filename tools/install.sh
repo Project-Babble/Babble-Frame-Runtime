@@ -44,7 +44,7 @@ dir="${dir%/}"
 parent="$(dirname "$dir")"
 mkdir -p "$parent"
 
-# Unpack next to the target, so the swap below is a rename on one filesystem.
+# Unpack in the parent of the target, so that the swap is a rename on one filesystem.
 tmp="$(mktemp -d "${parent}/.babble-install.XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT
 if [[ -n "$tarball" ]]; then
@@ -59,12 +59,10 @@ for f in driver.vrdrivermanifest bin/linuxarm64/driver_babble.so bin/linuxarm64/
          bin/linuxarm64/babble-setup; do
   [[ -e "$new/$f" ]] || { echo "not a Babble driver tarball: babble/$f is missing" >&2; exit 1; }
 done
-# Marks a one-off install: the runtime updates itself from GitHub releases only
-# when this file is in its folder (never a Steam install or a dev build).
+# The runtime gets updates from GitHub releases only if this file is in its folder.
 echo "install.sh" > "$new/.install-source"
 
-# Swap the folders back to back: a running driver shim treats a folder that
-# stays missing for a couple of seconds as an uninstall and cleans up.
+# Swap the folders quickly because the driver shim thinks that a missing folder is an uninstall.
 if [[ -e "$dir" ]]; then
   mv "$dir" "$tmp/old"
   mv "$new" "$dir"
@@ -76,7 +74,7 @@ fi
 
 "$dir/bin/linuxarm64/babble-setup" --no-restart
 
-# Keep an uninstaller with the install, so the unpacked tarball can go.
+# Keep a copy of the uninstaller with the install, so that you can delete the unpacked tarball.
 uninstall="$parent/uninstall.sh"
 if [[ -f "$here/uninstall.sh" ]]; then
   cp "$here/uninstall.sh" "$uninstall"

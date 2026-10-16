@@ -8,9 +8,7 @@
 
 namespace babble {
 
-// ICameraControls over a V4L2 device or subdev node. Controls are enumerated
-// once at open() and addressed by v4l2-ctl style names ("exposure",
-// "analogue_gain", "strobe_enable"...).
+// ICameraControls for a V4L2 device or subdev node, with the v4l2-ctl names of the controls.
 class V4l2Controls : public ICameraControls {
 public:
     ~V4l2Controls() override;
@@ -27,7 +25,7 @@ public:
     bool set_many(const std::vector<std::pair<std::string, int64_t>> &values) override;
     std::optional<ControlRange> range(std::string_view name) const override;
 
-    // Same conversion v4l2-ctl applies to control names.
+    // Converts a control name in the same way as v4l2-ctl.
     static std::string normalize_name(const char *raw);
 
 private:
@@ -44,4 +42,4 @@ private:
     mutable std::mutex mutex_;
 };
 
-} // namespace babble
+}

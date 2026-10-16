@@ -1,18 +1,5 @@
 #!/usr/bin/env python3
-"""Writes OpenCV reference outputs for runtime/tests/test_image_ops.cpp.
-
-Must run with the same OpenCV the reference scripts use (opencv-python 5.0.0,
-e.g. ~/etenv/bin/python), since the runtime has to match it bit for bit:
-
-    ~/etenv/bin/python tools/golden/make_golden.py <mouth_dump.pgm> <eye_dump.pgm>
-
-Run it on the PC (x86): the headset's aarch64 OpenCV 5.0.0 gives slightly
-different INTER_LINEAR results (INTER_AREA matches on both).
-
-The dump files are DebugSink side-by-side stereo PGMs (800x400); the left
-400x400 half of each is used. With no arguments the inputs already in
-runtime/tests/data (*_in.pgm) are reused.
-"""
+"""Writes OpenCV reference outputs for test_image_ops.cpp, and must run on x86 with opencv-python 5.0.0."""
 import sys, pathlib
 import cv2, numpy as np
 
@@ -27,7 +14,7 @@ def left_half(path):
 if len(sys.argv) > 1:
     rng = np.random.default_rng(1)
     noise = rng.integers(0, 256, (400, 400), dtype=np.uint8)
-    noise[100:300, 50:350] //= 3          # uneven histogram
+    noise[100:300, 50:350] //= 3          # This makes the histogram uneven.
     inputs = {"noise": noise, "mouth": left_half(sys.argv[1]), "eye": left_half(sys.argv[2])}
 else:
     inputs = {n: cv2.imread(str(out / f"{n}_in.pgm"), cv2.IMREAD_GRAYSCALE) for n in ("noise", "mouth", "eye")}

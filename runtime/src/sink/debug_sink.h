@@ -15,9 +15,7 @@
 
 namespace babble {
 
-// Config type "debug". Development output: logs signal snapshots at debug
-// level and optionally dumps the first N stereo frames from each source as
-// PGM files. All disk I/O happens on the module's own thread.
+// Config type "debug" logs the signals and can write the first N stereo frames of each source as PGM files.
 class DebugSink : public ISink {
 public:
     DebugSink(const nlohmann::json &cfg, SinkDeps deps);
@@ -48,11 +46,11 @@ private:
 
     std::mutex channels_mutex_;
     std::map<std::string, std::unique_ptr<Channel>> channels_;
-    std::atomic<int> pending_{0};   // channels that still want frames
+    std::atomic<int> pending_{0};   // The number of channels that still want frames.
     std::atomic<bool> any_channel_{false};
 
     std::thread thread_;
     std::atomic<bool> stop_{false};
 };
 
-} // namespace babble
+}

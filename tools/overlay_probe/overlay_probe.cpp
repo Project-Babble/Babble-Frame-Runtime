@@ -1,15 +1,4 @@
-// overlay_probe: create a "Babble" SteamVR dashboard tab with a test panel.
-//
-//   overlay_probe [seconds] [--raw]      (default 120 s, Vulkan upload)
-//
-// Panel: dark background, a yellow square that follows the laser pointer,
-// and a green bar that grows per click. Prints dashboard/mouse events so we
-// can see whether the Frame's shell hosts dashboard overlays and routes laser
-// input to them.
-//
-// Upload paths: --raw uses SetOverlayRaw (flickers on the Frame on every
-// update); the default draws on the CPU, copies into one of two Vulkan images
-// and hands that image to SetOverlayTexture.
+// overlay_probe makes a "Babble" SteamVR dashboard tab with a test panel and prints the dashboard and mouse events.
 #include <openvr.h>
 #include <vulkan/vulkan.h>
 
@@ -41,7 +30,7 @@ std::vector<std::string> split(const std::string &s) {
     return out;
 }
 
-// Two device-local RGBA images, each with its own host-visible staging buffer.
+// This class has two device-local RGBA images, and each image has its own host-visible staging buffer.
 struct VkUploader {
     VkInstance instance{};
     VkPhysicalDevice pdev{};
@@ -194,7 +183,7 @@ struct VkUploader {
                              0, nullptr, 1, &b);
     }
 
-    // Copies pixels into the next image and gives it to the overlay.
+    // Copies the pixels into the next image and gives the image to the overlay.
     vr::EVROverlayError present(vr::VROverlayHandle_t overlay, const uint8_t *pixels) {
         Slot &s = slots[next];
         next ^= 1;
@@ -239,7 +228,7 @@ struct VkUploader {
     }
 };
 
-} // namespace
+}
 
 int main(int argc, char **argv) {
     double seconds = 120.0;
@@ -303,7 +292,7 @@ int main(int argc, char **argv) {
             switch (ev.eventType) {
             case vr::VREvent_MouseMove:
                 mx = ev.data.mouse.x;
-                my = H - ev.data.mouse.y;   // OpenVR mouse origin is bottom-left
+                my = H - ev.data.mouse.y;   // The OpenVR mouse origin is at the bottom left.
                 dirty = true;
                 break;
             case vr::VREvent_MouseButtonDown:
@@ -329,7 +318,7 @@ int main(int argc, char **argv) {
     }
 done:
     printf("%d clicks, %d uploads\n", clicks, uploads);
-    // OpenVR must shut down before the Vulkan objects go away (process exit here).
+    // OpenVR must shut down before the process exit removes the Vulkan objects.
     vr::VR_Shutdown();
     return 0;
 }

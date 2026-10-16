@@ -21,7 +21,7 @@
 
 namespace {
 const babble::log::Logger LOG("upload");
-} // namespace
+}
 
 namespace babble::capture {
 
@@ -62,7 +62,7 @@ std::string trim(std::string s) {
     return s;
 }
 
-} // namespace
+}
 
 Uploader::Uploader(const json &cfg, fs::path captures_dir, const json &threads, std::function<bool()> paused,
                    Transport transport, Packager packager)
@@ -70,8 +70,7 @@ Uploader::Uploader(const json &cfg, fs::path captures_dir, const json &threads, 
       access_key_(cfg.value("access_key", "")), secret_key_(cfg.value("secret_key", "")),
       public_key_(cfg.value("public_key", "")), dir_(std::move(captures_dir)),
       thread_spec_(thread_spec(threads, "net", "bbl-net")),
-      // Packaging runs the encoder pipeline: on the recorder's cpus, which are
-      // free because nothing is packaged while recording.
+      // The packager uses the recorder cpus because the uploader never packages during a recording.
       package_spec_(thread_spec(threads, "record", "bbl-package")), paused_(std::move(paused)),
       transport_(transport ? std::move(transport) : Transport(curl_transport)),
       packager_(packager ? std::move(packager) : Packager(make_package)) {
@@ -118,7 +117,7 @@ Uploader::Outcome Uploader::classify(int status) {
         return Outcome::Ok;
     if (status >= 400 && status < 500 && status != 408 && status != 429)
         return Outcome::Fatal;
-    return Outcome::Retry;   // 0 (no response), 408, 429, 5xx
+    return Outcome::Retry;   // This includes 0 for no response, 408, 429 and 5xx.
 }
 
 std::string Uploader::object_name(const std::string &contributor, const std::string &routine,
@@ -132,7 +131,7 @@ std::string Uploader::object_name(const std::string &contributor, const std::str
         r += isalnum(static_cast<unsigned char>(c)) || c == '-' ? char(tolower(static_cast<unsigned char>(c))) : '_';
     if (r.empty())
         r = "session";
-    // Ingest collects .bin objects; "frame-...-v2_" is what consumers branch on.
+    // Consumers of the dataset use the "frame-...-v2_" part to identify the format.
     return contributor + "_" + ts + "_frame-" + r + "-v2_" + session + ".tar.bin";
 }
 
@@ -145,7 +144,7 @@ bool Uploader::make_envelope(const fs::path &in, const fs::path &out, const fs::
         fs::remove(out.string() + ".part", ec);
         return false;
     };
-    // A fresh AES-256 key and IV.
+    // Make a new AES-256 key and IV.
     uint8_t secret[48];
     {
         const int fd = ::open("/dev/urandom", O_RDONLY | O_CLOEXEC);
@@ -162,8 +161,7 @@ bool Uploader::make_envelope(const fs::path &in, const fs::path &out, const fs::
             s += {k[p[i] >> 4], k[p[i] & 15]};
         return s;
     };
-    // Wrap the key: RSA-OAEP with SHA-256 for both the hash and MGF1, as .NET's
-    // RSAEncryptionPadding.OaepSHA256 (what Baballonia's ingest expects).
+    // Wrap the key with RSA-OAEP and SHA-256 for the hash and MGF1, as the Baballonia ingest expects.
     Process wrap;
     Process::Options wo;
     wo.stdin_pipe = true;
@@ -196,9 +194,7 @@ bool Uploader::make_envelope(const fs::path &in, const fs::path &out, const fs::
         if (!f)
             return fail("cannot write " + part.string());
     }
-    // The body, appended by openssl (PKCS#7 padding, as .NET's default). The
-    // key is on its command line for the few seconds this takes; it only
-    // protects this one file, which is readable on this machine anyway.
+    // The key is on the openssl command line for a few seconds, but it only protects a file that is readable here.
     Process enc;
     Process::Options eo;
     eo.stdout_file = part.string();
@@ -295,7 +291,7 @@ bool Uploader::upload_one(const fs::path &sdir) {
         write_json(sdir / "upload.json", u);
         std::lock_guard<std::mutex> lock(snap_mutex_);
         snap_.last_error = session + ": " + why;
-        return true;   // done with it
+        return true;   // The uploader is finished with this session.
     };
     auto retry = [&](const std::string &why) {
         LOG.warn("upload: session %s: %s; retrying later", session.c_str(), why.c_str());
@@ -318,7 +314,6 @@ bool Uploader::upload_one(const fs::path &sdir) {
     const fs::path tar = sdir / "package.tar", bin = sdir / "package.tar.bin";
     std::error_code ec;
 
-    // 1. The package.
     if (!fs::exists(tar, ec)) {
         stage("packaging");
         PackagerOptions po = package_options_;
@@ -334,7 +329,6 @@ bool Uploader::upload_one(const fs::path &sdir) {
         fs::remove(bin, ec);
     }
 
-    // 2. The encrypted object.
     if (!u.contains("object") || !fs::exists(bin, ec)) {
         stage("encrypting");
         const fs::path pem = sdir / ".upload-key.pem";
@@ -349,7 +343,6 @@ bool Uploader::upload_one(const fs::path &sdir) {
         write_json(sdir / "upload.json", u);
     }
 
-    // 3. One signed PUT.
     stage("uploading");
     const std::string object = u["object"];
     Http put{"PUT", endpoint_ + "/" + bucket_ + "/" + object, bin.string(),
@@ -370,7 +363,7 @@ bool Uploader::upload_one(const fs::path &sdir) {
     u["state"] = "done";
     u.erase("stage");
     u["uploaded_unix_ns"] = wall_ns();
-    fs::remove(bin, ec);   // package.tar stays: what was sent, readable
+    fs::remove(bin, ec);   // Keep package.tar as a readable copy of the upload.
     write_json(sdir / "upload.json", u);
     LOG.info("upload: session %s uploaded as %s (%.1f MB)", session.c_str(), object.c_str(), double(bytes) / 1e6);
     return true;
@@ -386,8 +379,8 @@ void Uploader::run() {
             kick_ = false;
         }
         if (paused_ && paused_())
-            continue;   // a recording owns the disk and the CPU
-        // The oldest queued or interrupted session that isn't waiting out a retry.
+            continue;   // A recording needs the disk and the CPU.
+        // Find the oldest queued or interrupted session that does not wait for a retry.
         std::vector<fs::path> todo;
         std::error_code ec;
         for (const auto &e : fs::directory_iterator(dir_, ec)) {
@@ -429,10 +422,10 @@ void Uploader::run() {
                 snap_.progress = 0;
             }
             count_pending();
-            break;   // one per wakeup: re-check paused() and stop between sessions
+            break;   // Do one session per wakeup so that paused() and stop get a check between sessions.
         }
         if (!todo.empty()) {
-            // More may be ready now: if so, don't wait before the next one.
+            // Do not wait before the next session if one is ready now.
             std::lock_guard<std::mutex> lock(mutex_);
             bool any_ready = false;
             for (const auto &sdir : todo) {
@@ -452,7 +445,7 @@ Uploader::Response Uploader::curl_transport(const Http &req, const Progress &pro
     const fs::path body_out = tmp.string() + ".out", body_in = tmp.string() + ".cfg";
     std::vector<std::string> argv = {"curl", "-S", "-#", "-X", req.method, "-o", body_out.string(), "-w",
                                      "%{http_code}", "-A", "babble-frame-runtime",
-                                     // A stalled transfer gives up after a minute below 1 KB/s.
+                                     // A stalled transfer stops after a minute below 1 KB/s.
                                      "--speed-time", "60", "--speed-limit", "1024", "--connect-timeout", "20"};
     for (const auto &[k, v] : req.headers)
         argv.insert(argv.end(), {"-H", k + ": " + v});
@@ -461,7 +454,7 @@ Uploader::Response Uploader::curl_transport(const Http &req, const Progress &pro
     else
         argv.insert(argv.end(), {"--max-time", "60"});
     if (!req.sigv4.empty()) {
-        // The credentials go in a config file, not on the command line.
+        // Put the credentials in a config file because the command line is visible to other processes.
         std::string quoted;
         for (char c : req.credentials) {
             if (c == '"' || c == '\\')
@@ -499,7 +492,7 @@ Uploader::Response Uploader::curl_transport(const Http &req, const Progress &pro
         out += p.read_stdout();
         std::string e = p.read_stderr();
         if (progress && !e.empty()) {
-            // curl's bar ends each redraw with "NN.N%".
+            // The curl progress bar ends each redraw with "NN.N%".
             const size_t pct = e.rfind('%');
             if (pct != std::string::npos) {
                 size_t start = pct;
@@ -522,7 +515,7 @@ Uploader::Response Uploader::curl_transport(const Http &req, const Progress &pro
     fs::remove(body_out, ec);
     fs::remove(body_in, ec);
     if (res.status == 0) {
-        // The last line without the progress bar noise.
+        // Use the last line, which has no progress bar noise.
         const size_t nl = trim(err).rfind('\n');
         res.error = trim(nl == std::string::npos ? err : err.substr(nl + 1));
         if (res.error.empty())
@@ -531,4 +524,4 @@ Uploader::Response Uploader::curl_transport(const Http &req, const Progress &pro
     return res;
 }
 
-} // namespace babble::capture
+}

@@ -1,19 +1,5 @@
 #!/usr/bin/env python3
-"""Export Baballonia's mono face model (faceModel.onnx) to an fp16 XNNPACK ExecuTorch .pte, and check it against
-ONNX Runtime.
-
-The model takes one grayscale 224x224 image scaled to 0..1 ([1,1,224,224], NCHW, pixel/255, no mean/std) and returns
-45 blendshapes in Baballonia's "prod FT layout" (see runtime/src/model/babble_mono_face.h).
-
-Run on the headset with its ExecuTorch venv (needs onnx, onnx2torch, onnxruntime, flatc on PATH):
-
-    PATH=~/edge-inference/.venv/bin:$PATH ~/edge-inference/.venv/bin/python tools/export/export_face_mono.py \\
-        --onnx <faceModel.onnx> --out runtime/resources/models/face_mono_224_fp16.pte --frames <dir of .png/.pgm>
-
-Validation runs real frames (resized to 224 like the runtime; e.g. babble_usb_probe --save) through both ONNX Runtime
-(fp32, the reference) and the .pte, and passes if every output is within 0.02. Random noise is reported too, but only
-for information: it pushes the network far out of range, where fp16 loses precision.
-"""
+"""Export the Baballonia mono face model to an fp16 XNNPACK ExecuTorch .pte, and compare it with ONNX Runtime."""
 import argparse, glob, os, sys, time
 import numpy as np, onnx, onnxruntime as ort, torch
 from onnx2torch import convert
@@ -47,8 +33,7 @@ def main():
     ap.add_argument("--frames", help="directory of real frames to validate on")
     args = ap.parse_args()
 
-    # Fold the "same" padding the model computes from its input shape (Shape/Gather/Ceil/ConstantOfShape) into
-    # constants for the fixed 224x224 input: ONNX Runtime's basic optimizations do that and can save the graph.
+    # Use the basic optimizations of ONNX Runtime to change the shape-based padding into constants for 224x224.
     folded = os.path.splitext(os.path.abspath(args.out))[0] + ".folded.onnx"
     opts = ort.SessionOptions()
     opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_BASIC
@@ -58,7 +43,7 @@ def main():
     os.remove(folded)
     left = sorted({n.op_type for n in model.graph.node} & {"Shape", "ConstantOfShape", "Ceil", "Gather"})
     print("shape ops left after folding:", left or "none")
-    # onnx2torch reads an empty optional input ("" for Clip's missing max) as a dynamic limit: drop trailing ones.
+    # Remove empty optional inputs at the end because onnx2torch reads them as dynamic limits.
     for node in model.graph.node:
         while node.input and node.input[-1] == "":
             node.input.pop()
@@ -77,7 +62,7 @@ def main():
         f.write(prog.buffer)
     print(f"wrote {args.out} ({os.path.getsize(args.out) / 1e6:.1f} MB)")
 
-    # Anything XNNPACK didn't take runs on portable kernels: those ops must be in tools/build_executorch.sh.
+    # The ops that XNNPACK does not take must be in the ops list of tools/build_executorch.sh.
     leftover = sorted({str(n.target) for n in prog.exported_program().graph.nodes
                        if n.op == "call_function" and "executorch_call_delegate" not in str(n.target)
                        and "getitem" not in str(n.target)})
@@ -96,8 +81,7 @@ def main():
             worst = np.maximum(worst, np.abs(out - ref))
         return worst, times
 
-    # Random noise drives the network far outside what a camera produces (outputs up to ~7 instead of 0..1), where
-    # fp16 loses precision in the squeeze-excite layers: informational only. Real frames decide.
+    # The random noise result is only for information because only real frames keep fp16 in its precise range.
     worst, _ = compare(random_inputs())
     print(f"fp16 .pte vs ONNX Runtime on random noise (informational): max diff {worst.max():.4f}")
     frames = frame_inputs(args.frames)

@@ -111,7 +111,7 @@ std::optional<std::string> parse_sha256_file(const std::string &text, const std:
         words >> hex >> name;
         if (!is_hex64(hex))
             continue;
-        if (!name.empty() && name[0] == '*')   // sha256sum's binary-mode marker
+        if (!name.empty() && name[0] == '*')   // This is the binary-mode marker of sha256sum.
             name.erase(0, 1);
         if (name == file)
             return lower(hex);
@@ -121,4 +121,4 @@ std::optional<std::string> parse_sha256_file(const std::string &text, const std:
     return bare;
 }
 
-} // namespace babble::capture
+}

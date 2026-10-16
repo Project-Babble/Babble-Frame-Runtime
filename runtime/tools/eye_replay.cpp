@@ -1,13 +1,5 @@
-// Runs an eye model over recorded frames, preprocessed exactly as BabbleEye
-// does it (view 3 flipped vertically, INTER_AREA resize to the model's R,
-// (x/255 - 0.5)/0.25, batched [2,1,R,R]). For comparing model outputs across
-// codecs and settings on the same footage.
-//
-//   ffmpeg -i eye.mkv -f rawvideo -pix_fmt gray - | eye_replay <model.pte> <width> <height> > out.f32
-//
-// Input: raw gray frames on stdin, left|right side by side (the recorder's
-// stereo_lr layout), width x height each. Output: every output element of
-// the model per frame, as little-endian float32 on stdout.
+// Runs an eye model on raw stereo_lr gray frames from stdin with the BabbleEye preprocessing,
+// and writes the outputs as float32.
 #include "model/executorch_runner.h"
 #include "model/half.h"
 #include "model/image_ops.h"
@@ -43,7 +35,7 @@ int main(int argc, char **argv) {
     while (fread(frame.data(), 1, frame.size(), stdin) == frame.size()) {
         for (int v = 0; v < 2; v++) {
             img::View src{frame.data() + v * eye_w, eye_w, h, w};
-            if (v == 1) {   // "R" pane: rot90(2) then mirror == vertical flip
+            if (v == 1) {   // For the "R" pane, rot90(2) and then a mirror is equal to a vertical flip.
                 img::flip_vertical(src, {eye.data(), eye_w, h, eye_w});
                 src = {eye.data(), eye_w, h, eye_w};
             }

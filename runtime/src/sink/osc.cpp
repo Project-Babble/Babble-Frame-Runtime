@@ -6,9 +6,9 @@ namespace babble::osc {
 
 namespace {
 
-size_t padded(size_t n) { return (n + 4) & ~size_t(3); }   // string + NUL, rounded up to 4
+size_t padded(size_t n) { return (n + 4) & ~size_t(3); }   // The size of the string and its NUL, rounded up to 4.
 
-} // namespace
+}
 
 size_t encode_float(std::string_view address, float value, uint8_t *out, size_t cap) {
     const size_t addr_len = padded(address.size());
@@ -28,7 +28,7 @@ size_t encode_float(std::string_view address, float value, uint8_t *out, size_t 
 void write_bundle_header(uint8_t *out) {
     memcpy(out, "#bundle\0", 8);
     memset(out + 8, 0, 8);
-    out[15] = 1;   // time tag 1: immediately
+    out[15] = 1;   // Time tag 1 tells the receiver to use the bundle immediately.
 }
 
 void write_element_size(uint8_t *out, size_t n) {
@@ -52,4 +52,4 @@ size_t encode_blob(std::string_view address, const uint8_t *data, size_t size, u
     return total;
 }
 
-} // namespace babble::osc
+}

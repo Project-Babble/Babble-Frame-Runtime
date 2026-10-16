@@ -5,9 +5,7 @@
 
 namespace babble {
 
-// Config type "null": preprocesses to a side-by-side gray input and runs
-// NullModelRunner (all zeros). For tests and for bringing up new sources
-// without a model.
+// The "null" pipeline runs NullModelRunner on a side-by-side gray input, for tests and new sources.
 class NullPipeline : public PipelineBase {
 public:
     NullPipeline(const nlohmann::json &cfg, PipelineDeps deps) : PipelineBase(cfg, std::move(deps), "inf") {}
@@ -22,4 +20,4 @@ private:
     std::vector<std::vector<SignalId>> out_signals_;
 };
 
-} // namespace babble
+}

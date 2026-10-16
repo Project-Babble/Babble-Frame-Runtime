@@ -46,4 +46,4 @@ void Calibration::apply(std::vector<float> &x, bool present) {
     }
 }
 
-} // namespace babble::face
+}

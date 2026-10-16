@@ -1,9 +1,4 @@
-// dashboard_preview: renders the dashboard pages to PNG without SteamVR.
-//
-//   dashboard_preview OUT_DIR [FONTS_DIR]
-//
-// Writes examples of the optional debug dashboard, using synthetic readings
-// and demonstration devices. These are native UI renders, not live captures.
+// Renders the pages of the debug dashboard to PNG with synthetic readings and without SteamVR.
 #include "ui/dashboard_view.h"
 
 #pragma GCC diagnostic push
@@ -64,22 +59,24 @@ int main(int argc, char **argv) {
     };
     Status tracking{true, Worn::Yes, feed(Health::Working, 119.8), feed(Health::Working, 90.1)};
     tracking.visualizer = AppState::Stopped;
-    tracking.eyes[0] = {true, true, -18, 6, 1.0, 0.6, true, 0.843, true, 0.742, 0.941, true, 0.62};   // looking left and up, wide
-    tracking.eyes[1] = {true, true, -21, 5, 0.35, 0, true, 0.251, false, 0, 0, false, 0};   // half closed, calibrating
+    // This eye looks left and up, and is wide open.
+    tracking.eyes[0] = {true, true, -18, 6, 1.0, 0.6, true, 0.843, true, 0.742, 0.941, true, 0.62};
+    // This eye is half closed and the calibration is not complete.
+    tracking.eyes[1] = {true, true, -21, 5, 0.35, 0, true, 0.251, false, 0, 0, false, 0};
     tracking.link = {true, true, "lan", "Demo PC", "192.0.2.10", 3.6};
     Status paused{true, Worn::No, feed(Health::Paused), feed(Health::Paused)};
     Status fault{true, Worn::Yes, feed(Health::Working, 120),
                  feed(Health::Fault, 0, "cannot connect to dsp_service (is the eye tracking service running?)")};
     Status starting{true, Worn::Yes, feed(Health::Starting), feed(Health::Starting)};
     starting.visualizer = AppState::Stopped;
-    starting.link = {true, false, "", "", "", -1};   // searching for the PC
+    starting.link = {true, false, "", "", "", -1};   // The link searches for the PC.
     Status no_vr{false, Worn::Unknown, feed(Health::Starting), feed(Health::Off)};
     Status eyes_off{true, Worn::Yes, feed(Health::Working, 120), feed(Health::Off, 0, "", false)};
     Status all_off{true, Worn::Yes, feed(Health::Off, 0, "", false), feed(Health::Off, 0, "", false)};
 
     view.render(c, tracking, choices, std::nullopt);
     save(c, "home_tracking");
-    // VRChat Native: on the PC Steam Link streams from, and on this headset with no data yet.
+    // Show VRChat Native on the PC that Steam Link streams from, and on this headset with no data yet.
     Status native_pc = tracking;
     native_pc.link = {true, true, "pc", "", "192.0.2.10", -1, true};
     view.render(c, native_pc, choices, std::nullopt);
@@ -98,11 +95,11 @@ int main(int argc, char **argv) {
     save(c, "home_starting");
     view.render(c, no_vr, choices, std::nullopt);
     save(c, "home_no_steamvr");
-    view.render(c, eyes_off, choices, Point{1080, 536});   // hovering the eyes switch
+    view.render(c, eyes_off, choices, Point{1080, 536});   // The pointer is on the eyes switch.
     save(c, "home_eyes_off");
     view.render(c, all_off, choices, std::nullopt);
     save(c, "home_all_off");
-    {   // The runtime update pill, beside the version.
+    {   // Show the runtime update pill next to the version.
         Status u = tracking;
         u.update = {UpdateNotice::State::Available, "V1.0 Alpha 5", "", 0};
         view.render(c, u, choices, std::nullopt);
@@ -120,7 +117,7 @@ int main(int argc, char **argv) {
     view.render(c, tracking, choices, Point{1000, 222});
     save(c, "settings");
 
-    // Mouth from USB: the camera row, then its page with two cameras, the tracker streaming.
+    // Show the camera row for a USB mouth source, and then its page with two cameras and an active tracker.
     Status usb = tracking;
     usb.mouth_source = "usb";
     usb.cameras = {{"303a:8000:DEMO01", "Babble USB Tracker", "303a:8000 \u00b7 demo tracker"},
@@ -129,13 +126,13 @@ int main(int argc, char **argv) {
     usb.active_camera = usb.camera;
     view.render(c, usb, choices, std::nullopt);
     save(c, "settings_usb");
-    // Release builds: the USB tracker is the only mouth, so no Frunk/USB row and no mouth rate.
+    // In release builds, the USB tracker is the only mouth source, so there is no Frunk/USB row and no mouth rate.
     Status release = usb;
     release.mouth_source_selectable = false;
     view.render(c, release, {choices[1]}, std::nullopt);
     save(c, "settings_release");
     view.set_page(DashboardView::Page::Cameras);
-    view.render(c, usb, choices, Point{600, 340});   // hovering the second camera
+    view.render(c, usb, choices, Point{600, 340});   // The pointer is on the second camera.
     save(c, "cameras");
     Status none = usb;
     none.cameras.clear();
@@ -156,7 +153,7 @@ int main(int argc, char **argv) {
     view.set_page(DashboardView::Page::Diagnostics);
     view.render(c, diag, choices, std::nullopt);
     save(c, "diagnostics");
-    // The dataset capture row in a few states.
+    // Show the dataset capture row in a few states.
     for (const auto &[name, st] : {std::pair<const char *, CaptureRow::State>{"not_installed", CaptureRow::State::NotInstalled},
                                    {"downloading", CaptureRow::State::Downloading},
                                    {"installed", CaptureRow::State::Installed},
@@ -185,7 +182,7 @@ int main(int argc, char **argv) {
     view.render(c, tracking, choices, std::nullopt);
     save(c, "settings_restart_confirmation");
 
-    // Render cost (what the dashboard thread pays per redraw).
+    // Measure the render cost for each redraw on the dashboard thread.
     {
         view.set_page(DashboardView::Page::Home);
         const int n = 50;

@@ -2,7 +2,7 @@
 
 #include <cstring>
 
-// Its own static copy of stb_image, JPEG only (ui/image.cpp has a PNG-only one).
+// This file has its own static copy of stb_image with only the JPEG decoder.
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-function"
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
@@ -31,4 +31,4 @@ bool decode_gray(const uint8_t *data, size_t size, uint8_t *out, size_t capacity
     return fits;
 }
 
-} // namespace babble::jpeg
+}

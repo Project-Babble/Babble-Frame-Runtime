@@ -17,28 +17,17 @@
 
 namespace babble::capture {
 
-// Installs, updates and removes the dataset capture app (an optional add-on)
-// from its GitHub releases: the newest release whose manifest speaks our
-// control protocol. Network and archive work runs curl and tar on its own
-// thread ("net"); the main thread sends requests and reads a snapshot.
-//
-// Config ("capture.app"): repo, asset_prefix, api_url ({repo} is replaced),
-// dir (the install folder), prereleases.
-//
-// An install downloads the tarball, checks it against the release's .sha256
-// (integrity, not authorship), extracts it beside the install folder, checks
-// its manifest, then swaps it in. The running app is never replaced: main
-// doesn't ask while it runs.
+// Installs, updates and removes the optional capture app from GitHub releases on its own "net" thread.
 class AppInstaller {
 public:
     enum class State { Unknown, Checking, NotInstalled, Installed, UpdateAvailable, Downloading, Installing, Failed };
     struct Snapshot {
         State state = State::Unknown;
-        std::string installed;   // version, "" if none
-        std::string latest;      // newest compatible version, "" if unknown
-        std::string detail;      // the failure, or a note
-        float progress = 0;      // 0..1 while downloading
-        std::string entry;       // the installed app's executable, "" if none
+        std::string installed;   // The installed version, or "" if there is none.
+        std::string latest;      // The newest compatible version, or "" if it is unknown.
+        std::string detail;      // The failure or a note.
+        float progress = 0;      // The download progress from 0 to 1.
+        std::string entry;       // The executable of the installed app, or "" if there is none.
         bool busy() const { return state == State::Checking || state == State::Downloading || state == State::Installing; }
     };
 
@@ -47,13 +36,13 @@ public:
 
     void start();
     void check();
-    void install();   // install, or update to the newest compatible release
-    void cancel();    // stops a download
+    void install();   // Installs or updates to the newest compatible release.
+    void cancel();    // Stops a download.
     void remove();
     Snapshot snapshot() const;
     const std::filesystem::path &dir() const { return dir_; }
 
-    // The installed app in `dir`, if it's complete and speaks `protocol`.
+    // Returns the manifest of the app in `dir` if the app is complete and uses `protocol`.
     static std::optional<Manifest> validate_install(const std::filesystem::path &dir, int protocol, std::string *err);
 
 private:
@@ -82,9 +71,9 @@ private:
 
     mutable std::mutex snap_mutex_;
     Snapshot snap_;
-    std::optional<Candidate> latest_;   // net thread
+    std::optional<Candidate> latest_;   // Only the net thread uses this.
 };
 
 const char *to_string(AppInstaller::State s);
 
-} // namespace babble::capture
+}

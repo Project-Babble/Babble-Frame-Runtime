@@ -30,7 +30,7 @@ uint64_t be(const uint8_t *p, int bytes) {
     return v;
 }
 
-} // namespace
+}
 
 TEST_CASE("camera stream packets follow stream_daemon.py's wire format") {
     const std::vector<uint8_t> a = {1, 2, 3}, b = {9};
@@ -39,11 +39,11 @@ TEST_CASE("camera stream packets follow stream_daemon.py's wire format") {
     REQUIRE(pkt.size() == 5 + 13 + 3 + 13 + 1);
     CHECK(be(pkt.data(), 4) == 0xFEEDFACE);
     CHECK(pkt[4] == 2);
-    CHECK(pkt[5] == 2);   // eye_l
+    CHECK(pkt[5] == 2);   // The view id 2 is eye_l.
     CHECK(be(pkt.data() + 6, 8) == 0x0102030405060708ull);
     CHECK(be(pkt.data() + 14, 4) == 3);
     CHECK(memcmp(pkt.data() + 18, a.data(), 3) == 0);
-    CHECK(pkt[21] == 1);  // face_r
+    CHECK(pkt[21] == 1);  // The view id 1 is face_r.
     CHECK(be(pkt.data() + 30, 4) == 1);
     CHECK(pkt[34] == 9);
 }
@@ -62,7 +62,7 @@ TEST_CASE("eye views are cropped like the streamer's, faces pass through") {
     camera_stream::copy_view(camera_stream::EyeR, eye.data(), 512, 512, 512, &img);
     CHECK(img.pixels[0] == eye[16 * 512 + 0]);
 
-    std::vector<uint8_t> face(400 * 404, 7);   // stride 404
+    std::vector<uint8_t> face(400 * 404, 7);   // The stride is 404.
     face[404 + 1] = 200;
     camera_stream::copy_view(camera_stream::FaceL, face.data(), 400, 400, 404, &img);
     CHECK(img.width == 400);
@@ -92,7 +92,7 @@ TEST_CASE("the camera stream serves frames to a TCP client only while active") {
     json threads = json::object();
     ExpressionState state;
     StatsRegistry stats;
-    // An ephemeral port: find a free one first.
+    // Find a free ephemeral port first.
     int probe = socket(AF_INET, SOCK_STREAM, 0);
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
@@ -113,7 +113,7 @@ TEST_CASE("the camera stream serves frames to a TCP client only while active") {
         int fd = socket(AF_INET, SOCK_STREAM, 0);
         return connect(fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) == 0 ? fd : (close(fd), -1);
     };
-    CHECK(connect_client() < 0);   // not active: not listening
+    CHECK(connect_client() < 0);   // The sink is not active, so it does not listen.
 
     CHECK_FALSE(sink->set_option("active", 1));
     REQUIRE(sink->set_option("active", true));
@@ -123,7 +123,7 @@ TEST_CASE("the camera stream serves frames to a TCP client only while active") {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     REQUIRE(cam->clients() == 1);
 
-    // An eye frame from the "pipeline".
+    // This eye frame comes from the simulated pipeline.
     auto pool = FramePool::create_owned(2, 512 * 512);
     auto f = pool->acquire();
     REQUIRE(f);
@@ -136,7 +136,7 @@ TEST_CASE("the camera stream serves frames to a TCP client only while active") {
     StereoFrame sf;
     sf.right = std::move(f);
     sink->offer_frames("eye", sf);
-    // And a mouth frame: the mouth cameras deliver raw Bayer, sent as gray.
+    // The mouth cameras give raw Bayer frames, and the sink sends them as gray.
     auto m = pool->acquire();
     REQUIRE(m);
     memset(const_cast<uint8_t *>(m->data), 60, 400 * 400);
@@ -159,14 +159,14 @@ TEST_CASE("the camera stream serves frames to a TCP client only while active") {
         got += size_t(n);
     }
     CHECK(be(head, 4) == 0xFEEDFACE);
-    // Both offered before the client's next tick, or the eye alone first.
+    // The first packet has both views or only the eye view, because both frames can arrive before the next client tick.
     REQUIRE((head[4] == 1 || head[4] == 2));
     CHECK((head[5] == camera_stream::EyeR || head[5] == camera_stream::FaceL));
     const uint64_t stamp = be(head + 6, 8);
-    CHECK(stamp > 1'700'000'000'000'000'000ull);   // wall-clock nanoseconds
-    CHECK(be(head + 14, 4) > 100);                 // a JPEG
+    CHECK(stamp > 1'700'000'000'000'000'000ull);   // The stamp is in wall-clock nanoseconds.
+    CHECK(be(head + 14, 4) > 100);                 // The payload is a JPEG.
 
-    // The mouth view arrives (in this packet or a later one).
+    // The mouth view arrives in this packet or in a later packet.
     bool face_seen = head[5] == camera_stream::FaceL;
     std::vector<uint8_t> rest;
     const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(2);
@@ -178,13 +178,13 @@ TEST_CASE("the camera stream serves frames to a TCP client only while active") {
         const ssize_t n = recv(fd, buf, sizeof(buf), 0);
         REQUIRE(n > 0);
         rest.insert(rest.end(), buf, buf + n);
-        // View headers carry id 0 (face_l) right after a magic+count or a previous view.
+        // A view header has id 0 (face_l) after the magic and count or after a previous view.
         for (size_t i = 0; i + 5 < rest.size() && !face_seen; i++)
             face_seen = be(rest.data() + i, 4) == 0xFEEDFACE && rest[i + 5] == camera_stream::FaceL;
     }
     CHECK(face_seen);
 
-    // Off: the client is dropped and the port closes.
+    // When the sink is off, it drops the client and closes the port.
     REQUIRE(sink->set_option("active", false));
     CHECK(cam->clients() == 0);
     CHECK(connect_client() < 0);

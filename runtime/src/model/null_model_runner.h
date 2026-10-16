@@ -4,9 +4,7 @@
 
 namespace babble {
 
-// Stand-in until ExecuTorch lands: declares the configured tensor shapes and
-// outputs zeros, so the whole pipeline (preprocess, timing, state, sinks)
-// runs for real.
+// This runner has the configured tensor shapes and outputs zeros, so the full pipeline can run without a model.
 class NullModelRunner : public IModelRunner {
 public:
     NullModelRunner(std::vector<TensorSpec> inputs, std::vector<TensorSpec> outputs);
@@ -20,4 +18,4 @@ private:
     std::vector<TensorSpec> inputs_, outputs_;
 };
 
-} // namespace babble
+}

@@ -1,15 +1,4 @@
-# Writes the version header and the SteamVR settings schema with the version
-# filled in. Runs at every build (script mode), so the commit shown by a dev
-# build is always current; outputs are only rewritten when they change.
-#
-#   cmake -DSRC_DIR=<repo> -DOUT_DIR=<dir> -DVERSION=<Vx.x Stage> -DDEV=<ON|OFF>
-#         -DPROFILE=<dev|release> -DSCHEMA_IN=<profile's settingsschema.vrsettings.in> -P babble_version.cmake
-#
-# SCHEMA_IN is the profile's schema (cmake/babble_profile.cmake), with the
-# @BABBLE_VERSION@ placeholder still in it.
-# A dev build (the version came from the VERSION file, not the release build)
-# shows its commit: "V0.1 Alpha (dev a1e76b9)". The commit comes from git, or
-# from <repo>/.babble-rev when the tree was copied without .git (the headset).
+# This script runs at every build and writes the version header and the settings schema with the version in it.
 
 set(display "${VERSION}")
 if(DEV)
@@ -26,7 +15,7 @@ if(DEV)
     endif()
 endif()
 
-# Rewrites `out` only if `content` differs, so dependents don't rebuild.
+# Write `out` only if `content` is different, so that dependent targets do not rebuild.
 function(write_if_changed out content)
     file(WRITE "${out}.tmp" "${content}")
     configure_file("${out}.tmp" "${out}" COPYONLY)

@@ -10,7 +10,7 @@
 
 namespace {
 const babble::log::Logger LOG("usb");
-} // namespace
+}
 
 namespace babble {
 
@@ -27,10 +27,10 @@ uint16_t hex_id(const nlohmann::json &cfg, const char *key, uint16_t fallback) {
     return fallback;
 }
 
-// Frame buffers: the largest decoded image we accept.
+// The largest decoded image that the frame buffers accept.
 constexpr size_t kMaxPixels = 640 * 480;
 
-} // namespace
+}
 
 BabbleUsbSource::BabbleUsbSource(const nlohmann::json &cfg, SourceDeps deps)
     : name_(deps.name), thread_spec_(thread_spec(deps.threads, cfg.value("thread", "face"), "bbl-face")),
@@ -123,7 +123,7 @@ std::optional<usb::Found> BabbleUsbSource::pick() const {
                 return c;
         return std::nullopt;
     }
-    // Automatic: the Babble tracker if one is plugged in, else the first camera.
+    // The automatic choice is the Babble tracker if it is plugged in, or else the first camera.
     for (const auto &c : cams)
         if (c.vendor == vendor_ && c.product == product_)
             return c;
@@ -168,7 +168,7 @@ void BabbleUsbSource::run(usb::Found dev) {
 
     uint32_t seq = 0;
     uint64_t last_dropped = 0;
-    // A stream report every 10 s at debug level: what arrived and what was kept.
+    // Log a stream report at debug level each 10 s.
     uint64_t report_at = mono_ns() + 10'000'000'000ull, frames_in = 0, frames_kept = 0, bytes_in = 0;
     while (!stop_) {
         const bool ok = cam.read(200, [&](const uint8_t *data, size_t size) {
@@ -176,12 +176,12 @@ void BabbleUsbSource::run(usb::Found dev) {
             frames_.tick();
             frames_in++;
             bytes_in += size;
-            // A frame tap (the recorder) gets every frame; tracking only the subsampled ones.
+            // The frame tap gets all frames, but tracking gets only the frames that the limiter accepts.
             IFrameTap *tap = tap_.load(std::memory_order_relaxed);
             const bool want_tap = tap && tap->tap_wanted();
             const bool forward = limiter_.accept(now);
             if (!forward && !want_tap)
-                return;   // subsampled out: skip the decode
+                return;   // Skip the decode because the limiter did not accept the frame.
             auto frame = pool_->acquire();
             if (!frame) {
                 pool_exhausted_.add();
@@ -200,7 +200,7 @@ void BabbleUsbSource::run(usb::Found dev) {
             frame->height = uint32_t(h);
             frame->stride = uint32_t(w);
             frame->size = size_t(w) * size_t(h);
-            frame->capture_ns = now;   // arrival: UVC bulk payloads carry no reliable timestamp here
+            frame->capture_ns = now;   // Use the arrival time because the UVC bulk payloads have no reliable timestamp.
             frame->arrival_ns = now;
             frame->seq = ++seq;
             StereoFrame sf;
@@ -234,7 +234,7 @@ void BabbleUsbSource::run(usb::Found dev) {
 }
 
 void BabbleUsbSource::tick(uint64_t now) {
-    // Only an explicit "not worn" pauses; unknown presence keeps streaming.
+    // Pause only if SteamVR reports that the headset is not worn.
     const bool absent = pause_when_absent_ && steamvr_ && steamvr_->worn() == Worn::No;
     const bool hold = !tracking_ || absent;
     const char *why = !tracking_ ? "tracking turned off" : "headset not worn";
@@ -253,7 +253,7 @@ void BabbleUsbSource::tick(uint64_t now) {
             state_ = State::Paused;
             return;
         }
-        if (opened_ && backoff_ns_) {   // it works again: the next failure starts over at the minimum
+        if (opened_ && backoff_ns_) {   // The camera works again, so the next failure starts at the minimum backoff.
             backoff_ns_ = 0;
             last_error_.clear();
         }
@@ -261,7 +261,7 @@ void BabbleUsbSource::tick(uint64_t now) {
             last_error_ = thread_error_;
             stop(last_error_.c_str());
             restarts_.add();
-            // Unplugged: wait for it quietly. Anything else: back off and retry.
+            // Wait quietly for an unplugged camera, and wait and try again after other errors.
             if (!pick()) {
                 state_ = State::Waiting;
                 logged_waiting_ = false;
@@ -289,7 +289,7 @@ void BabbleUsbSource::tick(uint64_t now) {
             logged_waiting_ = true;
             last_error_ = camera_.empty() ? "waiting for a USB camera" : "waiting for the selected USB camera";
             state_ = State::Waiting;
-            retry_at_ns_ = now + 1000000000ull;   // a sysfs scan a second
+            retry_at_ns_ = now + 1000000000ull;   // Scan sysfs one time each second.
             return;
         }
         logged_waiting_ = false;
@@ -306,4 +306,4 @@ void BabbleUsbSource::shutdown() {
     }
 }
 
-} // namespace babble
+}

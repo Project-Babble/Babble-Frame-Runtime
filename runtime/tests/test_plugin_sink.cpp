@@ -18,7 +18,7 @@ using json = nlohmann::json;
 
 namespace {
 
-// A UDP listener on an ephemeral loopback port.
+// Listens for UDP on an ephemeral loopback port.
 struct Receiver {
     int fd = -1;
     uint16_t port = 0;
@@ -47,7 +47,7 @@ void set(ExpressionState &state, SignalId id, float v) {
     state.update(std::span(&u, 1));
 }
 
-} // namespace
+}
 
 TEST_CASE("the template plugin loads through the plugin output and receives values") {
     Receiver rx;
@@ -55,7 +55,7 @@ TEST_CASE("the template plugin loads through the plugin output and receives valu
     ExpressionState state;
     StatsRegistry stats;
     const SignalId jaw = state.add_signal("jawOpen");
-    const SignalId internal = state.add_signal("_LeftEyeLidRaw");   // hidden from plugins
+    const SignalId internal = state.add_signal("_LeftEyeLidRaw");   // Plugins do not see this signal.
     auto sink = make_sink(json{{"type", "plugin"},
                                {"library", BABBLE_TEMPLATE_PLUGIN},
                                {"config", {{"host", "127.0.0.1"}, {"port", rx.port}}}},
@@ -71,7 +71,7 @@ TEST_CASE("the template plugin loads through the plugin output and receives valu
     CHECK(line.find("\"jawOpen\":0.25") != std::string::npos);
     CHECK(line.find("_LeftEyeLidRaw") == std::string::npos);
 
-    // A signal registered after start (pipelines start after outputs) shows up too.
+    // Plugins also get a signal that is added after the start, because pipelines start after outputs.
     const SignalId lid = state.add_signal("LeftEyeLid");
     set(state, lid, 0.75f);
     for (int i = 0; i < 5 && line.find("LeftEyeLid") == std::string::npos; i++)

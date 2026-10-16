@@ -6,7 +6,7 @@
 
 namespace {
 const babble::log::Logger LOG("mouth");
-} // namespace
+}
 
 namespace babble {
 
@@ -50,4 +50,4 @@ std::unique_ptr<IExposureController> make_exposure_controller(const nlohmann::js
     return std::make_unique<FixedExposure>();
 }
 
-} // namespace babble
+}

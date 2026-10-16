@@ -10,7 +10,7 @@
 
 namespace {
 const babble::log::Logger LOG("update");
-} // namespace
+}
 
 namespace babble::update {
 
@@ -18,12 +18,12 @@ namespace fs = std::filesystem;
 using json = nlohmann::json;
 
 namespace {
-// "V1.0-Alpha-5" -> "V1.0 Alpha 5", as the overlay shows versions.
+// Changes a tag such as "V1.0-Alpha-5" to the overlay form "V1.0 Alpha 5".
 std::string spaced(std::string tag) {
     std::replace(tag.begin(), tag.end(), '-', ' ');
     return tag;
 }
-} // namespace
+}
 
 const char *to_string(RuntimeUpdater::State s) {
     switch (s) {
@@ -86,7 +86,7 @@ RuntimeUpdater::RuntimeUpdater(const json &cfg, Options options, const json &thr
       thread_spec_(thread_spec(threads, "net", "bbl-net")) {
     for (size_t at; (at = api_url_.find("{repo}")) != std::string::npos;)
         api_url_.replace(at, 6, repo_);
-    // "auto": testers on a prerelease get the next prerelease; a stable build only stable ones.
+    // With "auto", a prerelease build gets prereleases and a stable build gets only stable releases.
     const json pre = cfg.value("prereleases", json("auto"));
     prereleases_ = pre.is_boolean() ? pre.get<bool>() : (current_ && current_->prerelease());
     std::string why = cfg.value("enabled", true) ? unsupported_reason(options_) : "turned off in the config";
@@ -133,7 +133,7 @@ void RuntimeUpdater::restart_steamvr() {
     if (snapshot().state != State::Installed)
         return;
     LOG.info("update: restarting SteamVR to load %s", snapshot().latest.c_str());
-    // --no-block: the restart stops this process too; systemd carries on without us.
+    // Use --no-block because the restart also stops this process.
     std::string err;
     if (Process::run({"systemctl", "--user", "--no-block", "restart", "steamvr.service"}, nullptr, &err, 5000) != 0)
         LOG.error("update: restarting SteamVR failed: %s", err.c_str());
@@ -154,10 +154,9 @@ void RuntimeUpdater::set(State s, std::string detail) {
 
 void RuntimeUpdater::do_check() {
     if (snapshot().state == State::Installed)
-        return;   // waiting for SteamVR to restart into it
+        return;   // The update waits for SteamVR to restart.
     set(State::Checking);
-    // A failed check (offline, say) isn't worth a "failed" pill: keep what an
-    // earlier check found, or show nothing, and try again next time.
+    // Do not show a "failed" pill for a failed check, and keep the result of the last check.
     auto give_up = [&](const std::string &why) {
         LOG.warn("update: check failed: %s", why.c_str());
         set(latest_ ? State::Available : State::Idle, "update check failed: " + why);
@@ -189,7 +188,7 @@ void RuntimeUpdater::do_install() {
             return;
     }
     const RuntimeRelease r = *latest_;
-    // Beside the install: same filesystem as the folder install.sh swaps in.
+    // Put the work folder next to the install so that it is on the same filesystem.
     const fs::path work = options_.install_root.parent_path() / ".babble-runtime-update";
     std::error_code ec;
     fs::remove_all(work, ec);
@@ -225,7 +224,7 @@ void RuntimeUpdater::do_install() {
         return fail("the download doesn't match the release's checksum");
     if (Process::run({"tar", "-xJf", tarball.string(), "-C", work.string(), "install.sh"}, nullptr, &err, 60000) != 0)
         return fail("the release has no install.sh: " + err);
-    // The release's own installer, on our folder; SteamVR restarts later, on request.
+    // Run the installer from the release on our folder.
     std::string out;
     const int rc = Process::run({"bash", (work / "install.sh").string(), tarball.string(), "--dir",
                                  options_.install_root.string(), "--no-restart"},
@@ -268,4 +267,4 @@ void RuntimeUpdater::run() {
     }
 }
 
-} // namespace babble::update
+}

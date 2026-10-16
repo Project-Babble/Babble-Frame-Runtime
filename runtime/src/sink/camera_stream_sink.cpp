@@ -30,7 +30,7 @@
 
 namespace {
 const babble::log::Logger LOG("camstream");
-} // namespace
+}
 
 namespace babble {
 
@@ -48,8 +48,7 @@ const char *view_name(View v) {
 }
 
 void copy_view(View v, const uint8_t *data, uint32_t width, uint32_t height, uint32_t stride, Image *out) {
-    // The DSP's 512x512 eye views, cropped as the streamer crops them:
-    // eye_l [16:416, 56:456], eye_r [16:416, 0:400].
+    // Crop the 512x512 eye views of the DSP to the same 400x400 area that the streamer uses.
     uint32_t x0 = 0, y0 = 0, w = width, h = height;
     if ((v == EyeL || v == EyeR) && width == 512 && height == 512) {
         y0 = 16;
@@ -86,15 +85,14 @@ std::vector<uint8_t> packet(const std::vector<Part> &parts) {
 
 namespace {
 
-// libjpeg-turbo, loaded at run time when the system has it: ~5x faster than
-// stb (0.6 vs 3.4 ms per 400x400 on the Frame), and no build dependency.
+// The runtime loads libjpeg-turbo if the system has it, because it is about 5 times faster than stb.
 struct TurboJpeg {
     using Init = void *(*)();
     using Compress = int (*)(void *, const unsigned char *, int, int, int, int, unsigned char **, unsigned long *,
                              int, int, int);
     using Free = void (*)(unsigned char *);
     using Destroy = int (*)(void *);
-    static constexpr int kPixelGray = 6, kSampGray = 3, kFastDct = 2048;   // TJPF_GRAY, TJSAMP_GRAY, TJFLAG_FASTDCT
+    static constexpr int kPixelGray = 6, kSampGray = 3, kFastDct = 2048;   // These are TurboJPEG values.
 
     Init init = nullptr;
     Compress compress = nullptr;
@@ -124,7 +122,7 @@ struct TurboJpeg {
     }
 };
 
-// One compressor per thread (a handle isn't thread-safe), freed with the thread.
+// Each thread has its own compressor because a handle is not thread-safe.
 struct TurboHandle {
     void *h = nullptr;
     ~TurboHandle() {
@@ -133,7 +131,7 @@ struct TurboHandle {
     }
 };
 
-} // namespace
+}
 
 bool encode_jpeg(const Image &img, int quality, std::vector<uint8_t> *out) {
     out->clear();
@@ -163,7 +161,7 @@ bool encode_jpeg(const Image &img, int quality, std::vector<uint8_t> *out) {
            !out->empty();
 }
 
-} // namespace camera_stream
+}
 
 namespace {
 
@@ -171,7 +169,7 @@ std::optional<camera_stream::View> view_of(FrameOrigin o) {
     switch (o) {
     case FrameOrigin::MouthL: return camera_stream::FaceL;
     case FrameOrigin::MouthR: return camera_stream::FaceR;
-    case FrameOrigin::Face: return camera_stream::FaceL;   // a USB face tracker: one view
+    case FrameOrigin::Face: return camera_stream::FaceL;   // A USB face tracker has only one view.
     case FrameOrigin::EyeL: return camera_stream::EyeL;
     case FrameOrigin::EyeR: return camera_stream::EyeR;
     }
@@ -184,7 +182,7 @@ uint64_t realtime_ns() {
     return uint64_t(ts.tv_sec) * 1'000'000'000ull + uint64_t(ts.tv_nsec);
 }
 
-// Sends all of `data`, giving up when told to stop or the peer goes away.
+// Sends all of `data`, and stops if `stop` is set or the peer disconnects.
 bool send_all(int fd, const uint8_t *data, size_t size, const std::atomic<bool> &stop) {
     while (size && !stop) {
         const ssize_t n = ::send(fd, data, size, MSG_NOSIGNAL);
@@ -192,7 +190,7 @@ bool send_all(int fd, const uint8_t *data, size_t size, const std::atomic<bool> 
             data += n;
             size -= size_t(n);
         } else if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) {
-            continue;   // the send timeout: check stop and keep going
+            continue;   // The send timed out, so examine `stop` and try again.
         } else {
             return false;
         }
@@ -200,7 +198,7 @@ bool send_all(int fd, const uint8_t *data, size_t size, const std::atomic<bool> 
     return size == 0;
 }
 
-} // namespace
+}
 
 CameraStreamSink::CameraStreamSink(const nlohmann::json &cfg, SinkDeps deps)
     : name_(deps.name), thread_spec_(thread_spec(deps.threads, cfg.value("thread", "sink"), "bbl-camstream")),
@@ -229,7 +227,7 @@ bool CameraStreamSink::start() {
     started_ = true;
     if (active_)
         start_server();
-    return true;   // a port in use is logged; the switch can try again
+    return true;   // A port that is in use is not fatal because the switch can try again.
 }
 
 void CameraStreamSink::stop() {
@@ -253,9 +251,8 @@ bool CameraStreamSink::set_option(const std::string &key, const nlohmann::json &
 
 void CameraStreamSink::offer_frames(const std::string &, const StereoFrame &frames) {
     if (!active_ || clients_ == 0)
-        return;   // nobody watching: no copies
-    // Both formats are one byte per pixel: the mouth cameras' raw Bayer goes
-    // out as gray, as stream_daemon.py sends it.
+        return;   // Do not copy frames when no client is connected.
+    // Send the raw Bayer data of the mouth cameras as gray, because both formats use one byte per pixel.
     for (const FramePtr *f : {&frames.left, &frames.right})
         if (*f)
             if (auto v = view_of((*f)->origin); v && want_[*v])
@@ -263,13 +260,13 @@ void CameraStreamSink::offer_frames(const std::string &, const StereoFrame &fram
 }
 
 void CameraStreamSink::take(camera_stream::View v, const Frame &f) {
-    // Capture time on the streamer's clock (wall time), from our monotonic one.
+    // Change the monotonic capture time to wall time for the streamer clock.
     const uint64_t age = mono_ns() > f.capture_ns ? mono_ns() - f.capture_ns : 0;
     const uint64_t stamp = realtime_ns() - age;
     std::lock_guard lock(images_mutex_);
     camera_stream::Image &img = images_[v];
     if (img.stamp_ns == stamp)
-        return;   // the same frame again (two pipelines on one source)
+        return;   // Two pipelines on one source can send the same frame again.
     camera_stream::copy_view(v, f.data, f.width, f.height, f.stride ? f.stride : f.width, &img);
     img.stamp_ns = stamp;
     img.seq = next_seq_++;
@@ -311,7 +308,7 @@ void CameraStreamSink::stop_server() {
         return;
     stop_server_ = true;
     if (server_.joinable())
-        server_.join();   // it joins its clients
+        server_.join();   // The server thread joins its client threads.
     close(listen_fd_);
     listen_fd_ = -1;
     std::lock_guard images(images_mutex_);
@@ -340,7 +337,7 @@ void CameraStreamSink::serve() {
         }
         clients_++;
         std::lock_guard lock(clients_mutex_);
-        // Same cores as the other sink threads: encoding never lands on a tracking core.
+        // Use the sink cores so that the JPEG encoder never runs on a tracking core.
         client_threads_.push_back(start_thread(thread_spec_, [this, fd, peer] { client_loop(fd, peer); }));
     }
     std::lock_guard lock(clients_mutex_);
@@ -354,7 +351,7 @@ void CameraStreamSink::client_loop(int fd, std::string peer) {
     pthread_setname_np(pthread_self(), "bbl-camclient");
     int one = 1;
     setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
-    timeval tv{0, 200'000};   // sends wake up to check for stop
+    timeval tv{0, 200'000};   // The send timeout lets the thread examine the stop flag.
     setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
     LOG.info("%s: client %s connected", name_.c_str(), peer.c_str());
 
@@ -373,7 +370,7 @@ void CameraStreamSink::client_loop(int fd, std::string peer) {
                 std::lock_guard lock(images_mutex_);
                 const camera_stream::Image &cur = images_[size_t(i)];
                 if (cur.seq == 0 || cur.seq == last_seq[size_t(i)])
-                    continue;   // nothing new from this camera
+                    continue;   // This camera has no new image.
                 img = cur;
             }
             last_seq[size_t(i)] = img.seq;
@@ -399,4 +396,4 @@ void CameraStreamSink::client_loop(int fd, std::string peer) {
              (unsigned long long)packets);
 }
 
-} // namespace babble
+}

@@ -1,12 +1,5 @@
 #!/usr/bin/env python3
-"""Reference output of a .pte on a fixed synthetic input, for test_executorch_runner.cpp.
-
-Run on the headset with its ExecuTorch Python runtime (same ARM XNNPACK kernels):
-    ~/edge-inference/.venv/bin/python tools/golden/make_runner_golden.py <model.pte> <out.json>
-
-Input element k of input i (flattened) is ((k * 37 + i * 91 + 13) % 256) / 255, matching the C++ test.
-fp16 inputs get that value rounded to half precision (like the C++ side's conversion).
-"""
+"""Writes the reference output of a .pte on a fixed synthetic input for test_executorch_runner.cpp, on the headset."""
 import json, sys, torch
 from executorch.runtime import Runtime
 
@@ -20,7 +13,7 @@ for i in range(meta.num_inputs()):
         n *= d
     k = torch.arange(n, dtype=torch.int64)
     x = (((k * 37 + i * 91 + 13) % 256).float() / 255.0).reshape(shape)
-    half = int(meta.input_tensor_meta(i).dtype()) == 5   # ScalarType::Half
+    half = int(meta.input_tensor_meta(i).dtype()) == 5   # The value 5 is ScalarType::Half.
     xs.append(x.half() if half else x)
 out = m.execute(tuple(xs))
 json.dump({"model": sys.argv[1].split("/")[-1], "outputs": [o.float().flatten().tolist() for o in out]},

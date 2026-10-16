@@ -7,7 +7,7 @@ namespace babble {
 void resize_gray(const Frame &src, uint8_t *dst, uint32_t dst_w, uint32_t dst_h, uint32_t dst_stride) {
     if (!dst_w || !dst_h || !src.width || !src.height)
         return;
-    // Fixed-point bilinear, pixel centers aligned.
+    // Use fixed-point bilinear interpolation with aligned pixel centers.
     const uint32_t sx = (src.width << 16) / dst_w;
     const uint32_t sy = (src.height << 16) / dst_h;
     for (uint32_t y = 0; y < dst_h; y++) {
@@ -38,4 +38,4 @@ void preprocess_sbs_gray_u8(const StereoFrame &sf, uint8_t *dst, uint32_t out_h,
     resize_gray(*sf.right, dst + half, half, out_h, out_w);
 }
 
-} // namespace babble
+}

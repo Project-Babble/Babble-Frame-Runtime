@@ -18,7 +18,7 @@
 
 namespace {
 const babble::log::Logger LOG("record");
-} // namespace
+}
 
 namespace babble {
 
@@ -27,18 +27,18 @@ using json = nlohmann::json;
 
 struct RecordSink::Channel {
     std::string source;
-    std::mutex m;   // everything up to the writer-only block
-    uint32_t w = 0, h = 0;   // the recorded frame: both sides of a pair, side by side
+    std::mutex m;   // This mutex protects all fields above the writer-only fields.
+    uint32_t w = 0, h = 0;   // The size of the recorded frame, with the two sides of a pair side by side.
     bool stereo = false;
     FrameOrigin origin = FrameOrigin::EyeL;
-    std::vector<std::unique_ptr<uint8_t[]>> bufs;   // grown up to queue_frames, stable addresses
+    std::vector<std::unique_ptr<uint8_t[]>> bufs;   // The buffers grow to queue_frames and do not move.
     std::vector<size_t> free_list;
     std::deque<Item> queue;
     SourceCounts counts;
     bool warned_size = false;
     uint64_t first_ns = 0, last_ns = 0;
 
-    // Writer thread only.
+    // Only the writer thread uses the fields below.
     std::unique_ptr<Process> enc;
     FILE *stamps = nullptr;
     bool failed = false;
@@ -67,14 +67,14 @@ struct RecordSink::Channel {
 
 namespace {
 
-// The default timestamp meaning per camera (see each source).
+// Returns the default meaning of the timestamp for each camera.
 const char *timestamp_kind(FrameOrigin o) {
     switch (o) {
     case FrameOrigin::EyeL:
-    case FrameOrigin::EyeR: return "detected";   // dsp_service has no frame timestamp: when the poll saw it
-    case FrameOrigin::Face: return "arrival";    // UVC payloads carry none: when the frame arrived
+    case FrameOrigin::EyeR: return "detected";   // dsp_service has no frame timestamp, so this is the time of the poll.
+    case FrameOrigin::Face: return "arrival";    // UVC payloads have no timestamp, so this is the arrival time.
     case FrameOrigin::MouthL:
-    case FrameOrigin::MouthR: return "sensor";   // V4L2 buffer timestamp
+    case FrameOrigin::MouthR: return "sensor";   // This is the V4L2 buffer timestamp.
     }
     return "?";
 }
@@ -100,8 +100,7 @@ bool write_json_file(const fs::path &path, const json &j) {
     return !ec;
 }
 
-// The headset model (devicetree) and OS build, for splitting the corpus by
-// hardware and software revision.
+// Reads the headset model and OS build so that the corpus can be split by hardware and software revision.
 json read_device() {
     json d = json::object();
     std::ifstream model("/sys/firmware/devicetree/base/model");
@@ -141,7 +140,7 @@ void put_f32(uint8_t *p, float v) {
     put_u32(p, u);
 }
 
-constexpr size_t kMaxPendingEyeSamples = 4096;   // about 45 s of samples if the writer stalls
+constexpr size_t kMaxPendingEyeSamples = 4096;   // This holds about 45 s of samples if the writer stops.
 
 std::string session_stamp() {
     char buf[32];
@@ -152,7 +151,7 @@ std::string session_stamp() {
     return buf;
 }
 
-} // namespace
+}
 
 RecordSink::RecordSink(const json &cfg, SinkDeps deps)
     : name_(deps.name), thread_spec_(thread_spec(deps.threads, cfg.value("thread", "record"), "bbl-record")),
@@ -195,7 +194,7 @@ bool RecordSink::low_disk() const {
     while (!probe.empty() && !fs::exists(probe, ec))
         probe = probe.parent_path();
     if (probe.empty() || statvfs(probe.c_str(), &st) != 0)
-        return false;   // can't tell: let the write fail instead
+        return false;   // If the sink cannot tell, let the write fail.
     return double(st.f_bavail) * double(st.f_frsize) < min_free_gb_ * 1e9;
 }
 
@@ -206,7 +205,7 @@ RecordSink::Channel *RecordSink::channel(const std::string &source) {
         c = std::make_unique<Channel>();
         c->source = source;
     }
-    return c.get();   // channels are never removed, only reset between sessions
+    return c.get();   // The sink never removes a channel and only resets it between sessions.
 }
 
 void RecordSink::tap_frames(const std::string &source, const StereoFrame &sf) {
@@ -238,7 +237,7 @@ void RecordSink::tap_frames(const std::string &source, const StereoFrame &sf) {
                 ch->bufs.push_back(std::make_unique<uint8_t[]>(size_t(w) * h));
                 idx = ch->bufs.size() - 1;
             } else {
-                ch->counts.dropped++;   // the writer is behind: drop rather than block the camera
+                ch->counts.dropped++;   // Drop the frame when the writer is slow, because the camera must not block.
                 return;
             }
             uint8_t *dst = ch->bufs[idx].get();
@@ -323,7 +322,7 @@ RecordSink::StartResult RecordSink::start_session(const SessionSpec &spec) {
         eye_pending_.clear();
         eye_dropped_ = 0;
     }
-    eye_records_ = 0;   // the writer is idle until the session opens
+    eye_records_ = 0;   // The writer is idle until the session opens.
     eye_layout_ = 0;
     write_manifest("recording", "", "");
     accepting_ = true;
@@ -433,7 +432,7 @@ void RecordSink::encode_eye_record(const eye_server::Sample &s, uint8_t out[kEye
         put_f32(out + 64 + 4 * k, s.fixation[k]);
     put_f32(out + 76, s.openness[0]);
     put_f32(out + 80, s.openness[1]);
-    put_u32(out + 84, 1);   // valid: the client only publishes valid records
+    put_u32(out + 84, 1);   // The record is valid because the client publishes only valid records.
 }
 
 void RecordSink::write_eye_samples() {
@@ -564,7 +563,7 @@ void RecordSink::run() {
                 chans.push_back(c.get());
         }
         bool wrote = true;
-        while (wrote && !stop_thread_) {   // keep draining while frames keep coming
+        while (wrote && !stop_thread_) {   // Continue to write while new frames arrive.
             wrote = false;
             for (Channel *c : chans)
                 wrote |= write_items(*c);
@@ -582,7 +581,7 @@ void RecordSink::run() {
             }
         }
         if (stopping) {
-            for (Channel *c : chans)   // frames that came in while stop was requested
+            for (Channel *c : chans)   // Write the frames that arrived after the stop request.
                 write_items(*c);
             finish_session(10000);
         }
@@ -597,7 +596,7 @@ void RecordSink::run() {
         eye_accepting_ = false;
     }
     if (open)
-        finish_session(1000);   // shutdown: queued frames are dropped; mkv tolerates the cut
+        finish_session(1000);   // At shutdown, drop the queued frames because mkv accepts a cut file.
 }
 
 void RecordSink::finish_session(int encoder_wait_ms) {
@@ -676,7 +675,7 @@ void RecordSink::write_manifest(const std::string &status, const std::string &er
     m["status"] = status;
     if (!error.empty())
         m["error"] = error;
-    m["stop_reason"] = stop_reason.empty() ? json(nullptr) : json(stop_reason);   // null while recording
+    m["stop_reason"] = stop_reason.empty() ? json(nullptr) : json(stop_reason);   // It is null during a session.
     m["runtime"] = {{"version", version_}, {"profile", profile_}};
     m["device"] = device_;
     m["routine"] = spec_.routine;
@@ -740,7 +739,7 @@ void RecordSink::write_manifest(const std::string &status, const std::string &er
         m["valve_eye"] = {{"file", "valve_eye.bin"},
                           {"records", eye_records_},
                           {"dropped", dropped},
-                          {"layout", layout ? json(layout) : json(nullptr)},   // null: no samples came
+                          {"layout", layout ? json(layout) : json(nullptr)},   // It is null with no samples.
                           {"record_format", "88 bytes little-endian: u64 received_ns, f64 sample_time, "
                                             "f32 gaze[2][3], f32 pre_fusion_gaze[2][3], f32 fixation[3], "
                                             "f32 openness[2], u32 flags (bit 0 valid); index 0 = left eye"}};
@@ -749,4 +748,4 @@ void RecordSink::write_manifest(const std::string &status, const std::string &er
         LOG.error("%s: cannot write %s/session.json", name_.c_str(), session_dir_.c_str());
 }
 
-} // namespace babble
+}

@@ -4,17 +4,14 @@
 
 namespace babble {
 
-// Link to the driver shim (driver/src/driver_babble.cpp). Today it is a pipe
-// whose read end is fd 3: EOF means vrserver is gone. The message header is
-// defined now so the same fd can become a socketpair carrying standby/resume
-// and gaze samples later without changing the framing.
+// The link to the driver shim is a pipe on fd 3, and EOF on it means that vrserver is gone.
 class ShimLink {
 public:
     static constexpr int kFd = 3;
 
     struct MsgHeader {
         uint16_t type;
-        uint16_t len;   // payload bytes following the header
+        uint16_t len;   // The number of payload bytes after the header.
         uint32_t seq;
     };
     enum MsgType : uint16_t {
@@ -24,14 +21,14 @@ public:
         Msg_Gaze = 4,
     };
 
-    // True if fd 3 is a pipe or socket the shim handed us.
+    // Returns true if fd 3 is a pipe or socket from the shim.
     static bool present();
 
-    // Reads and discards whatever is readable; returns false on EOF/error.
+    // Reads and discards all readable data, and returns false on EOF or an error.
     static bool drain();
 };
 
-// Signals handled by the runtime, blocked process-wide and delivered through signalfd.
+// Blocks the runtime signals in the process and returns a signalfd that receives them.
 int make_signalfd();
 
-} // namespace babble
+}

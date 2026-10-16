@@ -11,7 +11,7 @@
 
 namespace {
 const babble::log::Logger LOG("ui");
-} // namespace
+}
 
 namespace babble::ui {
 
@@ -31,7 +31,7 @@ void Dashboard::start(SteamVrClient &vr, ThreadSpec thread, Options options, std
             "_LeftEyeNeutral",  "_LeftEyeWideRaw",  "LeftEyeDilation",
             "RightEyeX", "RightEyeY", "RightEyeLid", "RightEyeWiden", "_RightEyeLidRaw",
             "_RightEyeNeutral", "_RightEyeWideRaw", "RightEyeDilation"};
-        for (int i = 0; i < 2 * kPerEye; i++)   // add_signal is idempotent: these are the pipelines' own signals
+        for (int i = 0; i < 2 * kPerEye; i++)   // add_signal is idempotent, so this gets the pipeline signals.
             eye_ids_[i] = options_.state->add_signal(names[i]);
     }
     if (!view_.load_fonts(options_.fonts_dir))
@@ -47,7 +47,7 @@ void Dashboard::stop() {
     if (thread_.joinable())
         thread_.join();
     destroy_overlays();
-    // A later start() makes a fresh tab (the GPU objects are kept for it).
+    // Keep the GPU objects because a later start() uses them again.
     connection_ = 0;
     pointer_.reset();
     hover_ = -1;
@@ -101,7 +101,7 @@ bool Dashboard::create_overlays() {
         vr::VROverlayHandle_t main = 0, thumb = 0;
         err = ov->CreateDashboardOverlay(options_.key.c_str(), options_.name.c_str(), &main, &thumb);
         if (err == vr::VROverlayError_KeyInUse) {
-            // Left over from our previous connection (e.g. SteamVR kept the key).
+            // The overlay can remain from the previous connection because SteamVR can keep the key.
             ov->FindOverlay(options_.key.c_str(), &main);
             ov->DestroyOverlay(main);
             err = ov->CreateDashboardOverlay(options_.key.c_str(), options_.name.c_str(), &main, &thumb);
@@ -122,7 +122,7 @@ bool Dashboard::create_overlays() {
         return false;
     }
 
-    // The thumbnail never changes: one raw upload is fine.
+    // A single raw upload is sufficient because the thumbnail does not change.
     Canvas thumb(DashboardView::kThumb, DashboardView::kThumb);
     view_.render_thumbnail(thumb);
     vr_->with_vr([&] {
@@ -140,14 +140,14 @@ bool Dashboard::create_overlays() {
         }
     }
     LOG.info("dashboard: \"%s\" tab ready", options_.name.c_str());
-    present();   // so the tab never opens blank
+    present();   // Draw now so that the tab does not open blank.
     return true;
 }
 
 void Dashboard::destroy_overlays() {
     if (!main_)
         return;
-    vr_->with_vr([&] { vr::VROverlay()->DestroyOverlay(main_); });   // also removes the thumbnail
+    vr_->with_vr([&] { vr::VROverlay()->DestroyOverlay(main_); });   // This also removes the thumbnail.
     main_ = thumb_ = 0;
     visible_ = false;
 }
@@ -158,7 +158,7 @@ std::array<EyeReading, 2> Dashboard::read_eyes() const {
         return out;
     Signal v[2 * kPerEye];
     options_.state->read(eye_ids_, v);
-    const uint64_t now = mono_ns(), fresh = 1000000000ull;   // older than 1 s: no data
+    const uint64_t now = mono_ns(), fresh = 1000000000ull;   // A value that is older than 1 s counts as no data.
     auto recent = [&](const Signal &s) { return s.t_ns != 0 && now - s.t_ns < fresh; };
     for (int e = 0; e < 2; e++) {
         const Signal *s = v + kPerEye * e;
@@ -166,8 +166,7 @@ std::array<EyeReading, 2> Dashboard::read_eyes() const {
                      &dil = s[7];
         EyeReading &r = out[e];
         r.gaze = recent(x) || recent(y);
-        // The gaze outputs are angles scaled so +-45 deg is +-1 (the gaze
-        // pipeline's default "angle" scaling, as frameeyeosc's gaze_angles()).
+        // The gaze outputs are angles with a scale where +-1 is +-45 deg.
         r.yaw_deg = double(x.value) * 45;
         r.pitch_deg = double(y.value) * 45;
         r.lid = recent(lid);
@@ -220,7 +219,7 @@ void Dashboard::present() {
 void Dashboard::run() {
     while (!stop_) {
         if (!vr_->connected()) {
-            main_ = thumb_ = 0;   // handles die with the connection
+            main_ = thumb_ = 0;   // The handles are not valid after the connection stops.
             visible_ = false;
             connection_ = 0;
             sleep_ns(200000000);
@@ -242,7 +241,7 @@ void Dashboard::run() {
             while (vr::VROverlay()->PollNextOverlayEvent(main_, &ev, sizeof(ev))) {
                 switch (ev.eventType) {
                 case vr::VREvent_MouseMove:
-                    // Mouse events are in texture pixels with a bottom-left origin.
+                    // Mouse events are in texture pixels with the origin at the bottom left.
                     pointer_ = Point{ev.data.mouse.x, DashboardView::kHeight - ev.data.mouse.y};
                     break;
                 case vr::VREvent_MouseButtonDown:
@@ -259,7 +258,7 @@ void Dashboard::run() {
                 case vr::VREvent_OverlayHidden:
                     visible_ = false;
                     pointer_.reset();
-                    view_.set_page(DashboardView::Page::Home);   // reopen on the front page
+                    view_.set_page(DashboardView::Page::Home);   // The tab opens again on the front page.
                     break;
                 default: break;
                 }
@@ -286,7 +285,7 @@ void Dashboard::run() {
             if (r.update)
                 update_request_ = true;
             std::lock_guard<std::mutex> lock(mutex_);
-            // String settings: shown at once, applied by the main thread.
+            // Show string settings immediately, and let the main thread apply them.
             if (r.mouth_source && *r.mouth_source != status_.mouth_source) {
                 status_.mouth_source = *r.mouth_source;
                 changes_.emplace_back("/mouth_source", *r.mouth_source);
@@ -303,7 +302,7 @@ void Dashboard::run() {
                 }
             }
             if (r.toggle) {
-                // Show the new position right away; the main thread's next status confirms it.
+                // Show the new position immediately because the next status from the main thread confirms it.
                 const auto [feed, on] = *r.toggle;
                 FeedStatus &f = feed == 0 ? status_.mouth : status_.eye;
                 f.tracking = on;
@@ -313,17 +312,15 @@ void Dashboard::run() {
             }
         }
 
-        // Redraw only when something visible changed: the hovered element,
-        // a click, or the status/settings (the rates change about once a second).
+        // Draw again only when something visible changed.
         if (visible_) {
             const int hover = view_.hit_at(pointer_);
             redraw |= hover != hover_;
-            // The restart button's armed state runs out by itself.
+            // The armed state of the restart button stops after a time without a click.
             const bool armed = view_.restart_armed(mono_ns()) || view_.update_armed(mono_ns());
             redraw |= armed != drawn_restart_armed_;
             drawn_restart_armed_ = armed;
-            // The eye panel moves with the tracking: redraw when a value
-            // visibly changed, at most ~30 times a second.
+            // Draw the eye panel again when a value visibly changed, at a maximum of about 30 times a second.
             if (!redraw && mono_ns() - last_present_ns_ >= 33000000ull) {
                 const auto eyes = read_eyes();
                 for (int e = 0; e < 2; e++) {
@@ -342,12 +339,12 @@ void Dashboard::run() {
             }
             if (redraw) {
                 present();
-                hover_ = view_.hit_at(pointer_);   // hits moved if the page changed
+                hover_ = view_.hit_at(pointer_);   // The hit areas move if the page changed.
             }
         }
-        // ~60 Hz while the tab is open (pointer feedback), 5 Hz otherwise.
+        // Run at about 60 Hz when the tab is open and at 5 Hz when it is closed.
         sleep_ns(visible_ ? 16000000 : 200000000);
     }
 }
 
-} // namespace babble::ui
+}

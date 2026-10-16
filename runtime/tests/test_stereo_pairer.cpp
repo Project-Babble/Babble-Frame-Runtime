@@ -31,7 +31,7 @@ TEST_CASE("pairs frames within tolerance, in either arrival order") {
 
 TEST_CASE("drops a stale counterpart instead of emitting a bad pair") {
     StereoPairer p(4 * ms, FrameOrigin::MouthL, FrameOrigin::MouthR);
-    p.push(make(FrameOrigin::MouthL, 100 * ms));            // right frame for this one never arrives
+    p.push(make(FrameOrigin::MouthL, 100 * ms));            // The right frame for this frame never arrives.
     CHECK_FALSE(p.push(make(FrameOrigin::MouthR, 120 * ms)).has_value());
     CHECK(p.counts().unmatched_left == 1);
     auto s = p.push(make(FrameOrigin::MouthL, 121 * ms));

@@ -9,13 +9,13 @@
 
 namespace {
 const babble::log::Logger LOG("config");
-} // namespace
+}
 
 namespace babble {
 
 std::optional<json> parse_json(const std::string &text, std::string *error) {
     try {
-        return json::parse(text, nullptr, /*allow_exceptions=*/true, /*ignore_comments=*/true);
+        return json::parse(text, nullptr, true, true);
     } catch (const json::exception &e) {
         if (error)
             *error = e.what();
@@ -39,8 +39,7 @@ const char *kind(const json &j) {
     return "null";
 }
 
-// Options that legitimately take more than one type: gaze "ipd" ("auto" or
-// metres), the pipelines' One Euro filters (settings or false).
+// These options can have more than one type, for example "ipd" can be "auto" or a value in metres.
 bool flexible(const std::string &key) { return key == "ipd" || key == "one_euro" || key == "pupil_one_euro"; }
 
 void fix_types_at(json &cfg, const json &defaults, const std::string &path, std::vector<std::string> &fixed) {
@@ -58,7 +57,7 @@ void fix_types_at(json &cfg, const json &defaults, const std::string &path, std:
     }
 }
 
-// Every leaf (non-object value) of a JSON object, as a pointer.
+// Collects the JSON pointer of each leaf value in a JSON object.
 void leaves(const json &j, const std::string &path, std::vector<std::string> &out) {
     for (auto it = j.begin(); it != j.end(); ++it) {
         const std::string p = path + "/" + it.key();
@@ -69,7 +68,7 @@ void leaves(const json &j, const std::string &path, std::vector<std::string> &ou
     }
 }
 
-} // namespace
+}
 
 std::vector<std::string> fix_types(json &cfg, const json &defaults) {
     std::vector<std::string> fixed;
@@ -90,7 +89,7 @@ namespace {
 
 enum class Layer { Missing, Loaded, Broken };
 
-// Reads one user layer and merges it into config; *layer_out gets the layer itself.
+// Reads one user layer, merges it into config and puts the layer in *layer_out.
 Layer merge_layer(const std::filesystem::path &file, json &config, std::string *error, json *layer_out = nullptr) {
     std::ifstream in(file);
     if (!in)
@@ -110,7 +109,7 @@ Layer merge_layer(const std::filesystem::path &file, json &config, std::string *
     return Layer::Loaded;
 }
 
-} // namespace
+}
 
 std::filesystem::path default_settings_file() { return paths::config_dir() / "settings.json"; }
 
@@ -127,7 +126,7 @@ bool save_setting(const std::filesystem::path &settings_file, const json::json_p
             if (parsed && parsed->is_object()) {
                 doc = std::move(*parsed);
             } else {
-                // Keep the broken file for inspection instead of silently losing every saved setting.
+                // Keep the broken file for inspection so that the saved settings are not lost.
                 std::filesystem::path bad = settings_file;
                 bad += ".bad";
                 std::error_code ec;
@@ -162,7 +161,7 @@ ConfigLoad load_config(const std::optional<std::filesystem::path> &user_file_ove
     std::string err;
     auto defaults = parse_json(kDefaultsJson, &err);
     if (!defaults) {
-        // The defaults are compiled in; failing to parse them is a build bug.
+        // A parse failure of the compiled-in defaults is a build bug.
         LOG.error("built-in defaults.json is invalid: %s", err.c_str());
         out.config = json::object();
     } else {
@@ -182,4 +181,4 @@ ConfigLoad load_config(const std::optional<std::filesystem::path> &user_file_ove
     return out;
 }
 
-} // namespace babble
+}

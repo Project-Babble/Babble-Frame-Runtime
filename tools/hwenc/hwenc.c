@@ -1,13 +1,4 @@
-// Minimal V4L2 stateful encoder test for the headset's iris encoder
-// (/dev/video-enc0). The measurements in docs/dataset-format.md were made
-// with it. Build on the headset: cc -O2 -o hwenc hwenc.c
-//
-// usage: hwenc <dev> <w> <h> <fps> <HEVC|H264> <qp|0> <bitrate> <gop> < in.gray > out.es
-// Input: raw 8-bit gray frames; chroma is filled with 128.
-// qp > 0: constant QP. For HEVC that pins every QP limit to qp under VBR,
-// because the driver ignores FRAME_RC_ENABLE=0. qp 0: VBR at bitrate.
-// The stream is not tagged full range; mux with
-//   ffmpeg -f hevc -r <fps> -i out.es -c copy -bsf:v hevc_metadata=video_full_range_flag=1 out.mkv
+// This small test tool encodes raw 8-bit gray frames from stdin with the V4L2 hardware encoder of the headset.
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/videodev2.h>
@@ -48,7 +39,7 @@ int main(int argc, char **argv) {
     struct v4l2_format of = {.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE};
     of.fmt.pix_mp.width = w; of.fmt.pix_mp.height = h; of.fmt.pix_mp.pixelformat = V4L2_PIX_FMT_NV12;
     of.fmt.pix_mp.num_planes = 1;
-    // Gray goes into Y unchanged, so ask for a full-range VUI.
+    // Ask for a full-range VUI because the gray values go into Y without a change.
     of.fmt.pix_mp.colorspace = V4L2_COLORSPACE_REC709;
     of.fmt.pix_mp.ycbcr_enc = V4L2_YCBCR_ENC_709;
     of.fmt.pix_mp.xfer_func = V4L2_XFER_FUNC_709;
@@ -77,7 +68,7 @@ int main(int argc, char **argv) {
         if (coded == V4L2_PIX_FMT_HEVC) {
             ctrl(V4L2_CID_MPEG_VIDEO_HEVC_I_FRAME_QP, qp, "iqp");
             ctrl(V4L2_CID_MPEG_VIDEO_HEVC_P_FRAME_QP, qp, "pqp");
-            // The driver ignores rate control off; pin the QP range instead, with a bitrate cap it never reaches.
+            // Set the QP range to qp because the driver ignores FRAME_RC_ENABLE=0.
             ctrl(V4L2_CID_MPEG_VIDEO_FRAME_RC_ENABLE, 1, "frame_rc");
             ctrl(V4L2_CID_MPEG_VIDEO_BITRATE_MODE, V4L2_MPEG_VIDEO_BITRATE_MODE_VBR, "mode");
             ctrl(V4L2_CID_MPEG_VIDEO_BITRATE, 240000000, "bitrate");

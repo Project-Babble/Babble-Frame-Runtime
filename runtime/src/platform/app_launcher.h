@@ -10,22 +10,16 @@
 
 namespace babble {
 
-// Starts and stops one external helper app, e.g. the Aura Vis tracking
-// visualizer, from the debug overlay. The child gets its own session, a clean
-// signal mask and default dispositions (the runtime blocks its signals for
-// signalfd), no shim pipe on fd 3, and its output appended to a log file.
-//
-// Config: {"command": ["~/aura_vis/run.sh", ...], "log": "<path>",
-// "env": {"NAME": "value"}}; a leading "~/" expands to $HOME. Main thread only.
+// Starts and stops one external helper app from the debug overlay, and only the main thread can use it.
 class AppLauncher {
 public:
     AppLauncher(const nlohmann::json &cfg, std::string default_log);
-    ~AppLauncher();   // stops the app: it must not outlive the runtime (a restart would start a second one)
+    ~AppLauncher();   // Stops the app because a restart of the runtime must not start a second copy.
 
-    bool available() const;   // the command exists and is executable
-    bool running();           // also reaps the child once it exits
+    bool available() const;   // Returns true if the command exists and is executable.
+    bool running();           // Also reaps the child after it exits.
     bool start();
-    void stop();              // SIGTERM to its process group
+    void stop();              // Sends SIGTERM to the process group of the app.
     const std::string &name() const { return name_; }
 
 private:
@@ -35,4 +29,4 @@ private:
     pid_t pid_ = -1;
 };
 
-} // namespace babble
+}

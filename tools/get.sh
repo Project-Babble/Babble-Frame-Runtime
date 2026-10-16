@@ -17,8 +17,7 @@
 # dashboard. BABBLE_REPO and BABBLE_API_URL override where releases come from.
 set -euo pipefail
 
-# Everything runs from main(), called on the last line, so a download cut short
-# never runs half a script.
+# The last line calls main(), so that an incomplete download does not run part of the script.
 main() {
   local repo="${BABBLE_REPO:-Project-Babble/Babble-Frame-Runtime}"
   local api="${BABBLE_API_URL:-https://api.github.com/repos/${repo}/releases?per_page=30}"
@@ -41,7 +40,7 @@ main() {
     command -v "$tool" >/dev/null || { echo "$tool is missing; this needs SteamOS on the Steam Frame." >&2; return 1; }
   done
 
-  # Global, not local: the EXIT trap runs after main has returned.
+  # This variable must be global because the EXIT trap runs after main returns.
   tmp="$(mktemp -d "${TMPDIR:-/tmp}/babble-get.XXXXXX")"
   trap 'rm -rf "$tmp"' EXIT
 
@@ -49,7 +48,7 @@ main() {
   curl -fsSL -A babble-get "$api" -o "$tmp/releases.json" ||
     { echo "Couldn't reach GitHub ($api). Check the headset's network and try again." >&2; return 1; }
 
-  # The release to install, as "tag<TAB>tarball url<TAB>sha256 url<TAB>tarball name".
+  # Find the release to install as tab-separated tag, tarball URL, sha256 URL and tarball name.
   local pick
   pick="$(python3 -I - "$tmp/releases.json" "$want" "$prerelease" <<'PY'
 import json, re, sys

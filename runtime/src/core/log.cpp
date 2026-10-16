@@ -19,36 +19,36 @@ namespace babble::log {
 
 namespace {
 
-// Modules: a fixed table, so a level check is an array read.
+// The modules are in a fixed table so that a level check is an array read.
 constexpr int kMaxModules = 96;
 struct ModuleSlot {
     char name[32] = {0};
-    std::atomic<int> level{-1};   // -1: the default level
+    std::atomic<int> level{-1};   // The value -1 means the default level.
 };
 
 struct State {
-    std::mutex mutex;              // output, repeats, the ring, registration
+    std::mutex mutex;              // This protects the output, the repeats, the ring and the registration.
     std::atomic<Level> level{Level::Info};
     std::atomic<uint64_t> verbose_until{0};
     std::array<ModuleSlot, kMaxModules> modules;
     std::atomic<int> module_count{0};
-    std::map<std::string, Level, std::less<>> pending;   // levels for modules not registered yet
+    std::map<std::string, Level, std::less<>> pending;   // The levels for modules that are not registered yet.
     RotatingFile file;
     bool file_open = false;
     std::atomic<bool> mirror{isatty(2) == 1};
-    // Repeated identical lines collapse into one "repeated N times" line.
+    // Identical lines that repeat become one "repeated N times" line.
     std::string last_key;
     const char *last_module = "";
     Level last_level = Level::Info;
     unsigned long long repeats = 0;
-    // The last lines, fixed-size so the crash handler can read them without locking.
+    // The last lines have a fixed size so that the crash handler can read them without a lock.
     static constexpr int kRing = 256, kRingLine = 400;
     char ring[kRing][kRingLine] = {{0}};
     std::atomic<unsigned> ring_next{0};
 };
 
 State &st() {
-    static State *s = new State;   // never destroyed: logging works until the very end
+    static State *s = new State;   // Never destroy the state, so that the log works until the end.
     return *s;
 }
 
@@ -82,7 +82,7 @@ int register_module(const char *module) {
         if (!strcmp(s.modules[size_t(i)].name, module))
             return i;
     if (n >= kMaxModules)
-        return -1;   // table full: such a module uses the default level
+        return -1;   // The table is full, so this module uses the default level.
     ModuleSlot &slot = s.modules[size_t(n)];
     snprintf(slot.name, sizeof(slot.name), "%s", module);
     if (auto it = s.pending.find(std::string_view(module)); it != s.pending.end())
@@ -91,7 +91,7 @@ int register_module(const char *module) {
     return n;
 }
 
-// Called with the mutex held.
+// Call this only with the mutex held.
 void emit(State &s, const char *line, size_t len) {
     if (s.file_open)
         s.file.write(std::string_view(line, len));
@@ -118,7 +118,7 @@ void write_line(const char *module, Level lvl, const char *fmt, va_list args) {
 
     State &s = st();
     std::lock_guard lock(s.mutex);
-    // The same line again (same module, level, text): count it instead.
+    // Count a line again if it has the same module, level and text.
     std::string key = std::string(module) + '\x1f' + level_char(lvl) + '\x1f' + msg;
     if (key == s.last_key) {
         s.repeats++;
@@ -140,7 +140,7 @@ void write_line(const char *module, Level lvl, const char *fmt, va_list args) {
     emit(s, line, size_t(std::min(n, int(sizeof(line)) - 1)));
 }
 
-} // namespace
+}
 
 void set_level(Level level) { st().level.store(level, std::memory_order_relaxed); }
 Level level() { return st().level.load(std::memory_order_relaxed); }
@@ -341,4 +341,4 @@ void RotatingFile::write(std::string_view text) {
         rotate();
 }
 
-} // namespace babble::log
+}

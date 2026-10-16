@@ -1,5 +1,5 @@
-// PipelineBase's hold rule: headset off / feed off publish neutral values once,
-// and nothing the pipeline thread finishes afterwards may overwrite them.
+// When the headset or the feed is off, PipelineBase publishes neutral values one time, and later
+// frames must not overwrite them.
 #include <doctest/doctest.h>
 
 #include "core/clock.h"
@@ -25,7 +25,7 @@ struct ProbePipeline : PipelineBase {
     void process(const StereoFrame &) override {}
     std::vector<std::pair<SignalId, Signal>> neutral(uint64_t now) const override { return {{id, {0.0f, 0.0f, now}}}; }
     void reset_session() override { resets++; }
-    // What process() does at the end of a frame.
+    // Does what process() does at the end of a frame.
     void emit(float v) {
         std::pair<SignalId, Signal> u{id, Signal{v, 1.0f, mono_ns()}};
         publish(std::span(&u, 1));
@@ -34,7 +34,7 @@ struct ProbePipeline : PipelineBase {
     int resets = 0;
 };
 
-} // namespace
+}
 
 TEST_CASE("a held pipeline publishes neutral values once and drops frames until released") {
     const nlohmann::json threads = nlohmann::json::object();
@@ -49,22 +49,22 @@ TEST_CASE("a held pipeline publishes neutral values once and drops frames until 
     p.emit(0.7f);
     CHECK(jaw() == doctest::Approx(0.7f));
 
-    p.on_presence(false);   // headset off: neutral, reset
+    p.on_presence(false);   // The headset is off, so the values are neutral and the pipeline resets.
     CHECK(jaw() == 0.0f);
     CHECK(p.resets == 1);
-    p.emit(0.9f);           // a frame that was in flight: dropped
+    p.emit(0.9f);           // The pipeline drops a frame that was in flight.
     CHECK(jaw() == 0.0f);
 
-    p.set_tracking(false);  // the feed goes off too: neutral again, no harm
-    p.on_presence(true);    // headset back on, but the feed is still off
+    p.set_tracking(false);  // The feed also goes off, so the values are neutral again with no problem.
+    p.on_presence(true);    // The headset is on again, but the feed is still off.
     p.emit(0.5f);
     CHECK(jaw() == 0.0f);
 
-    p.set_tracking(true);   // nothing holds it any more
+    p.set_tracking(true);   // Nothing holds the values now.
     p.emit(0.4f);
     CHECK(jaw() == doctest::Approx(0.4f));
 
-    p.on_presence(true);    // already worn: no change, no reset
+    p.on_presence(true);    // The headset is already worn, so there is no change and no reset.
     CHECK(p.resets == 2);
 }
 
@@ -88,7 +88,7 @@ TEST_CASE("mouth preprocessing takes frames larger than the default 400x400") {
     };
     StereoFrame sf{frame(), frame(), 0, 0};
     std::vector<float> v0(224 * 224), v1(224 * 224);
-    p.prepare(sf, v0.data(), v1.data());   // used to write past its 400x400 scratch buffers
+    p.prepare(sf, v0.data(), v1.data());   // The prepare() call must not write past its 400x400 scratch buffers.
     CHECK(v0[0] >= 0.0f);
     CHECK(v1[224 * 224 - 1] <= 1.0f);
 }

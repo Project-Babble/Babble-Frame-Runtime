@@ -8,16 +8,14 @@
 
 namespace babble {
 
-// Observe-only view of the Babble camera arbiter installed under
-// /etc/babble-camera (one-time root install). The runtime never routes
-// streams, loads modules or restarts SteamVR; it only reads state and waits.
+// The state of the Babble camera arbiter in /etc/babble-camera, which the runtime only reads and never changes.
 enum class ArbiterState {
-    DriverMissing,             // installer never ran
-    VersionTooOld,             // installed arbiter older than this runtime supports
-    ModulesMissingForKernel,   // OS update, modules not rebuilt yet
-    BoardAbsent,               // modules present but the arbiter did not claim the port
-    Unrouted,                  // driver owns the port but streams are not routed (or FPGA not in VCINT)
-    Routed,                    // cameras ready to open
+    DriverMissing,             // The installer did not run.
+    VersionTooOld,             // The installed arbiter is older than this runtime supports.
+    ModulesMissingForKernel,   // The OS was updated and the modules are not rebuilt yet.
+    BoardAbsent,               // The modules are present but the arbiter did not claim the port.
+    Unrouted,                  // The driver owns the port but the streams or the FPGA mode are not ready.
+    Routed,                    // The cameras are ready to open.
 };
 
 const char *to_string(ArbiterState s);
@@ -28,7 +26,7 @@ public:
 
     ArbiterState poll();
     ArbiterState state() const { return state_; }
-    // One sentence suitable for the UI.
+    // Returns one sentence for the UI.
     std::string describe() const;
     std::optional<int> installed_version() const { return version_; }
 
@@ -46,4 +44,4 @@ private:
     std::string kernel_;
 };
 
-} // namespace babble
+}

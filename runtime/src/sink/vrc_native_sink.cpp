@@ -19,7 +19,7 @@
 
 namespace {
 const babble::log::Logger LOG("vrcnative");
-} // namespace
+}
 
 namespace babble {
 
@@ -27,7 +27,7 @@ namespace vrc_native {
 
 namespace {
 
-// Unified Expressions (VRCFaceTracking.Core/Params/Expressions/UnifiedExpressions.cs).
+// The Unified Expressions shapes of VRCFaceTracking, in enum order.
 enum Shape : uint8_t {
     EyeSquintRight, EyeSquintLeft, EyeWideRight, EyeWideLeft, BrowPinchRight, BrowPinchLeft, BrowLowererRight,
     BrowLowererLeft, BrowInnerUpRight, BrowInnerUpLeft, BrowOuterUpRight, BrowOuterUpLeft, NasalDilationRight,
@@ -108,10 +108,10 @@ const std::map<std::string_view, std::vector<uint8_t>> &shape_table() {
     return t;
 }
 
-// VRCFT: (byte)(Math.Clamp(v, 0f, 1f) * 255), a truncating cast.
+// Clamp and truncate the value the same way as VRCFT.
 uint8_t to_byte(float v) { return uint8_t(std::clamp(v, 0.0f, 1.0f) * 255.0f); }
 
-} // namespace
+}
 
 Target target_of(std::string_view signal) {
     Target t;
@@ -166,10 +166,7 @@ Blob encode(const std::vector<Target> &targets, const std::vector<std::optional<
 }
 
 std::optional<std::string> streaming_pc(std::string_view text) {
-    // Each vrlink session logs its PC's addresses once, the chosen one marked:
-    //   ... [Info] - UDPServerAddresses:
-    //   ... [Info] - \t192.168.0.149
-    //   ... [Info] - \t10.35.78.25 *
+    // Each vrlink session logs the PC addresses once, and a '*' marks the address that it uses.
     auto ipv4 = [](std::string_view s) -> std::optional<std::string> {
         const size_t a = s.find_first_of("0123456789");
         if (a == std::string_view::npos)
@@ -183,7 +180,7 @@ std::optional<std::string> streaming_pc(std::string_view text) {
         const size_t end = text.find('\n', pos);
         return text.substr(pos, end == std::string_view::npos ? std::string_view::npos : end - pos);
     };
-    // The message part of a log line (after "] - ").
+    // Returns the message part of a log line, after "] - ".
     auto message = [](std::string_view line) {
         const size_t m = line.find("] - ");
         return m == std::string_view::npos ? line : line.substr(m + 4);
@@ -196,14 +193,14 @@ std::optional<std::string> streaming_pc(std::string_view text) {
             pos++;
             const std::string_view msg = message(line_at(pos));
             if (msg.empty() || msg.front() != '\t')
-                break;   // past the list
+                break;   // This line is after the end of the list.
             if (msg.find('*') != std::string_view::npos)
                 if (auto ip = ipv4(msg))
                     return ip;
             pos = text.find('\n', pos);
         }
     }
-    // No marked entry: the peer of the latest link transfer.
+    // If no entry has a mark, use the peer of the latest SetPeer line.
     const size_t peer = text.rfind("SetPeer ");
     if (peer != std::string_view::npos) {
         const std::string_view line = line_at(peer);
@@ -223,7 +220,7 @@ std::optional<int> session_pid(std::string_view text) {
     return pid > 0 ? std::optional(pid) : std::nullopt;
 }
 
-} // namespace vrc_native
+}
 
 namespace {
 
@@ -232,7 +229,7 @@ std::filesystem::path default_log_path() {
     return std::filesystem::path(home && *home ? home : "/home/steamos") / ".local/share/Steam/logs/vrlink.txt";
 }
 
-} // namespace
+}
 
 VrcNativeSink::VrcNativeSink(const nlohmann::json &cfg, SinkDeps deps)
     : name_(deps.name), thread_spec_(thread_spec(deps.threads, cfg.value("thread", "osc"), "bbl-vrcnat")),
@@ -300,7 +297,7 @@ std::optional<std::string> VrcNativeSink::live_pc() {
     const auto mtime = std::filesystem::last_write_time(log_path_, ec);
     const auto size = ec ? 0 : std::filesystem::file_size(log_path_, ec);
     if (ec)
-        return std::nullopt;   // no Steam Link log: never streamed
+        return std::nullopt;   // If there is no Steam Link log, the headset never streamed.
     if (mtime != log_mtime_ || size != log_size_) {
         log_mtime_ = mtime;
         log_size_ = size;
@@ -310,7 +307,7 @@ std::optional<std::string> VrcNativeSink::live_pc() {
         log_pc_ = vrc_native::streaming_pc(text.str());
         log_pid_ = vrc_native::session_pid(text.str());
     }
-    // Live: the session's vrlink process still runs.
+    // The session is live if its vrlink process still runs.
     if (!log_pc_ || !log_pid_)
         return std::nullopt;
     std::ifstream cmd("/proc/" + std::to_string(*log_pid_) + "/cmdline");
@@ -335,7 +332,7 @@ bool VrcNativeSink::refresh_destination(uint64_t now) {
         ip = *pc;
         kind = "pc";
     } else if (target_ == "auto") {
-        ip = "127.0.0.1";   // not streaming: VRChat runs on the Frame
+        ip = "127.0.0.1";   // When the headset does not stream, VRChat runs on the Frame.
         kind = "frame";
     } else {
         if (have_dest_ || dest_ip_ != "?")
@@ -413,4 +410,4 @@ void VrcNativeSink::run() {
     }
 }
 
-} // namespace babble
+}

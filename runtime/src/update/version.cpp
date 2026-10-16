@@ -16,7 +16,7 @@ std::optional<int> number(const std::string &s) {
             return std::nullopt;
     return std::stoi(s);
 }
-} // namespace
+}
 
 std::string Version::tag() const {
     std::string t = "V" + std::to_string(major) + "." + std::to_string(minor) + "-" + kStages[stage];
@@ -24,7 +24,7 @@ std::string Version::tag() const {
 }
 
 std::optional<Version> parse_version(std::string_view text) {
-    // Words split on spaces or hyphens: "V1.0", stage, [N].
+    // Split the text into words at spaces and hyphens.
     std::vector<std::string> words;
     std::string w;
     for (char c : text) {
@@ -66,4 +66,4 @@ std::optional<Version> parse_version(std::string_view text) {
     return v;
 }
 
-} // namespace babble::update
+}

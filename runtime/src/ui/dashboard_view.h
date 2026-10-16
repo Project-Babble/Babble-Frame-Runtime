@@ -19,78 +19,71 @@ namespace babble::ui {
 
 enum class Health { Off, Starting, Paused, Working, Fault };
 
-// The front page's feeds, in order: config source names. The mouth feed's
-// actual source can differ (a USB tracker, source "face"): main passes its
-// status and the setting its switch flips (Dashboard::Options).
+// The config source names of the feeds on the front page, in order.
 inline constexpr const char *kFeedSources[2] = {"mouth", "eye"};
 
-// One camera feed (mouth, eyes) as the front page shows it.
+// The status of one camera feed as the front page shows it.
 struct FeedStatus {
     Health health = Health::Off;
-    double hz = 0;           // tracking rate while Working
-    std::string detail;      // the error for Fault
-    bool available = false;  // configured; false hides the on/off switch
-    bool tracking = true;    // the user's on/off
+    double hz = 0;           // The tracking rate in the Working state.
+    std::string detail;      // The error for the Fault state.
+    bool available = false;  // False hides the on/off switch.
+    bool tracking = true;    // The on/off setting of the user.
 };
 
-// The helper app the front page can start (the tracking visualizer).
+// The state of the tracking visualizer app that the front page can start.
 enum class AppState { Unavailable, Stopped, Running };
 
-// One eye as the runtime outputs it (the wearer's eye, not mirrored).
+// The output for one eye of the wearer, without a mirror effect.
 struct EyeReading {
-    bool gaze = false, lid = false;   // false = no recent value
-    double yaw_deg = 0, pitch_deg = 0;   // +right, +up
-    double openness = 0;                 // the Lid output, 0..1
-    double widen = 0;                    // the Widen output, 0..1
-    bool raw = false;                    // raw_lid is recent
-    double raw_lid = 0;                  // the lid value before calibration (model or native)
-    bool cal = false;                    // neutral/wide_raw are recent (baseline calibration running)
-    double neutral = 0, wide_raw = 0;    // the calibration's neutral and wide ceiling, raw units
-    bool dilation_ok = false;            // no Dilation until the pupil baseline exists
-    double dilation = 0;                 // the Dilation output, 0..1 (0.5 = the person's baseline)
+    bool gaze = false, lid = false;   // False means that there is no recent value.
+    double yaw_deg = 0, pitch_deg = 0;   // Positive values are right and up.
+    double openness = 0;                 // The Lid output, from 0 to 1.
+    double widen = 0;                    // The Widen output, from 0 to 1.
+    bool raw = false;                    // True if raw_lid is recent.
+    double raw_lid = 0;                  // The lid value before calibration.
+    bool cal = false;                    // True if neutral and wide_raw are recent.
+    double neutral = 0, wide_raw = 0;    // The neutral and wide ceiling of the calibration, in raw units.
+    bool dilation_ok = false;            // False until the pupil baseline exists.
+    double dilation = 0;                 // The Dilation output, from 0 to 1, where 0.5 is the baseline.
 };
 
-// The output, for the front page's status line: the PC link
-// (sink/link_sink.h), or with native set, VRChat's native face tracking
-// (sink/vrc_native_sink.h; path is where VRChat runs: "pc" or "frame",
-// linked while blobs are going out).
+// The status of the output for the front page, which is the PC link or VRChat native face tracking.
 struct LinkReading {
-    bool available = false;   // an output is running; false hides the line
+    bool available = false;   // False hides the line because no output runs.
     bool linked = false;
     std::string path, pc, address;
-    double rtt_ms = -1;       // -1: not measured yet
+    double rtt_ms = -1;       // The value is -1 until the first measurement.
     bool native = false;
-    bool no_data = false;     // linked, but the PC reports none of our data arriving
+    bool no_data = false;     // True if the PC is linked but gets none of our data.
 };
 
-// A USB camera the mouth can use (the settings page's camera list).
+// A USB camera that the mouth can use.
 struct UsbCamera {
-    std::string id;       // usb::device_id(), the setting's value
-    std::string label;    // "ETVR openiristracker"
-    std::string detail;   // "303a:8000 · serial 28372F18F94C"
+    std::string id;       // The value of usb::device_id(), which is also the setting value.
+    std::string label;
+    std::string detail;   // The USB ID and serial number.
 };
 
-// The dataset capture app's row on the Diagnostics page: an optional add-on
-// the runtime installs, launches and records for.
+// The row on the Diagnostics page for the optional dataset capture app.
 struct CaptureRow {
     enum class State { Hidden, Checking, NotInstalled, Downloading, Installing, Installed, UpdateAvailable, Running, Failed };
     State state = State::Hidden;
     std::string version{}, latest{}, detail{};
-    float progress = 0;           // downloading, 0..1
+    float progress = 0;           // The download progress, from 0 to 1.
     bool recording = false;
     int uploads_pending = 0;
-    float upload_progress = 0;    // of the active stage, 0..1
-    std::string upload_stage{};   // packaging | encrypting | uploading
+    float upload_progress = 0;    // The progress of the active stage, from 0 to 1.
+    std::string upload_stage{};   // The stage is packaging, encrypting or uploading.
     bool operator==(const CaptureRow &) const = default;
 };
 
-// A runtime update (one-off installs only), shown as a pill beside the version
-// on the front page: offered, downloading, needing a SteamVR restart, or failed.
+// A runtime update that the front page shows as a pill next to the version.
 struct UpdateNotice {
     enum class State { Hidden, Available, Downloading, Installing, RestartNeeded, Failed };
     State state = State::Hidden;
-    std::string version{}, detail{};   // the update's version; the failure
-    float progress = 0;                // downloading, 0..1
+    std::string version{}, detail{};   // The detail is the failure message.
+    float progress = 0;                // The download progress, from 0 to 1.
     bool operator==(const UpdateNotice &) const = default;
 };
 
@@ -98,85 +91,75 @@ struct Status {
     bool steamvr = false;
     Worn worn = Worn::Unknown;
     FeedStatus mouth, eye;
-    AppState visualizer = AppState::Unavailable;   // Unavailable hides the button
-    std::array<EyeReading, 2> eyes{};              // [0] left, [1] right; the eye panel
+    AppState visualizer = AppState::Unavailable;   // Unavailable hides the button.
+    std::array<EyeReading, 2> eyes{};              // Index 0 is the left eye and index 1 is the right eye.
     LinkReading link{};
-    // Where the mouth comes from ("frunk" or "usb"), and for USB the camera
-    // list (from the last refresh), the setting ("" = automatic) and the one streaming.
+    // The mouth source is "frunk" or "usb", and camera "" means automatic.
     std::string mouth_source = "frunk";
-    bool mouth_source_selectable = true;   // false: the USB camera is the only mouth; no Frunk/USB row
+    bool mouth_source_selectable = true;   // False hides the Frunk/USB row because the USB camera is the only mouth.
     std::vector<UsbCamera> cameras{};
     std::string camera{}, active_camera{};
-    // Diagnostics page: verbose logging (minutes left, 0 = off), the last
-    // diagnostics file written, and where the log files are.
+    // The data for the Diagnostics page, where verbose_minutes_left is 0 if verbose logging is off.
     int verbose_minutes_left = 0;
     std::string last_diagnostics{}, log_file{}, stats_file{};
-    // Live hints that replace a setting row's fixed hint, by setting id (the
-    // eye rate row shows the rate its share of the camera rate works out to).
+    // Live hints by setting id that replace the fixed hint of a setting row.
     std::map<std::string, std::string> choice_hints{};
     CaptureRow capture{};
     UpdateNotice update{};
 };
 
-// A user-facing setting shown as a row of choices, or as a switch for an
-// on/off setting (boolean: value 0 or 1). id is the setting's JSON pointer in
-// the config ("/sources/mouth/process_fps"). Rows go on the Settings page, or
-// with diagnostics set, on the Diagnostics page (testing switches).
+// A user setting that shows as a row of choices or as a switch, where id is its JSON pointer in the config.
 struct Choice {
     std::string id, label, hint, unit;
     std::vector<double> options;
     double value = 0;
     bool boolean = false;
     bool diagnostics = false;
-    std::vector<std::string> option_labels{};   // shown instead of value + unit when set (one per option)
+    std::vector<std::string> option_labels{};   // If set, one label for each option replaces the value and unit.
 };
 
 struct Point {
     float x = 0, y = 0;
 };
 
-// The optional debug dashboard, drawn on the CPU: readings, tracking controls,
-// settings, camera selection and diagnostics. No OpenVR here, so it renders
-// anywhere (tests, PNGs). Tracking is controlled separately by the runtime.
+// The optional debug dashboard that the CPU draws, without OpenVR so that tests can render it.
 class DashboardView {
 public:
     static constexpr int kWidth = 1200, kHeight = 750, kThumb = 128;
     enum class Page { Home, Settings, Cameras, Diagnostics };
 
-    bool load_fonts(const std::filesystem::path &dir);   // NotoSans-Regular.ttf, NotoSans-Medium.ttf
-    bool load_icons(const std::filesystem::path &dir);   // bfr_logo_48.png, bfr_logo_128.png (optional)
+    bool load_fonts(const std::filesystem::path &dir);   // Loads NotoSans-Regular.ttf and NotoSans-Medium.ttf.
+    bool load_icons(const std::filesystem::path &dir);   // Loads the optional logo PNG files.
 
-    // Draws the current page; pointer (canvas pixels, top-left origin) drives hover.
+    // Draws the current page, with hover effects at pointer in canvas pixels from the top left.
     void render(Canvas &c, const Status &status, const std::vector<Choice> &choices, std::optional<Point> pointer);
     void render_thumbnail(Canvas &c);
 
     struct ClickResult {
         bool redraw = false;
-        std::optional<std::pair<size_t, double>> setting;   // (choice index, new value)
-        std::optional<std::pair<size_t, bool>> toggle;      // (feed index, tracking on)
-        bool visualizer = false;                            // start/stop the visualizer
-        bool restart = false;                               // restart the runtime (confirmed)
-        std::optional<std::string> mouth_source;            // "frunk" or "usb"
-        std::optional<std::string> camera;                  // a UsbCamera id, "" = automatic
-        bool refresh_cameras = false;                       // list the USB cameras again
-        std::optional<bool> verbose;                        // verbose logging on (for a while) / off
-        bool write_diagnostics = false;                     // write a diagnostics file now
-        bool opened_diagnostics = false;                    // the Diagnostics page was opened
-        // The dataset capture row: its main button (install / update / launch /
-        // stop / cancel / retry, by state) or Remove.
+        std::optional<std::pair<size_t, double>> setting;   // The choice index and the new value.
+        std::optional<std::pair<size_t, bool>> toggle;      // The feed index and the tracking on/off value.
+        bool visualizer = false;                            // Start or stop the visualizer.
+        bool restart = false;                               // Restart the runtime after confirmation.
+        std::optional<std::string> mouth_source;            // The value is "frunk" or "usb".
+        std::optional<std::string> camera;                  // A UsbCamera id, or "" for automatic.
+        bool refresh_cameras = false;
+        std::optional<bool> verbose;                        // Turn verbose logging on for a time or off.
+        bool write_diagnostics = false;
+        bool opened_diagnostics = false;
+        // The button that the user clicked on the dataset capture row.
         enum class CaptureAction { None, Primary, Remove } capture = CaptureAction::None;
-        // The update pill: install / cancel / retry, or (confirmed) restart SteamVR, by state.
+        // True if the user clicked the update pill, and the update state sets what the click does.
         bool update = false;
     };
-    // Hit-tests against the last render.
+    // Finds the element at p in the last render.
     ClickResult click(Point p);
-    // Which clickable element the pointer is over (-1: none), per the last
-    // render. Hover highlights only change when this does.
+    // Returns the clickable element under the pointer in the last render, or -1 for none.
     int hit_at(std::optional<Point> p) const;
 
-    // The restart button needs a second click within 3 s; true while it waits for it.
+    // Returns true while the restart button waits for a second click, which must come in less than 3 s.
     bool restart_armed(uint64_t now_ns) const { return now_ns < restart_armed_until_ns_; }
-    // Restarting SteamVR for an update needs a second click within 3 s too.
+    // Returns true while the update pill waits for a second click to restart SteamVR.
     bool update_armed(uint64_t now_ns) const { return now_ns < update_armed_until_ns_; }
 
     Page page() const { return page_; }
@@ -189,9 +172,9 @@ private:
             OpenDiagnostics, Verbose, WriteDiagnostics, CapturePrimary, CaptureRemove, Update
         } kind;
         Rect rect;
-        size_t choice = 0;   // Option: choice index; Toggle: feed index
-        double value = 0;    // Option: value; Toggle: 1 = turn on
-        std::string text{};  // MouthSource: the value; Camera: the id ("" = automatic)
+        size_t choice = 0;   // The choice index for Option, or the feed index for Toggle.
+        double value = 0;    // The value for Option, or 1 to turn on for Toggle.
+        std::string text{};  // The value for MouthSource, or the camera id for Camera.
     };
     void render_home(Canvas &c, const Status &s);
     void render_settings(Canvas &c, const std::vector<Choice> &choices, const Status &s);
@@ -201,27 +184,27 @@ private:
     void render_capture_row(Canvas &c, float y, float row_h, const CaptureRow &row);
     void render_update_pill(Canvas &c, float x, float baseline, const UpdateNotice &u);
     Rect render_button(Canvas &c, float right, float y, const std::string &text, bool primary,
-                       bool on_card = false);   // -> its rect
+                       bool on_card = false);   // Returns the rect of the button.
     void render_back(Canvas &c, const char *title);
     float render_segments(Canvas &c, float right, float y, const std::vector<std::string> &labels, int selected,
-                          const std::function<void(size_t, const Rect &)> &hit);   // -> the control's left edge
+                          const std::function<void(size_t, const Rect &)> &hit);   // Returns the left edge.
     void render_cog(Canvas &c);
     void render_switch(Canvas &c, Rect r, bool on, bool hover,
-                       std::optional<Color> on_color = std::nullopt);   // on_color: in place of the accent
-    float render_visualizer_button(Canvas &c, AppState state);   // -> its left edge
+                       std::optional<Color> on_color = std::nullopt);   // on_color replaces the accent colour.
+    float render_visualizer_button(Canvas &c, AppState state);   // Returns the left edge.
     void render_restart_button(Canvas &c);
     void render_link(Canvas &c, const LinkReading &link, float right);
     void render_eye(Canvas &c, float x, float y, const char *name, const EyeReading &e);
     enum class Icon { Mouth, Eye, Rate, Camera, Logs, Document, Settings, Home, Capture, Count };
     void render_icon(Canvas &c, Icon icon, float x, float y, Color color);
-    float render_block(Canvas &c, float y, Icon icon, float row_h = 124);   // a row's card -> text's left edge
+    float render_block(Canvas &c, float y, Icon icon, float row_h = 124);   // Returns the left edge of the text.
     bool hovered(const Rect &r) const;
-    // Text shortened with an ellipsis to fit max_w.
+    // Returns the text with an ellipsis so that it fits in max_w.
     std::string fit(const Font &f, const std::string &text, float px, float max_w) const;
 
     Page page_ = Page::Home;
-    uint64_t restart_armed_until_ns_ = 0;   // the restart button's confirmation window
-    uint64_t update_armed_until_ns_ = 0;    // the update pill's, when it restarts SteamVR
+    uint64_t restart_armed_until_ns_ = 0;   // The end of the confirmation time for the restart button.
+    uint64_t update_armed_until_ns_ = 0;    // The end of the confirmation time for the update pill.
     Font regular_, medium_;
     std::optional<Image> logo_small_, logo_thumb_;
     std::array<std::optional<Image>, size_t(Icon::Count)> icons_{};
@@ -229,4 +212,4 @@ private:
     std::optional<Point> pointer_;
 };
 
-} // namespace babble::ui
+}

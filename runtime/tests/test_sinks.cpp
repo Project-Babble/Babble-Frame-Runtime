@@ -23,7 +23,7 @@ TEST_CASE("the sink registry builds known types and rejects unknown ones") {
 
     auto dbg = make_sink(json{{"type", "debug"}}, SinkDeps{"debug", threads, state, stats});
     REQUIRE(dbg);
-    CHECK_FALSE(dbg->wants_frames());   // no dump_dir configured
+    CHECK_FALSE(dbg->wants_frames());   // No dump_dir is configured.
     CHECK(dbg->start());
     dbg->stop();
 
@@ -54,24 +54,24 @@ TEST_CASE("ExpressionState wakes waiting outputs on update") {
     auto snap = state.snapshot();
     CHECK(snap.signals[jaw].value == doctest::Approx(0.5f));
 
-    // No update: returns on timeout with the same sequence.
+    // Without an update, the wait returns on timeout with the same sequence.
     CHECK(state.wait_update(now_seq, std::chrono::milliseconds(10)) == now_seq);
 }
 
 TEST_CASE("OSC float messages are encoded per the OSC 1.0 spec") {
     uint8_t buf[64];
-    // "/jawOpen" is 8 chars -> 8 + NUL, padded to 12; ",f" padded to 4; float 0.5 = 0x3f000000 big-endian.
+    // The 8 chars of "/jawOpen" and a NUL pad to 12, ",f" pads to 4, and float 0.5 is 0x3f000000 big-endian.
     size_t n = osc::encode_float("/jawOpen", 0.5f, buf, sizeof(buf));
     REQUIRE(n == 20);
     const uint8_t expect[20] = {'/', 'j', 'a', 'w', 'O', 'p', 'e', 'n', 0, 0, 0, 0, ',', 'f', 0, 0, 0x3f, 0, 0, 0};
     CHECK(memcmp(buf, expect, 20) == 0);
-    // 3 chars -> 4 bytes exactly with its NUL.
+    // Three chars and a NUL make exactly 4 bytes.
     CHECK(osc::encode_float("/ab", 1.0f, buf, sizeof(buf)) == 12);
     CHECK(osc::encode_float("/too-long-for-the-buffer", 1.0f, buf, 8) == 0);
 }
 
 TEST_CASE("the osc module sends changed signals to its UDP target") {
-    // Receiver on an ephemeral loopback port.
+    // Make a receiver on an ephemeral loopback port.
     int rx = socket(AF_INET, SOCK_DGRAM, 0);
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
@@ -86,8 +86,8 @@ TEST_CASE("the osc module sends changed signals to its UDP target") {
     ExpressionState state;
     StatsRegistry stats;
     SignalId jaw = state.add_signal("jawOpen");
-    state.add_signal("tongueOut");   // never updated: must not be sent
-    SignalId internal = state.add_signal("_LeftEyeLidRaw");   // internal: never sent
+    state.add_signal("tongueOut");   // The sink must not send a signal that never got an update.
+    SignalId internal = state.add_signal("_LeftEyeLidRaw");   // The sink never sends an internal signal.
     auto sink = make_sink(json{{"type", "osc"}, {"port", ntohs(addr.sin_port)}, {"prefix", "/babble"}},
                           SinkDeps{"osc", threads, state, stats});
     REQUIRE(sink);
@@ -101,7 +101,7 @@ TEST_CASE("the osc module sends changed signals to its UDP target") {
     timeval short_tv{0, 300000};
     setsockopt(rx, SOL_SOCKET, SO_RCVTIMEO, &short_tv, sizeof(short_tv));
     uint8_t extra[256];
-    const ssize_t more = recv(rx, extra, sizeof(extra), 0);   // the internal signal must not follow
+    const ssize_t more = recv(rx, extra, sizeof(extra), 0);   // The internal signal must not follow.
     sink->stop();
     close(rx);
     CHECK(more < 0);

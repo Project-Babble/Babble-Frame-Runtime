@@ -49,16 +49,16 @@ std::string slurp(const fs::path &p) {
     return std::string(std::istreambuf_iterator<char>(f), {});
 }
 
-} // namespace
+}
 
 TEST_CASE("github releases: the newest complete, allowed release wins") {
     const std::string tar3 = "babble-dataset-capture-0.3.0-linuxarm64.tar.gz";
     const std::string tar2 = "babble-dataset-capture-0.2.0-linuxarm64.tar.gz";
     const std::string tar1 = "babble-dataset-capture-0.1.0-linuxarm64.tar.gz";
     json api = json::array({
-        release("v0.4.0", true, false, {"x.tar.gz"}),                                         // draft
-        release("v0.3.0", false, true, {tar3, tar3 + ".sha256", "manifest.json"}),            // prerelease
-        release("v0.2.5", false, false, {"babble-dataset-capture-0.2.5-linuxarm64.tar.gz"}),  // incomplete
+        release("v0.4.0", true, false, {"x.tar.gz"}),                                         // It is a draft.
+        release("v0.3.0", false, true, {tar3, tar3 + ".sha256", "manifest.json"}),            // It is a prerelease.
+        release("v0.2.5", false, false, {"babble-dataset-capture-0.2.5-linuxarm64.tar.gz"}),  // It has missing assets.
         release("v0.2.0", false, false, {tar2, tar2 + ".sha256", "manifest.json"}),
         release("v0.1.0", false, false, {tar1, tar1 + ".sha256", "manifest.json"}),
     });
@@ -95,7 +95,7 @@ TEST_CASE("manifests and checksum files are checked") {
 
 TEST_CASE("app installer: installs a release from file:// URLs, rejects a bad checksum, removes it") {
     if (!Process::find_in_path("curl") || !Process::find_in_path("tar"))
-        return;   // the tools the installer drives
+        return;   // The installer needs curl and tar.
     const fs::path root = fs::temp_directory_path() / ("babble_apps_" + std::to_string(getpid()));
     fs::remove_all(root);
     const fs::path rel = root / "release", app = root / "app";
@@ -119,7 +119,7 @@ TEST_CASE("app installer: installs a release from file:// URLs, rejects a bad ch
     };
     const json cfg = {{"api_url", "file://" + (rel / "releases.json").string()}, {"dir", (root / "installed").string()}};
 
-    publish(std::string(64, '0'));   // wrong digest
+    publish(std::string(64, '0'));   // The digest is wrong.
     {
         AppInstaller bad(cfg, 1, json::object());
         bad.start();
@@ -145,7 +145,7 @@ TEST_CASE("app installer: installs a release from file:// URLs, rejects a bad ch
     CHECK_FALSE(fs::exists(root / "installed.new"));
     CHECK_FALSE(fs::exists(root / "installed.download"));
 
-    // A runtime speaking another protocol doesn't take it.
+    // A runtime that uses a different protocol does not accept it.
     std::string err;
     CHECK_FALSE(AppInstaller::validate_install(root / "installed", 2, &err));
 
@@ -180,7 +180,7 @@ TEST_CASE("uploader: classify and object names") {
 
 namespace {
 
-// A throwaway RSA key pair in dir (priv.pem, pub.pem); false without openssl.
+// Makes a temporary RSA key pair (priv.pem, pub.pem) in dir and returns false if openssl is not available.
 bool make_keys(const fs::path &dir) {
     if (!Process::find_in_path("openssl"))
         return false;
@@ -194,7 +194,7 @@ bool make_keys(const fs::path &dir) {
                         &out, &err, 60000) == 0;
 }
 
-// Opens an envelope the way the ingest does: unwrap the key, then AES-256-CBC.
+// Opens an envelope as the ingest does, with the key unwrap first and then AES-256-CBC.
 std::string open_envelope(const fs::path &obj, const fs::path &priv, const fs::path &work) {
     const std::string b = slurp(obj);
     REQUIRE(b.size() > 20);
@@ -222,7 +222,7 @@ std::string open_envelope(const fs::path &obj, const fs::path &priv, const fs::p
     return plain;
 }
 
-} // namespace
+}
 
 TEST_CASE("uploader: the envelope opens with the private key") {
     const fs::path dir = fs::temp_directory_path() / ("babble_envelope_" + std::to_string(getpid()));
@@ -268,7 +268,7 @@ TEST_CASE("uploader: package, encrypt and PUT a consented session; resume after 
     auto packager = [&](const fs::path &sdir, const PackagerOptions &o) {
         std::lock_guard<std::mutex> lock(m);
         PackageResult r;
-        if (retry_packaging-- > 0) {   // the encoder was busy
+        if (retry_packaging-- > 0) {   // The encoder is busy.
             r.retry = true;
             r.error = "hardware encoder: busy";
             return r;
@@ -283,7 +283,7 @@ TEST_CASE("uploader: package, encrypt and PUT a consented session; resume after 
     };
     std::vector<Uploader::Http> puts;
     std::string received;
-    int fail_puts = 1;   // the first PUT fails with a 503: retried without packaging again
+    int fail_puts = 1;   // The first PUT fails with a 503, and the retry does not package the capture again.
     auto transport = [&](const Uploader::Http &r, const Uploader::Progress &progress) {
         std::lock_guard<std::mutex> lock(m);
         puts.push_back(r);
@@ -302,19 +302,18 @@ TEST_CASE("uploader: package, encrypt and PUT a consented session; resume after 
                       {"access_key", "AK"},                       {"secret_key", "S\"K"},     {"qp", 18},
                       {"public_key", slurp(keys / "pub.pem")}};
     Uploader none({{"endpoint", "http://x"}}, caps, json::object(), [] { return false; });
-    CHECK_FALSE(none.available());   // no keys
+    CHECK_FALSE(none.available());   // The uploader has no keys.
     CHECK(none.queue("s1").code == "unavailable");
 
     Uploader up(cfg, caps, json::object(), [] { return false; }, transport, packager);
     CHECK(up.available());
-    CHECK(up.queue("s2").code == "bad_request");   // no consent
+    CHECK(up.queue("s2").code == "bad_request");   // The user did not give consent.
     CHECK(up.queue("../etc").code == "bad_request");
     CHECK(up.queue("nope").code == "bad_request");
     REQUIRE(up.queue("s1").ok);
     up.start();
     auto state = [&] { return json::parse(slurp(caps / "s1" / "upload.json")); };
-    // Each retry waits out a backoff (30 s, then 60): re-queueing clears it.
-    // Wait for each attempt to end (active cleared after its backoff is set).
+    // Wait for each attempt to end, which is when the uploader clears active after it sets the backoff.
     REQUIRE(wait_for([&] {
         std::lock_guard<std::mutex> lock(m);
         return retry_packaging == 0 && up.snapshot().active.empty();
@@ -338,13 +337,13 @@ TEST_CASE("uploader: package, encrypt and PUT a consented session; resume after 
     CHECK(puts[1].url == "http://bucket.test:3900/babbledata/" + object);
     CHECK(puts[1].sigv4 == "aws:amz:garage:s3");
     CHECK(puts[1].credentials == "AK:S\"K");
-    CHECK(puts[0].body_file == puts[1].body_file);   // the same object, encrypted once
+    CHECK(puts[0].body_file == puts[1].body_file);   // The object is encrypted only one time.
     CHECK(received.size() == u["object_bytes"].get<uint64_t>());
     write(caps / "received.bin", received);
     CHECK(open_envelope(caps / "received.bin", keys / "priv.pem", caps) == std::string(5000, 't'));
-    CHECK_FALSE(fs::exists(caps / "s1" / "package.tar.bin"));   // removed once sent
+    CHECK_FALSE(fs::exists(caps / "s1" / "package.tar.bin"));   // The uploader removes the file after the send.
     CHECK(fs::exists(caps / "s1" / "package.tar"));
     CHECK_FALSE(fs::exists(caps / "s1" / ".upload-key.pem"));
-    CHECK(up.queue("s1").code == "bad_request");   // already uploaded
+    CHECK(up.queue("s1").code == "bad_request");   // The capture is already uploaded.
     fs::remove_all(caps);
 }

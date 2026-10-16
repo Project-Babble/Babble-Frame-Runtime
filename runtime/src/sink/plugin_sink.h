@@ -13,18 +13,7 @@
 
 namespace babble {
 
-// Config type "plugin": an output module in a shared library, loaded with
-// dlopen and driven through the C ABI in sdk/include/babble/output_plugin.h.
-//
-// Config:
-//   library   a bare name ("babble_udp_json" -> <exe dir>/plugins/libbabble_udp_json.so)
-//             or a path to the .so
-//   config    object handed to the plugin as JSON text
-//
-// Plugins see the runtime's signals except internal ones (names starting with
-// '_'), under their own ids: 0.. in registration order, stable for the run
-// (pipelines only ever append signals). A library that can't be loaded, or
-// speaks another ABI version, is logged and the module dropped.
+// Config type "plugin" loads an output module from a shared library through the C ABI in babble/output_plugin.h.
 class PluginSink : public ISink {
 public:
     PluginSink(const nlohmann::json &cfg, SinkDeps deps);
@@ -33,11 +22,11 @@ public:
     bool start() override;
     void stop() override;
 
-    // Where a bare library name is looked up.
+    // The directory where the sink looks for a library that has only a name.
     static std::filesystem::path plugin_dir();
 
 private:
-    // Host table callbacks (ctx = this).
+    // The callbacks of the host table, where ctx is this.
     static uint32_t host_signal_count(void *ctx);
     static const char *host_signal_name(void *ctx, uint32_t id);
     static uint64_t host_read(void *ctx, const uint32_t *ids, uint32_t n, float *values, uint64_t *t_ns);
@@ -45,7 +34,7 @@ private:
     static void host_log(void *ctx, int level, const char *message);
     static const char *host_state_dir(void *ctx);
 
-    void refresh_visible();   // caller holds visible_mutex_
+    void refresh_visible();   // The caller must hold visible_mutex_.
 
     std::string name_;
     nlohmann::json cfg_;
@@ -60,9 +49,9 @@ private:
     babble_host_v1 host_{};
 
     std::mutex visible_mutex_;
-    size_t seen_count_ = 0;               // ExpressionState::count() when visible_ was built
-    std::vector<SignalId> visible_;       // plugin id -> runtime signal id
-    std::deque<std::string> names_;       // plugin id -> name (deque: stable c_str() for signal_name)
+    size_t seen_count_ = 0;               // The value of ExpressionState::count() when the sink made visible_.
+    std::vector<SignalId> visible_;       // The runtime signal id for each plugin id.
+    std::deque<std::string> names_;       // A deque keeps each c_str() pointer valid for signal_name.
 };
 
-} // namespace babble
+}

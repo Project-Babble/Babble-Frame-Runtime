@@ -51,4 +51,4 @@ uint64_t ExpressionState::wait_update(uint64_t after_seq, std::chrono::nanosecon
     return seq_;
 }
 
-} // namespace babble
+}

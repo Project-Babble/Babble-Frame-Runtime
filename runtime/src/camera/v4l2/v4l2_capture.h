@@ -12,11 +12,7 @@
 
 namespace babble {
 
-// One V4L2 multiplanar capture node, mmap streaming, zero-copy: dequeued
-// buffers are handed out as FramePtrs and re-queued when the last reference
-// drops. Works for the Frame's CAMSS nodes today and for UVC cameras later
-// (UVC nodes are single-planar; supporting them means a second buffer type,
-// not a new class).
+// One V4L2 multiplanar capture node that gives its buffers as FramePtrs and queues them again after the last release.
 class V4l2Capture : public ICameraSource {
 public:
     struct Params {
@@ -41,8 +37,8 @@ public:
     const Params &params() const { return params_; }
     uint32_t generation() const { return generation_; }
 
-    Counter driver_drops;    // gaps in the driver's sequence numbers
-    Counter error_buffers;   // buffers flagged V4L2_BUF_FLAG_ERROR
+    Counter driver_drops;    // The number of gaps in the sequence numbers of the driver.
+    Counter error_buffers;   // The number of buffers with V4L2_BUF_FLAG_ERROR.
     RateStat frames;
 
 private:
@@ -59,7 +55,7 @@ private:
     size_t frame_bytes_ = 0;
     uint32_t generation_ = 0;
     std::shared_ptr<FramePool> pool_;
-    // Shared with the pool's release callback, which may run after stop().
+    // The release callback of the pool also uses this, and it can run after stop().
     std::shared_ptr<std::atomic<uint64_t>> released_;
     uint32_t queued_ = 0;
     bool streaming_ = false;
@@ -75,4 +71,4 @@ private:
     std::string error_;
 };
 
-} // namespace babble
+}

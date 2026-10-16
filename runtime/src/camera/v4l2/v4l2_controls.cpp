@@ -14,7 +14,7 @@
 
 namespace {
 const babble::log::Logger LOG("v4l2");
-} // namespace
+}
 
 namespace babble {
 
@@ -28,7 +28,7 @@ int xioctl(int fd, unsigned long req, void *arg) {
     return r;
 }
 
-} // namespace
+}
 
 V4l2Controls::~V4l2Controls() { close(); }
 
@@ -156,4 +156,4 @@ bool V4l2Controls::set_many(const std::vector<std::pair<std::string, int64_t>> &
     return ok;
 }
 
-} // namespace babble
+}

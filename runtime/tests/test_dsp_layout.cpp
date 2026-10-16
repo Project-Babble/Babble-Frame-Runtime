@@ -23,7 +23,7 @@ std::vector<uint8_t> good_block(const DspClient::Layout &l) {
     const uint32_t b = l.ctrl_base;
     put32(m, b + l.idx_l, 3);
     put32(m, b + l.idx_r, DspClient::kNotReady);
-    // Observed idle contents on the headset: (4,4,1,8,0,0,0,0) on both sides.
+    // On the headset, the idle contents are (4,4,1,8,0,0,0,0) on both sides.
     const uint32_t idle[8] = {4, 4, 1, 8, 0, 0, 0, 0};
     for (uint32_t i = 0; i < l.slots; i++) {
         put32(m, b + l.locks_l + 4 * i, idle[i]);
@@ -65,7 +65,7 @@ TEST_CASE("rejects garbage words") {
     CHECK_FALSE(DspClient::validate(m.data(), m.size(), l, &why));
 
     m = good_block(l);
-    put32(m, l.ctrl_base + l.fps, 0x7fc00000);   // NaN
+    put32(m, l.ctrl_base + l.fps, 0x7fc00000);   // The value is NaN.
     CHECK_FALSE(DspClient::validate(m.data(), m.size(), l, &why));
 }
 
@@ -73,7 +73,7 @@ TEST_CASE("the wrong base is rejected when only the other one is valid") {
     DspClient::Layout real;
     real.ctrl_base = 0x234000;
     auto m = good_block(real);
-    // Fill the old location with typical non-control data.
+    // Fill the old location with typical data that is not control data.
     for (uint32_t off = 0x124000; off < 0x124000 + 0x200; off += 4)
         put32(m, off, 0x41424344);
     DspClient::Layout old;
@@ -96,13 +96,13 @@ TEST_CASE("a blank control block (service just booted) is 'not set up yet', not 
     std::vector<uint8_t> blank(DspClient::kRegionBytes, 0);
     CHECK(DspClient::fps_unset(blank.data(), blank.size(), bases));
 
-    // Streaming block: the fps word is set, so a failed probe would be a real layout problem.
+    // The fps word is set in this active block, so a failed probe is a real layout problem.
     DspClient::Layout l;
     l.ctrl_base = 0x234000;
     auto m = good_block(l);
     CHECK_FALSE(DspClient::fps_unset(m.data(), m.size(), bases));
 
-    // Garbage where the fps word should be: unknown layout, not "not ready".
+    // Garbage where the fps word must be is an unknown layout and not "not ready".
     std::vector<uint8_t> junk(DspClient::kRegionBytes, 0);
     for (uint32_t base : bases)
         put32(junk, base + DspClient::Layout{}.fps, 0x41424344);
@@ -110,9 +110,7 @@ TEST_CASE("a blank control block (service just booted) is 'not set up yet', not 
 }
 
 TEST_CASE("dsp client: sends its request type after the fds and drains what the service sends") {
-    // A stand-in dsp_service on its own abstract name: hands over a memfd as
-    // the real one does (sparse, so the control mapping's offset fits), reads
-    // the request type, then pushes notifications like a subscribed client gets.
+    // This fake dsp_service gives a sparse memfd, reads the request type and pushes notifications.
     const std::string name = "babble_test_dsp_" + std::to_string(getpid());
     const int srv = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
     REQUIRE(srv >= 0);
@@ -164,11 +162,11 @@ TEST_CASE("dsp client: sends its request type after the fds and drains what the 
         drained += client.drain();
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
-    CHECK(request == 0);        // no subscription: dsp_service sends us nothing
-    CHECK(drained == 2100);     // but anything it does send is read, not left to fill the socket
+    CHECK(request == 0);        // Without a subscription, dsp_service sends nothing.
+    CHECK(drained == 2100);     // The client reads all data, so the data does not fill the socket.
     CHECK(client.drain() == 0);
     client.disconnect();
-    CHECK(client.drain() == 0);   // safe when not connected
+    CHECK(client.drain() == 0);   // A drain is safe when the client is not connected.
     service.join();
     close(srv);
 }

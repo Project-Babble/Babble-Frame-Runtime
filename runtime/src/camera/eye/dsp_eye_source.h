@@ -18,22 +18,7 @@
 
 namespace babble {
 
-// Steam Frame eye cameras via Valve's dsp_service. Frames are copied out of
-// the shared ring (so ring slots are held for microseconds) and cropped to the
-// configured 400x400 regions. Any validation or runtime fault makes the eye
-// source Unavailable; the rest of the runtime keeps going. Config type
-// "frame_dsp_eye".
-//
-// The camera rate is SteamVR's (it follows the display refresh rate); the
-// tracking rate is a whole fraction of it, "rate_divisor" 1, 2 or 3, so no
-// pair is ever dropped to timing jitter. A frame tap (the recorder) gets every
-// pair regardless of the divisor.
-//
-// dsp_service has no frame notification, so the ring index is polled. To keep
-// wakeups low the poll thread learns the frame interval and sleeps until just
-// before the next expected frame, then polls finely until it arrives. Frames
-// that were already there when a coarse sleep ended count as late_detect and
-// widen the margin.
+// Gets the Steam Frame eye cameras from Valve's dsp_service and copies the frames out of the shared ring.
 class DspEyeSource : public ITrackingSource {
 public:
     enum class State { Disabled, Connecting, Streaming, Backoff, Unavailable, Paused };
@@ -43,7 +28,7 @@ public:
 
     void tick(uint64_t now_ns) override;
     void shutdown() override;
-    void set_process_fps(double fps) override;   // not used: the eye rate is a divisor
+    void set_process_fps(double fps) override;   // The eye rate is a divisor of the camera rate, so this only logs a warning.
     void set_tracking(bool on) override;
     bool set_option(const std::string &key, const nlohmann::json &value) override;
     void set_frame_tap(IFrameTap *tap) override { tap_.store(tap); }
@@ -74,7 +59,7 @@ private:
     StatsRegistry &stats_;
     const SteamVrClient *steamvr_ = nullptr;
     bool pause_when_absent_ = true;
-    bool tracking_ = true;   // main thread only
+    bool tracking_ = true;   // Only the main thread uses this.
 
     DspClient client_;
     DspClient::Layout layout_;
@@ -94,17 +79,15 @@ private:
     uint64_t retry_at_ns_ = 0, backoff_ns_ = 0, backoff_min_ns_, backoff_max_ns_;
     std::string last_error_;
     std::string reported_layout_error_;
-    bool not_ready_ = false;   // last start found the control block not set up yet
+    bool not_ready_ = false;   // True if the last start found that the control block was not set up.
     bool logged_gap_ = false;
     bool logged_dsp_messages_ = false;
 
     RateStat frames_, processed_, side_l_, side_r_;
-    Counter layout_faults_, restarts_, pool_exhausted_, late_detect_, half_pairs_;   // stats: lifetime totals
-    Counter camera_rate_;   // a level: the camera rate SteamVR set, in whole fps
-    // Bad index reads in a row (capture thread while streaming, read by tick
-    // after the thread stopped): kMaxLayoutFaults of them disable the source.
+    Counter layout_faults_, restarts_, pool_exhausted_, late_detect_, half_pairs_;   // These are lifetime totals.
+    Counter camera_rate_;
     uint32_t consecutive_faults_ = 0;
     LatencyStat copy_time_;
 };
 
-} // namespace babble
+}

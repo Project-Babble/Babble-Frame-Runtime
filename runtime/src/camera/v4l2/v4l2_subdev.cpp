@@ -9,7 +9,7 @@ namespace babble {
 namespace fs = std::filesystem;
 
 std::optional<std::string> find_subdev_by_name(const std::vector<std::string> &prefixes, std::string *matched_name) {
-    std::vector<std::pair<std::string, std::string>> subdevs; // (node, entity name)
+    std::vector<std::pair<std::string, std::string>> subdevs; // Each pair is a node and its entity name.
     std::error_code ec;
     for (const auto &entry : fs::directory_iterator("/sys/class/video4linux", ec)) {
         std::string node = entry.path().filename().string();
@@ -33,4 +33,4 @@ std::optional<std::string> find_subdev_by_name(const std::vector<std::string> &p
     return std::nullopt;
 }
 
-} // namespace babble
+}

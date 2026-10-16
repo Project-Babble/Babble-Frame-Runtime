@@ -29,11 +29,11 @@ std::optional<StereoFrame> StereoPairer::push(FramePtr frame) {
             return sf;
         }
         if (d > 0) {
-            // The waiting counterpart is too old to ever match: drop it.
+            // Drop the waiting frame because it is too old to match.
             other.reset();
             other_unmatched++;
         } else {
-            // This frame is older than the waiting one (arrived late): drop it.
+            // Drop this frame because it arrived late and is older than the waiting frame.
             my_unmatched++;
             return std::nullopt;
         }
@@ -55,4 +55,4 @@ StereoPairer::Counts StereoPairer::counts() const {
     return counts_;
 }
 
-} // namespace babble
+}

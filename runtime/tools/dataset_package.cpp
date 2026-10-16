@@ -1,10 +1,5 @@
-// Packages a recorded dataset session, as the runtime's upload queue does
-// before encrypting and uploading it (docs/dataset-format.md, "Package").
-//
-//   dataset_package <session dir> [--qp N]
-//
-// Writes <session dir>/package.tar and prints the package block. Uses the
-// hardware H.265 encoder, so it runs on the headset only.
+// Packages a recorded dataset session as the upload queue does, and runs only on the headset
+// because it uses the hardware H.265 encoder.
 #include "capture/packager.h"
 
 #include <cstdio>

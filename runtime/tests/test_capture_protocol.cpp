@@ -56,7 +56,7 @@ json one(const Connection::Output &o) {
     return o.messages[0];
 }
 
-} // namespace
+}
 
 TEST_CASE("capture protocol: hello first, then requests with their ids echoed") {
     FakeBackend b;
@@ -85,7 +85,7 @@ TEST_CASE("capture protocol: hello first, then requests with their ids echoed") 
     CHECK(one(c2.handle_line(R"({"op":"segment","label":"X","start_ns":-1,"end_ns":2})", b))["code"] ==
           "bad_request");
 
-    CHECK(c2.handle_line(R"({"op":"stop","id":4})", b).messages.empty());   // "stopped" comes as an event
+    CHECK(c2.handle_line(R"({"op":"stop","id":4})", b).messages.empty());   // The "stopped" reply is an event.
     CHECK(c2.pending_stop_id() == 4);
     CHECK(b.stop_reason == kStoppedByApp);
     CHECK(one(c2.handle_line(R"({"op":"status","id":5})", b))["recording"] == false);
@@ -117,7 +117,7 @@ TEST_CASE("capture protocol: bad input is answered, not fatal") {
     Connection c;
     CHECK(one(c.handle_line("not json", b))["code"] == "bad_request");
     CHECK(one(c.handle_line("[1,2]", b))["code"] == "bad_request");
-    auto o = c.handle_line(R"({"op":"hello","protocol":1})", b);   // the format 1 app
+    auto o = c.handle_line(R"({"op":"hello","protocol":1})", b);   // This app uses format 1.
     CHECK(one(o)["code"] == "protocol");
     CHECK(o.close);
     Connection c2;
@@ -163,7 +163,7 @@ void send_line(int fd, const std::string &s) {
     REQUIRE(send(fd, l.data(), l.size(), 0) == ssize_t(l.size()));
 }
 
-} // namespace
+}
 
 TEST_CASE("capture server: one client at a time; a disconnect stops the recording") {
     FakeBackend b;

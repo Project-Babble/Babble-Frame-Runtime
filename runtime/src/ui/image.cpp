@@ -29,4 +29,4 @@ std::optional<Image> load_png(const std::filesystem::path &path) {
     return img;
 }
 
-} // namespace babble::ui
+}

@@ -1,8 +1,6 @@
 name: CI
 
-# Checks that the runtime, the SteamVR driver shim and the unit-test binary
-# still compile on every push and pull request, in both build profiles (dev
-# with everything, release with the USB mouth tracker only). Nothing is executed.
+# This workflow makes sure that the runtime, the driver shim and the unit tests compile in the dev and release profiles.
 
 on:
   push:
@@ -27,9 +25,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
         with:
-          # Direct submodules only; tools/build_executorch.sh fetches the
-          # nested ExecuTorch dependencies it needs. The models are Git LFS
-          # and a compile check does not need them, so LFS is left off.
+          # Get only the direct submodules because tools/build_executorch.sh gets the nested dependencies.
           submodules: true
 
       - name: Build

@@ -25,7 +25,7 @@ fs::path ensure(fs::path dir) {
     return dir;
 }
 
-} // namespace
+}
 
 fs::path exe_path() {
     char buf[4096];
@@ -68,4 +68,4 @@ fs::path resource_dir() {
     return exe_dir / "resources";
 }
 
-} // namespace babble::paths
+}

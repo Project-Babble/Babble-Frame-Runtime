@@ -1,8 +1,6 @@
 #pragma once
 
-// Post-processing for Baballonia's mono face model, after its One Euro
-// smoothing (model/postprocess/one_euro.h, Baballonia's defaults): per-shape
-// calibration.
+// This is the per-shape calibration for the Baballonia mono face model, after the One Euro filter.
 
 #include <cstddef>
 #include <cstdint>
@@ -15,17 +13,14 @@ namespace babble::face {
 enum class CalibMode { Raw, Manual, Auto };
 bool parse_mode(const std::string &s, CalibMode *out);
 
-// Per-shape calibration. Raw clamps to 0..1. Manual maps [min, max] from a
-// table to 0..1. Auto divides by the largest value seen this session once it
-// passes `seed` (below that the raw value passes), so the wearer's own
-// strongest expression reaches 1 (the mouth's AutoCalibrator rule).
+// In auto mode, the strongest expression of the wearer in the session becomes 1.
 class Calibration {
 public:
     Calibration(size_t n, CalibMode mode, float seed = 0.5f);
-    void set_range(size_t i, float min, float max);   // manual mode
-    // present: only frames with the headset worn raise the running maximum.
+    void set_range(size_t i, float min, float max);   // This is for the manual mode.
+    // Only frames with present set to true raise the running maximum.
     void apply(std::vector<float> &x, bool present = true);
-    void reset();   // a new session: forget the maxima
+    void reset();   // Call this for a new session to forget the maxima.
     CalibMode mode() const { return mode_; }
 
 private:
@@ -35,4 +30,4 @@ private:
     std::vector<float> max_;
 };
 
-} // namespace babble::face
+}

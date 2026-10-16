@@ -12,7 +12,7 @@
 
 namespace {
 const babble::log::Logger LOG("core");
-} // namespace
+}
 
 namespace babble {
 
@@ -48,8 +48,7 @@ void apply_thread_spec(const ThreadSpec &spec) {
             LOG.warn("%s: sched_setaffinity failed: %s", name.c_str(), strerror(errno));
     }
     if (spec.nice < 0) {
-        // SteamVR's service grants a hard RLIMIT_NICE above the soft one;
-        // raising the soft limit needs no privilege.
+        // The SteamVR service gives a hard RLIMIT_NICE above the soft one, so no privilege is necessary.
         rlimit rl{};
         if (getrlimit(RLIMIT_NICE, &rl) == 0 && rl.rlim_cur < rl.rlim_max) {
             rl.rlim_cur = rl.rlim_max;
@@ -57,7 +56,7 @@ void apply_thread_spec(const ThreadSpec &spec) {
         }
     }
     if (spec.nice != 0) {
-        // Per-thread nice: PRIO_PROCESS with the kernel tid affects only this thread.
+        // PRIO_PROCESS with the kernel tid changes the nice value of only this thread.
         if (setpriority(PRIO_PROCESS, gettid(), spec.nice) != 0)
             LOG.warn("%s: setpriority(%d) refused: %s", name.c_str(), spec.nice, strerror(errno));
     }
@@ -70,4 +69,4 @@ std::thread start_thread(ThreadSpec spec, std::function<void()> fn) {
     });
 }
 
-} // namespace babble
+}

@@ -16,7 +16,7 @@
 
 namespace {
 const babble::log::Logger LOG("v4l2");
-} // namespace
+}
 
 namespace babble {
 
@@ -35,7 +35,7 @@ std::string fourcc_str(uint32_t f) {
     return s;
 }
 
-} // namespace
+}
 
 V4l2Capture::V4l2Capture(Params params) : params_(std::move(params)) {}
 
@@ -73,8 +73,7 @@ bool V4l2Capture::open() {
         return false;
     }
 
-    // With I/O MC the format follows the media routing; set exactly what we
-    // expect and verify, never negotiate something else.
+    // Set the expected format and verify it, because with I/O MC the format follows the media routing.
     v4l2_format fmt{};
     fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
     fmt.fmt.pix_mp.width = params_.width;
@@ -142,8 +141,7 @@ bool V4l2Capture::open() {
 
     released_ = std::make_shared<std::atomic<uint64_t>>(0);
     auto released = released_;
-    // The mappings outlive the fd: they are unmapped when the last frame
-    // referencing this pool is released.
+    // The pool unmaps the buffers when the last frame is released, which can be after the fd closes.
     pool_ = FramePool::create_external(
         ptrs, frame_bytes_, [released](uint32_t idx) { released->fetch_or(1ull << idx, std::memory_order_release); },
         [maps] {
@@ -219,7 +217,7 @@ void V4l2Capture::run() {
     while (!stop_) {
         requeue_released();
         if (queued_ == 0) {
-            // Every buffer is held downstream; polling now would report an error.
+            // Do not poll now because all buffers are downstream and poll then reports an error.
             sleep_ns(1000000);
             if (mono_ns() - last_frame > params_.silence_timeout_ns * 2) {
                 lost("all buffers held downstream");
@@ -273,10 +271,7 @@ void V4l2Capture::run() {
         const uint64_t raw_now = mono_raw_ns();
         const uint64_t buf_ts = timeval_ns(buf.timestamp);
         if (!logged_ts) {
-            // Drivers flag MONOTONIC but Qualcomm CAMSS actually stamps with
-            // CLOCK_MONOTONIC_RAW (hundreds of ms apart after hours of NTP
-            // slew). Pick the clock the stamp is closest to without being in
-            // its future; fall back to arrival time if it matches neither.
+            // Find the timestamp clock because Qualcomm CAMSS uses CLOCK_MONOTONIC_RAW but sets the MONOTONIC flag.
             uint32_t flag = buf.flags & V4L2_BUF_FLAG_TIMESTAMP_MASK;
             auto age = [&](uint64_t clk) { return buf_ts <= clk ? clk - buf_ts : UINT64_MAX; };
             const uint64_t limit = 500000000ull;
@@ -336,8 +331,7 @@ void V4l2Capture::release_device() {
         fd_ = -1;
     }
     if (pool_) {
-        // Frames still downstream keep the mappings alive; their release no
-        // longer re-queues anything.
+        // Frames that are downstream keep the buffers, but their release does not queue them again.
         pool_->detach();
         pool_.reset();
     }
@@ -353,4 +347,4 @@ void V4l2Capture::stop() {
         state_ = SourceState::Closed;
 }
 
-} // namespace babble
+}

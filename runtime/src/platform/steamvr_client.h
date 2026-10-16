@@ -12,8 +12,7 @@
 
 namespace babble {
 
-// Headset-worn state as SteamVR reports it (the proximity sensor, folded
-// into the HMD's activity level; the same signal Valve's proxmicmute uses).
+// The worn state of the headset, where Unknown means that callers must not pause.
 enum class Worn { Unknown, Yes, No };
 
 inline const char *to_string(Worn w) {
@@ -25,67 +24,49 @@ inline const char *to_string(Worn w) {
     return "?";
 }
 
-// The runtime's single connection to SteamVR, as a background OpenVR client
-// (never starts SteamVR, never counts as a running app). Owns connecting,
-// reconnecting, the event loop, SteamVR quitting and IPD changes; other
-// modules make their OpenVR calls through with_vr() so the connection can't
-// go away underneath them.
-//
-// Worn: the headset's raw proximity sensor, read as a boolean input action
-// bound to /user/head/proximity (driver_cv registers the /proximity
-// component). If that action isn't active, the HMD activity level is the
-// fallback: UserInteraction = worn, Idle/Standby = not worn (SteamVR only
-// reaches Idle ~6 s after removal on the Frame). Anything else (not
-// connected, unknown) = Unknown: callers must not pause. Putting the headset
-// on counts at once; taking it off only after absent_after_s without a break
-// (PresenceFilter), since the sensor blips "off" for ~0.5 s while worn.
-//
-// The client owns the process's single SteamVR input manifest: the proximity
-// action plus the eye-tracking action the gaze module reads (gaze_action()).
-// Debounces worn -> not worn: "not worn" only after it has lasted
-// absent_after_ns without a break; worn (and unknown) pass at once.
+// Accepts "not worn" only after it lasts absent_after_ns, because the sensor shows "off" for about 0.5 s while worn.
 class PresenceFilter {
 public:
     explicit PresenceFilter(uint64_t absent_after_ns) : absent_after_ns_(absent_after_ns) {}
     Worn update(Worn raw, uint64_t now_ns);
-    uint64_t blips() const { return blips_; }   // "not worn" spells too short to count
+    uint64_t blips() const { return blips_; }   // The number of "not worn" periods that were too short to count.
 
 private:
     uint64_t absent_after_ns_;
     Worn out_ = Worn::Unknown;
-    uint64_t absent_since_ = 0;   // 0 = not currently reading "not worn"
+    uint64_t absent_since_ = 0;   // The value is 0 when the sensor does not read "not worn".
     uint64_t blips_ = 0;
 };
 
+// The single background OpenVR connection of the runtime, and other modules must use with_vr() for OpenVR calls.
 class SteamVrClient {
 public:
     ~SteamVrClient();
 
     struct Options {
-        std::string manifest_dir;                              // where the input manifest is written
+        std::string manifest_dir;                              // The directory for the input manifest.
         std::string controller_type = "frame_hmd";
         std::string proximity_path = "/user/head/proximity";
         std::string eyetracking_path = "/user/head/eyetracking";
-        double absent_after_s = 2.0;   // "not worn" must last this long to count
+        double absent_after_s = 2.0;   // The time that "not worn" must last before it counts.
     };
     void start(ThreadSpec thread, Options options);
     void stop();
 
     Worn worn() const { return worn_.load(); }
     bool connected() const { return connected_.load(); }
-    // Increments on every (re)connection; users redo per-connection setup when it changes.
+    // Increments on each connection, so do the setup for each connection again when it changes.
     uint64_t connection() const { return connection_.load(); }
-    // Headset IPD in metres from SteamVR, 0 until known.
+    // Returns the headset IPD from SteamVR in metres, or 0 until it is known.
     double ipd() const { return ipd_.load(); }
-    // The headset display refresh rate in Hz, 0 until known. SteamVR sets the
-    // eye camera rate from it.
+    // Returns the display refresh rate in Hz, which SteamVR uses to set the eye camera rate, or 0 until it is known.
     double display_hz() const { return display_hz_.load(); }
 
-    // Input handles (valid while connected; 0 if setup failed).
+    // These input handles are valid while connected, and are 0 if the setup failed.
     uint64_t gaze_action() const { return gaze_action_.load(); }
     uint64_t action_set() const { return action_set_.load(); }
 
-    // Runs fn while connected, serialized with all other OpenVR calls; false if not connected.
+    // Runs fn with a lock on all other OpenVR calls, or returns false if not connected.
     bool with_vr(const std::function<void()> &fn) const;
 
 private:
@@ -115,4 +96,4 @@ private:
     PresenceFilter presence_{2'000'000'000ull};
 };
 
-} // namespace babble
+}

@@ -19,7 +19,7 @@ struct Font::Info {
 
 namespace {
 
-// Decodes the next UTF-8 code point; invalid bytes become U+FFFD.
+// Decodes the next UTF-8 code point and changes invalid bytes to U+FFFD.
 uint32_t next_cp(std::string_view s, size_t &i) {
     auto b = static_cast<unsigned char>(s[i++]);
     if (b < 0x80)
@@ -33,7 +33,7 @@ uint32_t next_cp(std::string_view s, size_t &i) {
     return cp;
 }
 
-} // namespace
+}
 
 Font::Font() = default;
 Font::~Font() = default;
@@ -115,4 +115,4 @@ float Font::draw(Canvas &c, float x, float y, std::string_view text, float px, C
     return x;
 }
 
-} // namespace babble::ui
+}

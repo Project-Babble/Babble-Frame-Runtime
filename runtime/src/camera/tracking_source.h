@@ -15,11 +15,7 @@ namespace babble {
 class CameraArbiterClient;
 class SteamVrClient;
 
-// Receives every frame a source captures, before the source's tracking-rate
-// subsampling (the dataset recorder). Called on the source's capture thread:
-// like ISink::offer_frames it must only copy or hand the frame off, never
-// block or do I/O. wanted() is checked first, so a source skips the copy
-// work while nothing is recording.
+// Gets all frames on the capture thread of the source, so it must not block or do I/O.
 class IFrameTap {
 public:
     virtual ~IFrameTap() = default;
@@ -27,46 +23,35 @@ public:
     virtual void tap_frames(const std::string &source, const StereoFrame &frames) = 0;
 };
 
-// What a source is doing, for user-facing status (the dashboard).
+// The activity of a source, which the dashboard shows to the user.
 enum class SourceActivity {
-    Off,         // disabled in config, or tracking turned off by the user
-    Starting,    // waiting for the platform (camera route, DSP service) or opening
-    Paused,      // headset not worn; cameras stopped on purpose
+    Off,         // The config or the user turned off the source.
+    Starting,    // The source waits for the platform or opens the device.
+    Paused,      // The headset is not worn, so the cameras are stopped.
     Streaming,
-    Fault,       // backing off after an error, or unavailable; see last_error()
+    Fault,       // The source is unavailable or waits after an error, and last_error() tells why.
 };
 
-// A tracking camera module: owns its capture threads and hardware, publishes
-// the latest (stereo) frame into its output slot. Each concrete module (the
-// Frame's OV6211 mouth pair, the Frame's DSP eye cameras, a future UVC
-// camera...) is registered by a config "type" in make_tracking_source().
-//
-// Only the control plane goes through this interface (construction, the main
-// thread's 10 Hz tick, settings). Frames go straight from the module's capture
-// threads into the output slot, so the interface adds nothing per frame.
+// A tracking camera module that owns its capture threads and hardware and puts the latest frame into its output slot.
 class ITrackingSource {
 public:
     virtual ~ITrackingSource() = default;
 
-    // Main thread: drive the module's state machine (open, recover, back off).
+    // Runs the state machine of the module on the main thread.
     virtual void tick(uint64_t now_ns) = 0;
     virtual void shutdown() = 0;
 
-    // User-facing subsample of the tracking rate; takes effect immediately.
+    // Sets the tracking rate that the user selected, and the change is immediate.
     virtual void set_process_fps(double fps) = 0;
-    // User-facing on/off (config "tracking"): off stops the cameras on the
-    // next tick, like the headset-off pause; the module stays loaded.
+    // Turns tracking on or off, and off stops the cameras on the next tick.
     virtual void set_tracking(bool on) = 0;
     virtual bool tracking() const = 0;
-    // A module-specific option changed live (config reload, the debug overlay).
-    // False = not an option this module has, or a value it rejects.
+    // Changes an option of the module and returns false if the module does not know the option or the value.
     virtual bool set_option(const std::string &key, const nlohmann::json &value) { return false; }
-    // Main thread, before or while streaming; null removes it. The tap must
-    // outlive the source or be removed first.
+    // Call this on the main thread and remove the tap before it is destroyed.
     virtual void set_frame_tap(IFrameTap *tap) {}
 
-    // The camera's own frame rate when the platform sets it (the eye cameras:
-    // SteamVR); 0 = unknown or not applicable. Any thread.
+    // Returns the camera frame rate that the platform set, or 0 if it is not known.
     virtual double camera_fps() const { return 0; }
 
     virtual bool streaming() const = 0;
@@ -75,22 +60,19 @@ public:
     virtual const std::string &last_error() const = 0;
 };
 
-// Everything a module may need from the runtime. Modules keep references, so
-// all of these must outlive the module.
+// The runtime objects for a module, which must stay alive longer than the module.
 struct SourceDeps {
-    std::string name;                        // config key, also the stats prefix
-    const nlohmann::json &threads;           // config["threads"]
+    std::string name;                        // The config key, which is also the stats prefix.
+    const nlohmann::json &threads;           // This is config["threads"].
     LatestSlot<StereoFrame> &out;
     StatsRegistry &stats;
-    // The platform's camera routing; only the Frame's own mouth cameras need
-    // it (null otherwise, and in builds without that source).
+    // The camera routing of the platform, which only the Frame mouth cameras use.
     const CameraArbiterClient *arbiter = nullptr;
-    // Headset-worn state; with pause_when_absent (default) a module stops its
-    // cameras while SteamVR reports the headset not worn. Null = never pause.
+    // The headset-worn state, which a module uses to stop its cameras when the headset is not worn.
     const SteamVrClient *steamvr = nullptr;
 };
 
-// Builds the module named by cfg["type"]; null (logged) for unknown types.
+// Builds the module for cfg["type"], or returns null for an unknown type.
 std::unique_ptr<ITrackingSource> make_tracking_source(const nlohmann::json &cfg, SourceDeps deps);
 
-} // namespace babble
+}

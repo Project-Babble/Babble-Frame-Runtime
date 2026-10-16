@@ -12,39 +12,32 @@ namespace babble {
 class ExpressionState;
 class StatsRegistry;
 
-// An output module: sends tracked values somewhere (OSC, an OpenXR layer
-// bridge, the UI, SteamVR gaze...). Each module runs on its own thread and
-// reads ExpressionState, either at its own rate or by waiting for updates
-// (ExpressionState::wait_update), so a slow or blocked output can never stall
-// tracking. Modules are registered by config "type" in make_sink().
+// An output module that reads ExpressionState on its own thread, so a slow output cannot stop the tracking.
 class ISink {
 public:
     virtual ~ISink() = default;
 
-    virtual bool start() = 0;   // false: the module could not start (logged) and is dropped
-    virtual void stop() = 0;    // must return promptly (shutdown budget is ~2 s total)
+    virtual bool start() = 0;   // If this returns false, the runtime drops the module.
+    virtual void stop() = 0;    // This must return quickly because the full shutdown has about 2 s.
 
-    // Optional access to camera frames, for preview/recording/calibration
-    // modules. offer_frames() runs on pipeline threads: it must only hand the
-    // frame off (e.g. into a LatestSlot), never block or do I/O.
+    // offer_frames() runs on pipeline threads, so it must only hand off the frame and never block or do I/O.
     virtual bool wants_frames() const { return false; }
     virtual void offer_frames(const std::string &source, const StereoFrame &frames) {}
 
-    // A live setting under /sinks/<name>/ (key is the rest of the path); false
-    // if the module doesn't take it. Called on the main thread.
+    // The main thread calls this for a live setting under /sinks/<name>/, and it returns false for an unknown key.
     virtual bool set_option(const std::string &key, const nlohmann::json &value) { return false; }
 };
 
-// Everything a module may need from the runtime; all must outlive the module.
+// The runtime objects for a module, which must all live longer than the module.
 struct SinkDeps {
-    std::string name;                  // config key, also the stats prefix
-    const nlohmann::json &threads;     // config["threads"]
+    std::string name;                  // The config key, which is also the stats prefix.
+    const nlohmann::json &threads;
     const ExpressionState &state;
     StatsRegistry &stats;
-    std::string version = "", profile = "";   // the runtime's, for modules that record it (session manifests)
+    std::string version = "", profile = "";   // The runtime version and profile for the session manifests.
 };
 
-// Builds the module named by cfg["type"]; null (logged) for unknown types.
+// Makes the module that cfg["type"] names, or returns null for an unknown type.
 std::unique_ptr<ISink> make_sink(const nlohmann::json &cfg, SinkDeps deps);
 
-} // namespace babble
+}

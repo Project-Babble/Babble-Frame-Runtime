@@ -13,10 +13,9 @@
 
 namespace {
 const babble::log::Logger LOG("capture");
-constexpr size_t kMaxLine = 64 * 1024;      // a longer request line closes the connection
-constexpr size_t kMaxPending = 256 * 1024;  // a client that stops reading is dropped past this
-} // namespace
-
+constexpr size_t kMaxLine = 64 * 1024;      // A longer request line closes the connection.
+constexpr size_t kMaxPending = 256 * 1024;  // The server drops a client that has more unread output than this.
+}
 namespace babble::capture {
 
 using json = nlohmann::json;
@@ -37,7 +36,7 @@ bool Server::listen(const std::filesystem::path &path, std::string *err) {
         *err = std::string("socket: ") + strerror(errno);
         return false;
     }
-    ::unlink(path.c_str());   // a stale socket from a previous run
+    ::unlink(path.c_str());   // Remove a stale socket from a previous run.
     const mode_t old = umask(0077);
     const int rc = bind(fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr));
     umask(old);
@@ -109,7 +108,7 @@ void Server::drop_client(const char *why) {
     client_ = -1;
     fds_changed_ = true;
     LOG.info("capture: client disconnected (%s)", why);
-    // A crashed or closed app must never leave a recording running.
+    // A recording must stop when the app crashes or closes.
     if (conn_.greeted())
         backend_.stop(kAppDisconnected);
     conn_ = Connection();
@@ -162,7 +161,7 @@ void Server::flush() {
         }
         if (n < 0 && errno == EINTR)
             continue;
-        break;   // EAGAIN: the rest goes with the next send
+        break;   // On EAGAIN, the rest goes with the next send.
     }
 }
 
@@ -186,4 +185,4 @@ void Server::stopped(json event) {
     send(event);
 }
 
-} // namespace babble::capture
+}

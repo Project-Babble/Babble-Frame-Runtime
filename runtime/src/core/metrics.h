@@ -8,7 +8,7 @@
 
 namespace babble {
 
-// A running total; set() makes it a level instead (e.g. a rate in fps).
+// A running total, which set() changes into a level, for example a rate in fps.
 class Counter {
 public:
     void add(uint64_t n = 1) { v_.fetch_add(n, std::memory_order_relaxed); }
@@ -19,12 +19,12 @@ private:
     std::atomic<uint64_t> v_{0};
 };
 
-// Events per second between snapshots.
+// The number of events per second between snapshots.
 class RateStat {
 public:
     void tick(uint64_t n = 1) { total_.fetch_add(n, std::memory_order_relaxed); }
-    double snapshot_hz();   // resets the window
-    uint64_t total() const { return total_.load(std::memory_order_relaxed); }   // live, never reset
+    double snapshot_hz();   // This resets the window.
+    uint64_t total() const { return total_.load(std::memory_order_relaxed); }   // The total never resets.
 
 private:
     std::atomic<uint64_t> total_{0};
@@ -32,7 +32,7 @@ private:
     uint64_t last_ns_ = 0;
 };
 
-// Duration samples in nanoseconds; keeps the last kWindow samples for percentiles.
+// Keeps the last kWindow duration samples in nanoseconds for percentiles.
 class LatencyStat {
 public:
     struct Snapshot {
@@ -51,9 +51,7 @@ private:
     uint64_t max_ = 0;
 };
 
-// Named stats rendered as one JSON line per interval. Owners register raw
-// pointers and must outlive the registry's use (they are unregistered by
-// name-prefix on shutdown).
+// Named stats as one JSON line per interval, where each owner must stay alive while its raw pointer is registered.
 class StatsRegistry {
 public:
     void add(const std::string &name, Counter *c);
@@ -73,4 +71,4 @@ private:
     std::vector<Entry> entries_;
 };
 
-} // namespace babble
+}

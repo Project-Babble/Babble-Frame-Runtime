@@ -4,31 +4,22 @@
 
 namespace babble {
 
-// Decides when the two eye cameras' ring indices make a new stereo pair.
-// dsp_service publishes the left and right index separately, a moment apart,
-// so a pair is complete only once *both* have advanced since the last pair.
-// Counting either change as a pair counted each camera frame up to twice and
-// paired a fresh image with a stale one. If one side advances and the other
-// doesn't follow within `wait_ns`, that side is given up on (a half pair).
-//
-// Pure: fed the indices from each poll. Indices are compared for change only;
-// kNotReady (0xffffffff) means the ring hasn't started.
+// Makes a stereo pair only when both ring indices changed, because dsp_service writes them at different times.
 class EyePairer {
 public:
     static constexpr uint32_t kNotReady = 0xffffffffu;
 
     enum class Result {
-        None,   // nothing new, or waiting for the other side
-        Pair,   // both sides advanced: (l, r) is a new pair
-        Half,   // one side advanced and the other never followed; release it
+        None,   // There is no new pair yet.
+        Pair,   // Both sides changed, so (l, r) is a new pair.
+        Half,   // One side changed and the other side did not follow, so release the lone side.
     };
 
     struct Step {
         Result result = Result::None;
-        bool new_l = false, new_r = false;   // that side's index changed since the previous poll
-        bool half_l = false, half_r = false; // for Half: the side(s) given up on
-        // For Pair: when each side was first seen advanced (detection time, to
-        // the poll interval). Their difference is the pair's left/right skew.
+        bool new_l = false, new_r = false;   // True if the index of that side changed after the previous poll.
+        bool half_l = false, half_r = false; // For Half, these are the lone sides.
+        // For Pair, these are the detection times of each side.
         uint64_t l_ns = 0, r_ns = 0;
     };
 
@@ -42,8 +33,7 @@ public:
         seen_l_ = l;
         seen_r_ = r;
         if (first) {
-            // Whatever is in the ring at start is old: the first pair is the
-            // next one both cameras publish.
+            // The frames in the ring at the start are old, so wait for the next pair.
             paired_l_ = l;
             paired_r_ = r;
             return s;
@@ -72,7 +62,7 @@ public:
         }
         if (now_ns - pending_since_ <= wait_ns)
             return s;
-        // The other camera never followed: drop the lone side.
+        // The other camera did not follow, so drop the lone side.
         s.result = Result::Half;
         s.half_l = adv_l;
         s.half_r = adv_r;
@@ -93,7 +83,7 @@ private:
     uint32_t seen_l_ = kNotReady, seen_r_ = kNotReady;
     uint32_t paired_l_ = kNotReady, paired_r_ = kNotReady;
     uint64_t pending_since_ = 0;
-    uint64_t since_l_ = 0, since_r_ = 0;   // when each side was first seen advanced (0 = not yet)
+    uint64_t since_l_ = 0, since_r_ = 0;   // The time when each side changed, or 0 if it did not change yet.
 };
 
-} // namespace babble
+}

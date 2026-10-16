@@ -96,4 +96,4 @@ std::string StatsRegistry::render() {
     return out;
 }
 
-} // namespace babble
+}

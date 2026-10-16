@@ -33,11 +33,11 @@ int make_signalfd() {
     sigaddset(&mask, SIGTERM);
     sigaddset(&mask, SIGINT);
     sigaddset(&mask, SIGHUP);
-    sigaddset(&mask, SIGUSR1);   // write a diagnostics file
+    sigaddset(&mask, SIGUSR1);   // SIGUSR1 writes a diagnostics file.
     if (pthread_sigmask(SIG_BLOCK, &mask, nullptr) != 0)
         return -1;
     signal(SIGPIPE, SIG_IGN);
     return signalfd(-1, &mask, SFD_NONBLOCK | SFD_CLOEXEC);
 }
 
-} // namespace babble
+}

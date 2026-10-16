@@ -15,7 +15,7 @@
 
 namespace {
 const babble::log::Logger LOG("pipeline");
-} // namespace
+}
 
 namespace babble {
 
@@ -128,4 +128,4 @@ void PipelineBase::run() {
     }
 }
 
-} // namespace babble
+}

@@ -16,15 +16,14 @@ add_library(driver_babble SHARED src/driver_babble.cpp)
 target_include_directories(driver_babble SYSTEM PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/openvr
     ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/nlohmann_json/single_include)
-target_include_directories(driver_babble PRIVATE ${BABBLE_GENERATED_DIR})   # babble_version.h
+target_include_directories(driver_babble PRIVATE ${BABBLE_GENERATED_DIR})   # This directory has babble_version.h.
 add_dependencies(driver_babble babble_version)
 target_compile_options(driver_babble PRIVATE -Wall -Wextra)
 target_link_options(driver_babble PRIVATE -Wl,--no-undefined -static-libstdc++ -static-libgcc)
 target_link_libraries(driver_babble PRIVATE dl pthread)
 set_target_properties(driver_babble PROPERTIES PREFIX "")
 
-# babble-setup: the Steam launch target. Registers the driver folder with
-# SteamVR and restarts SteamVR so it loads (see src/babble_setup.cpp).
+# babble-setup is the Steam launch target that registers the driver folder with SteamVR.
 add_executable(babble_setup src/babble_setup.cpp)
 target_include_directories(babble_setup SYSTEM PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/nlohmann_json/single_include)
@@ -32,40 +31,27 @@ target_compile_options(babble_setup PRIVATE -Wall -Wextra)
 target_link_options(babble_setup PRIVATE -static-libstdc++ -static-libgcc)
 set_target_properties(babble_setup PROPERTIES OUTPUT_NAME babble-setup)
 
-# Assemble the SteamVR driver folder:
-#   babble/driver.vrdrivermanifest
-#   babble/resources/settings/default.vrsettings       (the profile's, cmake/babble_profile.cmake)
-#   babble/resources/settings/settingsschema.vrsettings  (the "Expression Tracking" section in SteamVR Settings)
-#   babble/resources/runtime/defaults.json             (the profile's)
-#   babble/resources/runtime/{fonts,icons,models}/     (the models the profile's pipelines load)
-#   babble/installscript.vdf   (Steam runs babble-setup --uninstall before deleting the folder)
-#   babble/LICENSE             (the Babble Software Distribution License, shipped with every copy)
-#   babble/bin/<platform>/driver_babble.so
-#   babble/bin/<platform>/babble-runtime
-#   babble/bin/<platform>/babble-setup
+# Put all the parts of the SteamVR driver folder in build/babble.
 set(BABBLE_OUT ${CMAKE_BINARY_DIR}/babble)
 set_target_properties(driver_babble PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY ${BABBLE_OUT}/bin/${BABBLE_PLATFORM})
 set_target_properties(babble_setup PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY ${BABBLE_OUT}/bin/${BABBLE_PLATFORM})
 
-# Output plugins built elsewhere, as a list of .so
-# paths; each is copied into bin/<platform>/plugins/, where a bare
-# "library" name in the config finds it.
+# Copy each output plugin .so into bin/<platform>/plugins/, where the config can find it by its file name.
 set(BABBLE_PLUGINS "" CACHE STRING "Output plugin libraries (.so paths, ;-separated) to package")
 set(BABBLE_PLUGIN_COMMANDS)
 foreach(plugin IN LISTS BABBLE_PLUGINS)
     get_filename_component(plugin_name ${plugin} NAME)
     set(dst ${BABBLE_OUT}/bin/${BABBLE_PLATFORM}/plugins/${plugin_name})
-    # Copy then rename, like the runtime: a running runtime has the old one mapped.
+    # Copy and then rename because a running runtime has the old plugin mapped.
     list(APPEND BABBLE_PLUGIN_COMMANDS
         COMMAND ${CMAKE_COMMAND} -E make_directory ${BABBLE_OUT}/bin/${BABBLE_PLATFORM}/plugins
         COMMAND ${CMAKE_COMMAND} -E copy ${plugin} ${dst}.new
         COMMAND ${CMAKE_COMMAND} -E rename ${dst}.new ${dst})
 endforeach()
 
-# The runtime's resources, per profile: fonts, icons, the profile's defaults,
-# and only the models (and calibration) its pipelines load.
+# Package only the runtime resources and models that the pipelines of the profile load.
 set(runtime_res ${CMAKE_CURRENT_SOURCE_DIR}/../runtime/resources)
 set(BABBLE_PACKAGED_MODELS eye_split96_uncapped_fp16.pte face_mono_224_fp16.pte)
 set(BABBLE_PACKAGED_FILES)
@@ -74,11 +60,10 @@ if(BABBLE_FRUNK_MOUTH)
     list(APPEND BABBLE_PACKAGED_FILES calibration_mouth.json)
 endif()
 if(BABBLE_DEV_FEATURES)
-    list(APPEND BABBLE_PACKAGED_MODELS lid_mnv4_160_int8.pte pupil_cnx_160_fp32.pte)   # the split eye layout (config only)
+    list(APPEND BABBLE_PACKAGED_MODELS lid_mnv4_160_int8.pte pupil_cnx_160_fp32.pte)   # The split eye layout uses them.
 endif()
 set(BABBLE_RESOURCE_COMMANDS
-    # Start clean, so nothing from another profile lingers (a running runtime
-    # has its models mapped already; unlinking them is safe).
+    # Remove the old folder so that no file from a different profile stays.
     COMMAND ${CMAKE_COMMAND} -E rm -rf ${BABBLE_OUT}/resources/runtime
     COMMAND ${CMAKE_COMMAND} -E make_directory ${BABBLE_OUT}/resources/runtime/models
     COMMAND ${CMAKE_COMMAND} -E copy_directory ${runtime_res}/fonts ${BABBLE_OUT}/resources/runtime/fonts
@@ -93,21 +78,20 @@ foreach(m IN LISTS BABBLE_PACKAGED_MODELS)
         COMMAND ${CMAKE_COMMAND} -E copy ${runtime_res}/models/${m} ${BABBLE_OUT}/resources/runtime/models/${m})
 endforeach()
 
-# A separate target so relinking only the runtime still refreshes the folder.
+# Use a separate target so that a relink of only the runtime also updates the folder.
 add_custom_target(babble_package ALL
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         ${CMAKE_CURRENT_SOURCE_DIR}/package ${BABBLE_OUT}
-    # The profile's SteamVR defaults, over the dev ones package/ carries.
+    # Replace the dev SteamVR defaults from package/ with the defaults of the profile.
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${BABBLE_GENERATED_DIR}/default.vrsettings ${BABBLE_OUT}/resources/settings/default.vrsettings
-    # The settings schema with the version filled in (cmake/babble_version.cmake).
+    # Copy the settings schema that has the version in it.
     COMMAND ${CMAKE_COMMAND} -E copy
         ${BABBLE_GENERATED_DIR}/settingsschema.vrsettings ${BABBLE_OUT}/resources/settings/settingsschema.vrsettings
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         ${CMAKE_CURRENT_SOURCE_DIR}/../LICENSE ${BABBLE_OUT}/LICENSE
     ${BABBLE_RESOURCE_COMMANDS}
-    # Copy then rename: the shim may be running the old binary, which cannot
-    # be overwritten in place (ETXTBSY); rename swaps it atomically.
+    # Copy and then rename because the system cannot overwrite a running binary (ETXTBSY).
     COMMAND ${CMAKE_COMMAND} -E copy
         $<TARGET_FILE:babble_runtime> ${BABBLE_OUT}/bin/${BABBLE_PLATFORM}/babble-runtime.new
     COMMAND ${CMAKE_COMMAND} -E rename

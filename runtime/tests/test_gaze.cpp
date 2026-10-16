@@ -14,8 +14,7 @@ TEST_CASE("angle scaling: eye_osc_pc.py's per-eye yaw, gaze_angles() pitch") {
         bool flip_y, valid;
         double lx, rx, py;
     };
-    // Yaw: the reference SteamLinkGaze.convert's own values (ipd 0.063, 45
-    // deg). Pitch: atan2(y, -z) / 45 deg, as frameeyeosc's gaze_angles().
+    // The yaw values come from the reference SteamLinkGaze.convert with ipd 0.063 and 45 deg.
     const Case cases[] = {
         {0.0, 0.0, -2.0, 0, 0, 0, false, true, 0.02005186490066484, -0.02005186490066484, 0.0},
         {0.5, 0.3, -1.0, 0, 0, 0, false, true, 0.6220143195789958, 0.5578464486092127, 0.3710943163109694},
@@ -41,7 +40,7 @@ TEST_CASE("angle scaling: eye_osc_pc.py's per-eye yaw, gaze_angles() pitch") {
 
 TEST_CASE("tangent scaling gives VRCFT's Gaze (tan of the angle; atan() recovers it)") {
     const double h = 0.063 / 2;
-    // Unclamped points: each value is the tangent of that eye's angle to the point.
+    // For points without a clamp, each value is the tangent of the angle from that eye to the point.
     struct P { double x, y, z; } pts[] = {{0.0, 0.0, -2.0}, {0.5, 0.3, -1.0}, {-0.3, -0.2, -0.8}, {0.1, 0.0, -0.3}};
     const auto tangent = gaze::Scaling::Tangent;
     for (const auto &p : pts) {
@@ -52,7 +51,7 @@ TEST_CASE("tangent scaling gives VRCFT's Gaze (tan of the angle; atan() recovers
         CHECK((*g)[1] == doctest::Approx((p.x - h) / z).epsilon(1e-12));
         CHECK((*g)[2] == doctest::Approx(p.y / z).epsilon(1e-12));
     }
-    // Looking right and up are positive; VRCFT's ToYaw = atan(x) recovers 30 degrees exactly.
+    // Right and up are positive, and the VRCFT ToYaw = atan(x) gets exactly 30 degrees back.
     const double t30 = std::tan(30.0 * M_PI / 180);
     auto g = gaze::convert(t30 * 10, 0, -10, 0.0, 45.0, false, {}, tangent);
     REQUIRE(g);
@@ -60,7 +59,7 @@ TEST_CASE("tangent scaling gives VRCFT's Gaze (tan of the angle; atan() recovers
     auto up = gaze::convert(0, 1, -2, 0.063, 45.0, false, {}, tangent);
     REQUIRE(up);
     CHECK((*up)[2] > 0);
-    // Beyond max_deg the angle is limited: tan(45 deg) = 1.
+    // The angle has a limit at max_deg, and tan(45 deg) = 1.
     auto far = gaze::convert(10, 0, -1, 0.0, 45.0, false, {}, tangent);
     REQUIRE(far);
     CHECK((*far)[0] == doctest::Approx(1.0));
@@ -68,12 +67,12 @@ TEST_CASE("tangent scaling gives VRCFT's Gaze (tan of the angle; atan() recovers
 
 TEST_CASE("per-eye gaze directions convert like frameeyeosc's gaze_angles()") {
     const gaze::Offsets none;
-    // Straight ahead (-z forward) is centre.
+    // Straight ahead (-z forward) is the centre.
     auto c = gaze::from_direction(0, 0, -1, 45, false, none);
     REQUIRE(c);
     CHECK((*c)[0] == doctest::Approx(0));
     CHECK((*c)[1] == doctest::Approx(0));
-    // gaze_angles(): atan2(x, -z) and atan2(y, -z), times 4/pi (45 deg -> 1).
+    // The gaze_angles() function multiplies atan2(x, -z) and atan2(y, -z) by 4/pi, so 45 deg is 1.
     auto gaze_angles = [](double x, double y, double z) {
         const double k = 4 / M_PI;
         return std::array<double, 2>{std::clamp(std::atan2(x, -z) * k, -1.0, 1.0),
@@ -88,27 +87,26 @@ TEST_CASE("per-eye gaze directions convert like frameeyeosc's gaze_angles()") {
         CHECK((*d)[0] == doctest::Approx(want[0]).epsilon(1e-12));
         CHECK((*d)[1] == doctest::Approx(want[1]).epsilon(1e-12));
     }
-    // Pitch is the vertical angle on its own: 10 deg up stays 10 deg however far right the eye looks.
+    // Pitch is only the vertical angle, so 10 deg up stays 10 deg for all yaw values.
     const double up10 = std::tan(10 * M_PI / 180);
     auto side = gaze::from_direction(0.8, up10, -1, 45, false, none);
     CHECK((*side)[1] == doctest::Approx(10.0 / 45));
-    // The tangent scaling gives tan of those angles: x/z, y/z.
+    // The tangent scaling gives the tangents of those angles, x/z and y/z.
     auto t = gaze::from_direction(0.5, 0.2, -1, 45, false, none, gaze::Scaling::Tangent);
     CHECK((*t)[0] == doctest::Approx(0.5));
     CHECK((*t)[1] == doctest::Approx(0.2));
-    // Past the limit: clamped to +-45 deg, which is +-1 either way.
+    // Past the limit, the value is clamped to +-45 deg, which is +-1 for both scalings.
     auto far = gaze::from_direction(-1, 0, -0.1, 45, false, none);
     REQUIRE(far);
     CHECK((*far)[0] == doctest::Approx(-1.0));
     auto far_tan = gaze::from_direction(-1, 0, -0.1, 45, false, none, gaze::Scaling::Tangent);
     CHECK((*far_tan)[0] == doctest::Approx(-1.0));
-    // flip_y and a yaw offset apply like in convert().
+    // The flip_y option and a yaw offset apply as in convert().
     auto f = gaze::from_direction(0, 0.2, -1, 45, true, none);
     CHECK((*f)[1] < 0);
     gaze::Offsets yaw10;
     yaw10.yaw_deg = 10;
     auto o = gaze::from_direction(0, 0, -1, 45, false, yaw10);
     CHECK((*o)[0] == doctest::Approx(10.0 / 45));
-    // Degenerate direction.
     CHECK_FALSE(gaze::from_direction(0, 0, 0, 45, false, none));
 }

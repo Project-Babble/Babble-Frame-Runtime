@@ -38,7 +38,7 @@ FramePool::~FramePool() {
 std::shared_ptr<Frame> FramePool::wrap(uint32_t index) {
     auto self = shared_from_this();
     Frame *f = &slots_[index].frame;
-    // Reset per-acquisition fields; data/size/pool_index are fixed per slot.
+    // Reset only the fields that change for each acquire, because data, size and pool_index stay fixed.
     f->capture_ns = f->arrival_ns = 0;
     f->seq = 0;
     return std::shared_ptr<Frame>(f, [self, index](Frame *) { self->release(index); });
@@ -85,4 +85,4 @@ void FramePool::release(uint32_t index) {
         cb(index);
 }
 
-} // namespace babble
+}

@@ -35,7 +35,7 @@ dir="${dir%/}"
 setup="$dir/bin/linuxarm64/babble-setup"
 if [[ -x "$setup" ]]; then
   if $purge; then
-    "$setup" --uninstall   # unregister, then remove the settings and logs
+    "$setup" --uninstall   # This removes the registration, the settings and the logs.
   else
     "$setup" --unregister --no-restart
   fi
@@ -58,7 +58,7 @@ if $restart && pgrep -x babble-runtime >/dev/null && systemctl --user --quiet is
 fi
 
 rm -rf "$dir"
-# Our copy of this script, if it sits in the default location.
+# Remove the copy of this script if it is in the default location.
 [[ "$(dirname "$dir")" == "$HOME/.local/share/babble-frame-runtime" ]] && rm -f "$(dirname "$dir")/uninstall.sh"
 rmdir "$(dirname "$dir")" 2>/dev/null || true
 echo "removed $dir"

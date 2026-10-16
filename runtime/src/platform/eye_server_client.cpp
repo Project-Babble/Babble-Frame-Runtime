@@ -17,7 +17,7 @@
 
 namespace {
 const babble::log::Logger LOG("eyesrv");
-} // namespace
+}
 
 namespace babble {
 
@@ -39,7 +39,7 @@ void read_vecs(const uint8_t *p, size_t off, std::array<Vec3, 2> *out) {
             (*out)[e][k] = read_at<float>(p, off + 4 * (3 * e + k));
 }
 
-} // namespace
+}
 
 bool parse_record(const uint8_t *r, Sample *out) {
     if (read_at<uint32_t>(r, rec::kProducerState) != 1)
@@ -65,7 +65,7 @@ bool parse_record(const uint8_t *r, Sample *out) {
     return true;
 }
 
-} // namespace eye_server
+}
 
 using namespace eye_server;
 
@@ -74,7 +74,7 @@ namespace {
 pthread_mutex_t *shm_mutex(uint8_t *base) { return reinterpret_cast<pthread_mutex_t *>(base + kMutexOffset); }
 uint32_t *shm_word(uint8_t *base, size_t off) { return reinterpret_cast<uint32_t *>(base + off); }
 
-// Locks the service's robust mutex; recovers it if its last owner died.
+// Locks the robust mutex of the service and recovers it if its last owner died.
 bool lock(uint8_t *base) {
     int rc = pthread_mutex_lock(shm_mutex(base));
     if (rc == EOWNERDEAD)
@@ -86,7 +86,7 @@ bool lock(uint8_t *base) {
     return true;
 }
 
-} // namespace
+}
 
 EyeServerClient::~EyeServerClient() { stop(); }
 
@@ -135,7 +135,7 @@ void EyeServerClient::set_listener(std::function<void(const Sample &)> fn) {
 
 bool EyeServerClient::open_map() {
     auto problem = [&](std::string why) {
-        if (why != last_problem_)   // once per distinct reason
+        if (why != last_problem_)   // Log each different reason only once.
             LOG.warn("eye-server: %s: %s; independent gaze and native openness unavailable", options_.path.c_str(),
                      why.c_str());
         last_problem_ = std::move(why);
@@ -162,7 +162,7 @@ bool EyeServerClient::open_map() {
         return problem("unknown layout version " + std::to_string(version) + " (this runtime reads 4 and 5)");
     if (size_t(st.st_size) < layout->file_size)
         return problem("file is smaller than the version-" + std::to_string(version) + " layout");
-    if (layout->file_size != map_bytes_) {   // map the whole layout
+    if (layout->file_size != map_bytes_) {   // Map the full layout.
         munmap(base_, map_bytes_);
         p = mmap(nullptr, layout->file_size, PROT_READ | PROT_WRITE, MAP_SHARED, fd_, 0);
         base_ = p == MAP_FAILED ? nullptr : static_cast<uint8_t *>(p);
@@ -202,8 +202,7 @@ bool EyeServerClient::read_one() {
     __atomic_store_n(shm_word(base_, kRequestedOffset), 1u, __ATOMIC_RELEASE);
     pthread_mutex_unlock(shm_mutex(base_));
 
-    // The service bumps the sequence and wakes waiters for each record. Not
-    // FUTEX_PRIVATE: the word is shared with another process.
+    // Do not use FUTEX_PRIVATE because the sequence word is shared with the service process.
     timespec ts{0, 200000000};
     if (syscall(SYS_futex, seq_word, FUTEX_WAIT, seq, &ts, nullptr, 0) != 0 && errno == ETIMEDOUT)
         timeouts_.add();
@@ -240,7 +239,7 @@ void EyeServerClient::run() {
     uint64_t next_open = 0, last_sample = 0;
     while (!stop_) {
         if (!wanted_) {
-            close_map();   // nothing needs it: don't hold the file
+            close_map();   // Do not keep the file open when no consumer needs it.
             sleep_ns(200000000);
             continue;
         }
@@ -257,8 +256,7 @@ void EyeServerClient::run() {
         if (read_one()) {
             last_sample = mono_ns();
         } else if (mono_ns() - last_sample > kReopenAfterNs) {
-            // No records for a while: the service may have recreated the file
-            // (SteamVR restart), leaving us on the old one. Map it afresh.
+            // Map the file again because a SteamVR restart can make the service create a new file.
             reopens_.add();
             close_map();
             next_open = 0;
@@ -267,4 +265,4 @@ void EyeServerClient::run() {
     }
 }
 
-} // namespace babble
+}

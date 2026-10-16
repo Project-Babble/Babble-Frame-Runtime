@@ -1,11 +1,5 @@
 #!/usr/bin/env python3
-"""Reference sequences for test_postprocess.cpp, produced by the PC scripts' own classes.
-
-    <python with numpy> tools/golden/make_post_golden.py <dir with mouth_osc_pc.py/eye_osc_pc.py/calibration_mouth.json>
-
-Mouth: the main-loop chain of mouth_osc_pc.py with --no-presence (lines 540-550), manual and auto modes.
-Eye:   the per-update chain of eye_osc_pc.py (lines 511-517) with a pupil result every 18th update (5 Hz at 90).
-"""
+"""Writes reference sequences for test_postprocess.cpp with the classes of the PC reference scripts."""
 import json, math, pathlib, sys
 import numpy as np
 
@@ -17,8 +11,7 @@ import eye_osc_pc as E     # noqa: E402
 rng = np.random.default_rng(7)
 out = {}
 
-# --- mouth: the reference's --no-presence path (presence now comes from the headset's
-# proximity sensor, outside the model): EMA -> calibration, no gate, no zeroing.
+# Use the --no-presence path of the mouth reference because the proximity sensor of the headset gives presence.
 N = 260
 preds = rng.random((N, M.NUM_CHANNELS)).astype(np.float32) * 0.8
 cal = M.Calibration.load(str(ref / "calibration_mouth.json"))
@@ -27,22 +20,22 @@ for mode in ("manual", "auto"):
     raw_state, rows = None, []
     for pred in preds:
         raw_state = pred if raw_state is None else 0.5 * pred + (1 - 0.5) * raw_state
-        active = True                                   # --no-presence
+        active = True
         norm = cal.normalize(raw_state) if mode == "manual" else auto.process(pred, active)
-        rows.append(np.array(norm, np.float32)[:M.PRESENCE_IDX].tolist())   # the 43 blendshapes
+        rows.append(np.array(norm, np.float32)[:M.PRESENCE_IDX].tolist())   # Keep only the 43 blendshapes.
     out[f"mouth_{mode}"] = {"expected": rows}
 out["mouth_preds"] = preds.tolist()
 
-# --- eye: lids open, a blink, a squint, wide; pupil sizes drifting
+# Make an eye sequence with open lids, a blink, a squint, wide lids and slow pupil changes.
 hz, pupil_every = 90, 18
 T = 900
 t = np.arange(T)
 lid = 0.92 + 0.03 * np.sin(t / 37.0)
-lid[300:312] = np.linspace(0.9, 0.05, 12)          # blink
+lid[300:312] = np.linspace(0.9, 0.05, 12)
 lid[312:330] = 0.05
 lid[330:342] = np.linspace(0.05, 0.9, 12)
-lid[600:660] = 0.45                                  # squint around the gate
-lid[700:760] = 1.08                                  # wide
+lid[600:660] = 0.45                                  # This squint is near the gate value.
+lid[700:760] = 1.08                                  # The lids are wide open.
 lid_r = np.clip(lid - 0.06 + 0.01 * np.cos(t / 23.0), 0, 1.2)
 lids = np.stack([np.clip(lid, 0, 1), np.clip(lid_r, 0, 1)], 1)
 pupil = np.stack([0.7 + 0.1 * np.sin(t / 150.0), 0.75 + 0.08 * np.cos(t / 170.0)], 1)

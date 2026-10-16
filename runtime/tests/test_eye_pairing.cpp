@@ -8,17 +8,17 @@ namespace {
 constexpr uint64_t kMs = 1000000ull;
 constexpr uint64_t kWait = 5 * kMs;
 using R = EyePairer::Result;
-} // namespace
+}
 
 TEST_CASE("eye pairer: a pair needs both sides to advance") {
     EyePairer p;
-    CHECK(p.feed(0, 0, 1 * kMs, kWait).result == R::None);   // what was in the ring at start
-    auto s = p.feed(1, 0, 2 * kMs, kWait);                   // left first...
+    CHECK(p.feed(0, 0, 1 * kMs, kWait).result == R::None);   // This read gets the old indices from the ring.
+    auto s = p.feed(1, 0, 2 * kMs, kWait);                   // The left view advances first.
     CHECK(s.result == R::None);
     CHECK(s.new_l);
     CHECK_FALSE(s.new_r);
     CHECK(p.waiting());
-    s = p.feed(1, 1, 3 * kMs, kWait);                        // ...then right: one pair, not two
+    s = p.feed(1, 1, 3 * kMs, kWait);                        // The right view gives one pair and not two.
     CHECK(s.result == R::Pair);
     CHECK_FALSE(s.new_l);
     CHECK(s.new_r);
@@ -39,8 +39,7 @@ TEST_CASE("eye pairer: both sides in one poll make one pair") {
 }
 
 TEST_CASE("eye pairer: staggered sides count each camera frame once") {
-    // The old detector counted a change on either side, so this sequence made
-    // 2 "pairs" per frame. 90 frames, right always 1 ms behind left.
+    // Feed 90 frames with the right view always 1 ms after the left view, and expect one pair for each frame.
     EyePairer p;
     p.feed(0, 0, 0, kWait);
     int pairs = 0, new_l = 0, new_r = 0;
@@ -62,13 +61,13 @@ TEST_CASE("eye pairer: a side that never follows is given up after the wait") {
     EyePairer p;
     p.feed(0, 0, 0, kWait);
     CHECK(p.feed(1, 0, 10 * kMs, kWait).result == R::None);
-    CHECK(p.feed(1, 0, 14 * kMs, kWait).result == R::None);   // within the wait
+    CHECK(p.feed(1, 0, 14 * kMs, kWait).result == R::None);   // This read is within the wait.
     auto s = p.feed(1, 0, 16 * kMs, kWait);
     CHECK(s.result == R::Half);
     CHECK(s.half_l);
     CHECK_FALSE(s.half_r);
     CHECK_FALSE(p.waiting());
-    // The late right frame alone doesn't make a pair with the given-up left.
+    // The late right frame alone does not make a pair with the left frame that the pairer gave up.
     CHECK(p.feed(1, 1, 17 * kMs, kWait).result == R::None);
     CHECK(p.feed(2, 1, 20 * kMs, kWait).result == R::Pair);
 }
@@ -76,7 +75,7 @@ TEST_CASE("eye pairer: a side that never follows is given up after the wait") {
 TEST_CASE("eye pairer: not-ready rings and reset") {
     EyePairer p;
     CHECK(p.feed(EyePairer::kNotReady, 3, 0, kWait).result == R::None);
-    CHECK(p.feed(3, 3, kMs, kWait).result == R::None);   // first sane read only primes
+    CHECK(p.feed(3, 3, kMs, kWait).result == R::None);   // The first sane read only primes the pairer.
     CHECK(p.feed(4, 4, 2 * kMs, kWait).result == R::Pair);
     p.reset();
     CHECK(p.feed(5, 5, 3 * kMs, kWait).result == R::None);
@@ -86,26 +85,26 @@ TEST_CASE("eye pairer: not-ready rings and reset") {
 TEST_CASE("eye pairer: a pair carries when each side was first seen") {
     EyePairer p;
     p.feed(0, 0, 0, kWait);
-    auto s = p.feed(1, 0, 10 * kMs, kWait);   // left seen at 10 ms
+    auto s = p.feed(1, 0, 10 * kMs, kWait);   // The pairer sees the left view at 10 ms.
     CHECK(s.result == R::None);
-    s = p.feed(1, 0, 11 * kMs, kWait);        // still waiting: left's time stays 10
-    s = p.feed(1, 1, 12 * kMs, kWait);        // right at 12
+    s = p.feed(1, 0, 11 * kMs, kWait);        // The pairer still waits, and the left time stays at 10 ms.
+    s = p.feed(1, 1, 12 * kMs, kWait);        // The right view arrives at 12 ms.
     REQUIRE(s.result == R::Pair);
     CHECK(s.l_ns == 10 * kMs);
     CHECK(s.r_ns == 12 * kMs);
 
-    s = p.feed(2, 2, 20 * kMs, kWait);        // both in one poll: no measurable skew
+    s = p.feed(2, 2, 20 * kMs, kWait);        // Both views arrive in one poll, so there is no measurable skew.
     REQUIRE(s.result == R::Pair);
     CHECK(s.l_ns == 20 * kMs);
     CHECK(s.r_ns == 20 * kMs);
 
-    s = p.feed(2, 3, 30 * kMs, kWait);        // right leads this time
+    s = p.feed(2, 3, 30 * kMs, kWait);        // The right view leads this time.
     s = p.feed(3, 3, 31 * kMs, kWait);
     REQUIRE(s.result == R::Pair);
     CHECK(s.l_ns == 31 * kMs);
     CHECK(s.r_ns == 30 * kMs);
 
-    p.feed(4, 3, 40 * kMs, kWait);            // a half pair doesn't leak its time into the next pair
+    p.feed(4, 3, 40 * kMs, kWait);            // The time of a half pair must not go into the next pair.
     CHECK(p.feed(4, 3, 50 * kMs, kWait).result == R::Half);
     p.feed(5, 3, 60 * kMs, kWait);
     s = p.feed(5, 4, 61 * kMs, kWait);

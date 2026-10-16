@@ -15,7 +15,7 @@
 
 namespace {
 const babble::log::Logger LOG("steamvr");
-} // namespace
+}
 
 namespace babble {
 
@@ -36,8 +36,7 @@ void SteamVrClient::stop() {
 }
 
 bool SteamVrClient::with_vr(const std::function<void()> &fn) const {
-    // Exclusive: OpenVR client calls aren't documented as thread-safe, and the
-    // client (proximity) and gaze threads both use IVRInput.
+    // Use an exclusive lock because OpenVR calls are not documented as thread-safe and two threads use IVRInput.
     std::unique_lock<std::shared_mutex> lock(vr_mutex_);
     if (!connected_)
         return false;
@@ -70,7 +69,7 @@ void SteamVrClient::disconnect() {
 }
 
 bool SteamVrClient::setup_input() {
-    // One manifest for the process: proximity (boolean) + eye tracking.
+    // Write one manifest for the process with the proximity action and the eye-tracking action.
     namespace fs = std::filesystem;
     using nlohmann::json;
     fs::path dir = options_.manifest_dir;
@@ -110,7 +109,7 @@ bool SteamVrClient::setup_input() {
     return ok;
 }
 
-// The raw proximity sensor; nullopt if the action isn't bound/active.
+// Reads the raw proximity sensor, or returns nullopt if the action is not bound or not active.
 std::optional<bool> SteamVrClient::read_proximity() {
     std::optional<bool> out;
     with_vr([&] {
@@ -135,12 +134,12 @@ std::optional<bool> SteamVrClient::read_proximity() {
 Worn PresenceFilter::update(Worn raw, uint64_t now) {
     if (raw != Worn::No) {
         if (absent_since_ && out_ == Worn::Yes)
-            blips_++;   // back before it counted: a sensor blip
+            blips_++;   // The sensor came back before the timeout, so this was a blip.
         absent_since_ = 0;
         out_ = raw;
         return out_;
     }
-    if (out_ != Worn::Yes) {   // nothing to hold on to (unknown, or already off)
+    if (out_ != Worn::Yes) {   // There is no worn state to keep.
         out_ = Worn::No;
         return out_;
     }
@@ -169,7 +168,7 @@ void SteamVrClient::refresh_activity() {
         case vr::k_EDeviceActivityLevel_Standby:
             w = Worn::No;
             break;
-        default:   // UserInteraction_Timeout: in between; keep the last decision
+        default:   // For UserInteraction_Timeout, keep the last decision.
             w = worn_.load() == Worn::Unknown ? Worn::Yes : worn_.load();
             break;
         }
@@ -191,7 +190,7 @@ void SteamVrClient::refresh_ipd() {
         v = vr::VRSystem()->GetFloatTrackedDeviceProperty(vr::k_unTrackedDeviceIndex_Hmd, vr::Prop_UserIpdMeters_Float,
                                                           &err);
     });
-    // Anything outside the human range means the property isn't really there.
+    // Ignore a value outside the human range because it means that the property is not set.
     if (err != vr::TrackedProp_Success || !(v > 0.045f && v < 0.085f))
         return;
     if (std::fabs(v - ipd_.load()) > 1e-5)
@@ -218,7 +217,7 @@ void SteamVrClient::run() {
     while (!stop_) {
         const uint64_t now = mono_ns();
         if (!connected_) {
-            // The runtime starts while vrserver is still coming up: retry quietly.
+            // Try again quietly because the runtime can start before vrserver is ready.
             if (now >= next_try && !connect())
                 next_try = now + 2000000000ull;
             if (connected_) {
@@ -258,12 +257,12 @@ void SteamVrClient::run() {
         }
         if (ipd_changed)
             refresh_ipd();
-        // The refresh rate changes with a display mode change; once a second is plenty.
+        // Read the refresh rate once a second because it changes only with a display mode change.
         if (now >= next_display) {
             refresh_display_hz();
             next_display = now + 1000000000ull;
         }
-        // The proximity sensor is polled at 10 Hz (events cover the activity fallback).
+        // Read the proximity sensor at 10 Hz, or at once after an activity event.
         if (activity || now >= next_poll) {
             refresh_activity();
             next_poll = now + 100000000ull;
@@ -273,4 +272,4 @@ void SteamVrClient::run() {
     disconnect();
 }
 
-} // namespace babble
+}

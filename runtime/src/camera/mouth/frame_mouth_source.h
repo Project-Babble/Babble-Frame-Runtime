@@ -18,15 +18,7 @@
 
 namespace babble {
 
-// The Babble mouth camera pair on the Frame's lower extension port: two
-// OV6211 sensors on separate CAMSS video nodes, controlled through the
-// sensor subdev (controls are mirrored to both sensors by the driver; the
-// LED strobe path is on the secondary).
-//
-// Config type "frame_ov6211_stereo". Driven from the main thread by tick(),
-// which waits for the camera arbiter to report the cameras routed; capture
-// runs on two threads that pair frames by timestamp and publish the latest
-// pair to the output slot, subsampled to process_fps.
+// The Babble mouth camera pair of two OV6211 sensors on the lower extension port of the Frame.
 class FrameMouthSource : public ITrackingSource {
 public:
     enum class State { Disabled, WaitingForRoute, Streaming, Backoff, Paused };
@@ -44,7 +36,7 @@ public:
     bool streaming() const override { return state_ == State::Streaming; }
     SourceActivity activity() const override;
     const char *state_name() const override;
-    // While unrouted for a while, the arbiter's explanation (for the UI).
+    // Returns the explanation from the arbiter if the cameras stay unrouted for too long.
     const std::string &last_error() const override { return route_fault_ ? route_error_ : last_error_; }
 
 private:
@@ -60,9 +52,9 @@ private:
     const CameraArbiterClient &arbiter_;
     const SteamVrClient *steamvr_ = nullptr;
     bool pause_when_absent_ = true;
-    bool tracking_ = true;   // main thread only
+    bool tracking_ = true;   // Only the main thread uses this.
     uint64_t unrouted_since_ns_ = 0;
-    bool route_fault_ = false;   // waiting for the route longer than the grace period
+    bool route_fault_ = false;   // True if the wait for the route is longer than the grace period.
     std::string route_error_;
 
     std::unique_ptr<V4l2Capture> left_, right_;
@@ -72,7 +64,7 @@ private:
     RateLimiter limiter_;
     std::atomic<IFrameTap *> tap_{nullptr};
     std::unique_ptr<IExposureController> ae_;
-    std::mutex pair_mutex_;   // limiter + AE are fed from both capture threads
+    std::mutex pair_mutex_;   // Both capture threads use the limiter and the AE.
     uint32_t ae_interval_ = 8;
     uint32_t ae_counter_ = 0;
 
@@ -88,4 +80,4 @@ private:
     LatencyStat skew_, pair_latency_;
 };
 
-} // namespace babble
+}

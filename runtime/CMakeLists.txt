@@ -13,16 +13,13 @@ option(BABBLE_TESTS "Build the runtime unit tests" ON)
 
 set(THIRD_PARTY ${CMAKE_CURRENT_SOURCE_DIR}/../third_party)
 
-# The shipped defaults are compiled into the binary so the runtime never
-# depends on finding its resource folder. They are the profile's version of
-# resources/defaults.json (cmake/babble_profile.cmake, generated at configure).
+# Compile the defaults into the binary so that the runtime does not need its resource folder.
 set(BABBLE_DEFAULTS_FILE ${BABBLE_GENERATED_DIR}/defaults.json)
 file(READ ${BABBLE_DEFAULTS_FILE} BABBLE_DEFAULTS_JSON)
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/resources/defaults.json)
 configure_file(src/core/defaults_json.h.in ${CMAKE_CURRENT_BINARY_DIR}/generated/defaults_json.h @ONLY)
 
-# ExecuTorch runtime, built and installed once by tools/build_executorch.sh
-# (XNNPACK backend + the selected portable kernels our models need).
+# tools/build_executorch.sh builds and installs the ExecuTorch runtime one time.
 set(BABBLE_EXECUTORCH_PREFIX "${CMAKE_CURRENT_SOURCE_DIR}/../../et-install" CACHE PATH
     "Install prefix of the ExecuTorch build (tools/build_executorch.sh)")
 find_package(executorch CONFIG REQUIRED
@@ -92,8 +89,7 @@ add_library(babble_core STATIC
     src/ui/vk_uploader.cpp
 )
 if(BABBLE_FRUNK_MOUTH)
-    # The Frame's own stereo mouth cameras (the front port): V4L2 capture, the
-    # camera arbiter it waits for, and FusionNet. Dev builds only, for now.
+    # Add the code for the stereo mouth cameras of the Frame, which only dev builds use.
     target_sources(babble_core PRIVATE
         src/frame/stereo_pairer.cpp
         src/camera/v4l2/v4l2_capture.cpp
@@ -106,8 +102,7 @@ if(BABBLE_FRUNK_MOUTH)
         src/model/fusionnet_mouth.cpp
         src/model/postprocess/mouth_post.cpp)
 endif()
-# The profile, for the few #if sites (the source/pipeline registries, main's
-# mouth routing) and for the tests; PUBLIC so every target sees the same 0/1.
+# Make the profile flags PUBLIC so that all targets see the same values.
 target_compile_definitions(babble_core PUBLIC
     BABBLE_FRUNK_MOUTH=$<BOOL:${BABBLE_FRUNK_MOUTH}> BABBLE_DEV_FEATURES=$<BOOL:${BABBLE_DEV_FEATURES}>)
 target_include_directories(babble_core
@@ -115,7 +110,7 @@ target_include_directories(babble_core
            ${CMAKE_CURRENT_SOURCE_DIR}/../sdk/include
     SYSTEM PUBLIC ${THIRD_PARTY}/nlohmann_json/single_include ${THIRD_PARTY}/openvr ${THIRD_PARTY}/stb)
 target_compile_options(babble_core PUBLIC -Wall -Wextra -Wno-unused-parameter)
-add_dependencies(babble_core babble_version)   # generated/babble_version.h
+add_dependencies(babble_core babble_version)   # This target makes generated/babble_version.h.
 target_link_libraries(babble_core PUBLIC pthread ${CMAKE_DL_LIBS}
     executorch extension_module_static extension_tensor extension_threadpool
     xnnpack_backend executorch_selected_kernels portable_kernels
@@ -129,38 +124,38 @@ endif()
 
 add_executable(babble_runtime src/main.cpp)
 target_link_libraries(babble_runtime PRIVATE babble_core)
-# libopenvr_api.so (SteamVR client, for eye gaze) ships next to the binary.
+# libopenvr_api.so is in the same folder as the binary.
 set_target_properties(babble_runtime PROPERTIES OUTPUT_NAME babble-runtime
     BUILD_RPATH "${THIRD_PARTY}/openvr/lib/linuxarm64" INSTALL_RPATH "$ORIGIN")
 target_link_options(babble_runtime PRIVATE "-Wl,-rpath,$ORIGIN"
-    -rdynamic)   # function names in crash backtraces (core/crash.cpp)
+    -rdynamic)   # This option puts function names in crash backtraces.
 if(NOT BABBLE_ASAN)
-    # Ships inside a Steam depot: no dependency on the OS's libstdc++.
+    # Link libstdc++ statically because the binary must not use the libstdc++ of the OS.
     target_link_options(babble_runtime PRIVATE -static-libstdc++ -static-libgcc)
 endif()
 
-# Development tool: renders the dashboard pages to PNG without SteamVR.
+# This development tool renders the dashboard pages to PNG without SteamVR.
 add_executable(dashboard_preview tools/dashboard_preview.cpp)
 target_link_libraries(dashboard_preview PRIVATE babble_core)
 set_target_properties(dashboard_preview PROPERTIES BUILD_RPATH "${THIRD_PARTY}/openvr/lib/linuxarm64")
 target_compile_definitions(dashboard_preview PRIVATE BABBLE_RESOURCES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/resources")
 
-# Times a .pte the way the runtime runs it (one pinned core, XNNPACK thread count).
+# This tool measures the time of a .pte model in the same way that the runtime runs it.
 add_executable(model_bench tools/model_bench.cpp)
 target_link_libraries(model_bench PRIVATE babble_core)
 set_target_properties(model_bench PROPERTIES BUILD_RPATH "${THIRD_PARTY}/openvr/lib/linuxarm64")
 
-# Runs an eye model over recorded frames on stdin (compares outputs across codecs).
+# This tool runs an eye model on recorded frames from stdin.
 add_executable(eye_replay tools/eye_replay.cpp)
 target_link_libraries(eye_replay PRIVATE babble_core)
 set_target_properties(eye_replay PROPERTIES BUILD_RPATH "${THIRD_PARTY}/openvr/lib/linuxarm64")
 
-# Packages a recorded dataset session by hand (what the upload queue does).
+# This tool packages a recorded dataset session by hand.
 add_executable(dataset_package tools/dataset_package.cpp)
 target_link_libraries(dataset_package PRIVATE babble_core)
 set_target_properties(dataset_package PROPERTIES BUILD_RPATH "${THIRD_PARTY}/openvr/lib/linuxarm64")
 
-# Streams a Babble face tracker over usbfs and reports/saves what arrives (bring-up and debugging).
+# This debug tool reads frames from a Babble face tracker over usbfs.
 add_executable(babble_usb_probe tools/babble_usb_probe.cpp)
 target_link_libraries(babble_usb_probe PRIVATE babble_core)
 set_target_properties(babble_usb_probe PROPERTIES BUILD_RPATH "${THIRD_PARTY}/openvr/lib/linuxarm64")
@@ -208,7 +203,7 @@ if(BABBLE_TESTS)
         BABBLE_RESOURCES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/resources")
     add_test(NAME babble_tests COMMAND babble_tests)
 
-    # Output plugins the tests load: the SDK template, and one with a wrong ABI version.
+    # The tests load the SDK template plugin and a plugin with a wrong ABI version.
     add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../sdk/templates/output_plugin ${CMAKE_CURRENT_BINARY_DIR}/template_plugin)
     add_library(babble_bad_abi_plugin SHARED tests/plugins/bad_abi.cpp)
     target_include_directories(babble_bad_abi_plugin PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../sdk/include)

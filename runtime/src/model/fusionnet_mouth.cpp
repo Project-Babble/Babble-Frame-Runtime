@@ -9,7 +9,7 @@
 
 namespace {
 const babble::log::Logger LOG("pipe.mouth");
-} // namespace
+}
 
 namespace babble {
 
@@ -19,7 +19,7 @@ constexpr uint32_t kSize = 224;
 
 img::View view_of(const Frame &f) { return {f.data, f.width, f.height, f.stride}; }
 
-} // namespace
+}
 
 bool FusionNetMouth::init() {
     if (!bind_input())
@@ -53,7 +53,7 @@ bool FusionNetMouth::init() {
         return false;
     }
 
-    // Calibration: a user copy in the config dir wins over the shipped default.
+    // A user copy of the calibration in the config dir has priority over the default file.
     const auto cal_cfg = cfg_.value("calibration", nlohmann::json::object());
     mouth::CalibMode mode = mouth::CalibMode::Manual;
     if (!mouth::parse_mode(cal_cfg.value("mode", "auto"), &mode)) {
@@ -103,7 +103,7 @@ void FusionNetMouth::prepare(const StereoFrame &sf, float *view0, float *view1) 
     for (int v = 0; v < 2; v++) {
         img::View cur = view_of(*frames[v]);
         const uint32_t w = cur.width, h = cur.height;
-        // Scratch sized by the frame (the configured format may be larger than the default 400x400).
+        // The frame sets the buffer size because the configured format can be larger than 400x400.
         if (tmp_a_.size() < size_t(w) * h) {
             tmp_a_.resize(size_t(w) * h);
             tmp_b_.resize(size_t(w) * h);
@@ -130,8 +130,7 @@ void FusionNetMouth::prepare(const StereoFrame &sf, float *view0, float *view1) 
 }
 
 void FusionNetMouth::probe(const StereoFrame &sf) {
-    // Try every rotate x swap combination with the configured flip; rank by the
-    // model's UserPresent output (only meaningful for models that have it).
+    // Try each rotate and swap combination and rank them by the UserPresent output of the model.
     if (runner_->outputs()[0].elements() != mouth::kNumChannels) {
         LOG.warn("pipeline %s: orientation probe needs a model with a UserPresent output", name_.c_str());
         probe_left_ = 0;
@@ -164,7 +163,7 @@ void FusionNetMouth::probe(const StereoFrame &sf) {
 }
 
 std::vector<std::pair<SignalId, Signal>> FusionNetMouth::neutral(uint64_t now) const {
-    // A relaxed face (the cameras pause, so nothing follows).
+    // Send a relaxed face because the cameras pause and send no more frames.
     std::vector<std::pair<SignalId, Signal>> updates;
     for (size_t i = 0; i < mouth::kNumShapes; i++)
         updates.emplace_back(ids_[i], Signal{0.0f, 0.0f, now});
@@ -206,4 +205,4 @@ void FusionNetMouth::process(const StereoFrame &sf) {
     inference_.add(t2 - t1);
 }
 
-} // namespace babble
+}

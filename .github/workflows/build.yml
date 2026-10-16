@@ -1,7 +1,6 @@
 name: Build
 
-# Manual release pipeline, modelled on Baballonia's: build the driver folder,
-# then optionally publish it as a GitHub release and/or push it to Steam.
+# This manual workflow builds the driver folder and can publish it as a GitHub release or to Steam.
 
 on:
   workflow_dispatch:
@@ -59,9 +58,7 @@ jobs:
           submodules: true
           lfs: true
 
-      # The version typed in, else the VERSION file's, in the git-tag spelling
-      # ("V1.0 Alpha 4" -> "V1.0-Alpha-4"). Either way it is a release build,
-      # not a dev build: CMake checks the format.
+      # Use the input version or the VERSION file, in the git-tag format ("V1.0-Alpha-4").
       - name: Resolve the version
         id: version
         env:
@@ -81,8 +78,7 @@ jobs:
             fi
           done
 
-      # Releases ship the release profile: the USB Babble tracker is the only
-      # mouth, VRCFaceTracking the only output (cmake/babble_profile.cmake).
+      # Releases use the release profile, which has only the USB Babble mouth tracker and VRCFaceTracking output.
       - name: Build
         uses: ./.github/actions/build-runtime
         with:
@@ -92,12 +88,7 @@ jobs:
       - name: Run the unit tests
         run: build/runtime/babble_tests
 
-      # The tarball unpacks to babble/, the SteamVR driver folder, next to the
-      # scripts for installing it by hand (one-off builds; Steam gets babble/ only):
-      #   babble/driver.vrdrivermanifest, babble/LICENSE
-      #   babble/bin/linuxarm64/{driver_babble.so,babble-runtime,babble-setup,libopenvr_api.so}
-      #   babble/resources/...
-      #   install.sh, uninstall.sh
+      # The tarball holds the babble/ driver folder and the scripts that install it by hand.
       - name: Package driver folder
         run: |
           cp tools/install.sh tools/uninstall.sh build/
@@ -133,7 +124,7 @@ jobs:
         run: |
           cd artifacts
           mv "${ARTIFACT}" "babble-frame-runtime.linuxarm64.${VERSION}.tar.xz"
-          # What tools/get.sh and the runtime's updater check the download against.
+          # tools/get.sh and the runtime updater use this checksum to examine the download.
           sha256sum "babble-frame-runtime.linuxarm64.${VERSION}.tar.xz" > "babble-frame-runtime.linuxarm64.${VERSION}.tar.xz.sha256"
 
       - name: Set dynamic release name
@@ -180,12 +171,7 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-      # Repository secrets: STEAM_USERNAME, STEAM_CONFIG_VDF (same as Baballonia).
-      # Repository variables: STEAM_APP_ID (required) and STEAM_DEPOT_ID
-      # (optional; defaults to STEAM_APP_ID + 1, the first depot of a standard app).
-      # Steam only shows branch controls once a build exists, so the very first
-      # upload has to run with set-live unticked; create the branch on the
-      # Builds page afterwards and later uploads can set live on it.
+      # Run the first upload with set-live off because Steam shows branch controls only after a build exists.
       - name: Validate Steam configuration
         run: |
           if [ -z "${{ vars.STEAM_APP_ID }}" ]; then

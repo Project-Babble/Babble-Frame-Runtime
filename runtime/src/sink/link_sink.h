@@ -19,52 +19,14 @@
 
 namespace babble {
 
-// BFR Link, protocol v1: finds the Baballonia VRCFT module on a PC, keeps a
-// heartbeat to it over every network path that reaches it, and streams the
-// tracked values (as the osc sink does) over the best live path.
-//
-// The Frame can reach a PC over the streaming dongle (its own AP, wlanap),
-// over USB (usb0) and over the home LAN (wlan0), in any combination.
-// Everything travels as UDP datagrams to the module's port 6767: control
-// messages are small JSON objects, data is OSC.
-//
-//   beacon  headset -> broadcast + unicast   {sid, name, version}
-//   query   module  -> broadcast              {mid}        (answered by a beacon)
-//   offer   module  -> beacon's source        {mid, name, busy}
-//   ping    headset -> module, per path, 1 Hz {sid, seq, path, active}
-//   pong    module  -> ping's source          {mid, seq, rx}
-//   bye     either side, on clean shutdown
-//   data    headset -> module, active path    OSC bundles of the osc sink's floats
-//
-// Every control message also has "proto":"bfr-link","v":1 and "type"; the
-// module tells the two apart by the first byte ('{' or '#'/'/'). Beacons,
-// pings and data go out of one socket per interface, so the module's offers
-// and pongs come back on that path, and its address is their source address
-// (never a field). Data shares the pings' address pair on purpose: the
-// module's pongs keep that pair open in the PC's firewall, so data needs no
-// inbound rule there. rx in a pong counts the data datagrams the module has
-// received, which shows whether data actually arrives (status().data).
-// A path is dead after timeout_s without a pong; the best live path in
-// path_order is used, and switching back to a better path waits for 3 good
-// pongs.
-//
-// Config (sinks entry, type "vrcft_link"; also the osc sink's prefix, rename,
-// exclude, max_rate_hz, thread):
-//   control_port   6767
-//   path_order     ["dongle", "usb", "lan"]
-//   interfaces     {"wlanap": "dongle", "usb0": "usb"}; others are "lan"
-//   hosts          ["192.168.1.50", ...] extra unicast beacon targets
-//   beacon_s       [2, 5] beacon period while searching / while connected
-//   ping_s         1
-//   timeout_s      3
-//   name           shown by the module (default: the host name)
+// BFR Link v1 finds the Baballonia VRCFT module on a PC and sends the tracked values over the best live network path.
 namespace link {
 
 struct Message {
-    std::string type;                 // beacon, query, offer, ping, pong, bye
+    std::string type;                 // The message type, for example beacon or pong.
     std::string sid, mid, name, version, path;
     uint64_t seq = 0;
-    std::optional<uint64_t> rx;       // pong: data datagrams received (absent from older modules)
+    std::optional<uint64_t> rx;       // A pong gives the number of data datagrams that the module received.
     bool busy = false, active = false;
 };
 std::string encode(const Message &m);
@@ -73,14 +35,13 @@ std::optional<Message> decode(const char *data, size_t size);
 // One IPv4 interface that can carry the link.
 struct Interface {
     std::string name;
-    uint32_t address = 0, broadcast = 0, netmask = 0;   // host byte order
+    uint32_t address = 0, broadcast = 0, netmask = 0;   // These values use host byte order.
 };
 std::vector<Interface> system_interfaces();
-// The addresses among `candidates` on the interface's own subnet (ARP entries
-// can name a host's addresses from other networks too).
+// Returns the addresses in `candidates` that are on the subnet of the interface.
 std::vector<uint32_t> on_subnet(const Interface &iface, const std::vector<uint32_t> &candidates);
 
-} // namespace link
+}
 
 class LinkSink : public ISink {
 public:
@@ -90,18 +51,17 @@ public:
     bool start() override;
     void stop() override;
 
-    // For tests: replaces the interface scan. Call before start().
+    // Tests use this to replace the interface scan, and they must call it before start().
     void set_interface_source(std::function<std::vector<link::Interface>()> f) { interfaces_fn_ = std::move(f); }
 
-    // For tests and status: the active path's name ("" while searching).
+    // Returns the name of the active path, or "" if no path is active.
     std::string active_path() const;
 
-    // For the debug overlay.
-    enum class Data { Unknown, Arriving, Missing };   // Unknown: not sending, or the module doesn't say
+    enum class Data { Unknown, Arriving, Missing };   // Unknown means that the sink cannot tell.
     struct Status {
         bool linked = false;
-        std::string path, module, address;   // while linked: path kind, PC name, PC address
-        double rtt_ms = -1;                  // the active path's last round trip, -1 = none yet
+        std::string path, module, address;   // The path kind, PC name and PC address of the link.
+        double rtt_ms = -1;                  // The last round trip of the active path, or -1 if none.
         Data data = Data::Unknown;
     };
     Status status() const;
@@ -109,15 +69,15 @@ public:
 private:
     struct Path {
         link::Interface iface;
-        std::string kind;              // dongle / usb / lan
-        std::shared_ptr<SharedSocket> sock;   // shared with the data sender while active
+        std::string kind;              // The kind is dongle, usb or lan.
+        std::shared_ptr<SharedSocket> sock;   // The data sender also uses this socket when the path is active.
         bool has_peer = false;
-        sockaddr_in peer{};            // the module's address on this path (control and data)
+        sockaddr_in peer{};            // The address of the module on this path.
         std::string mid;
         uint64_t last_pong_ns = 0;
-        uint64_t failing_since_ns = 0;  // sends refused (EAGAIN/ENOBUFS) since, 0 = sending fine
-        int good_pongs = 0;            // consecutive
-        std::map<uint64_t, uint64_t> pings;   // seq -> sent time
+        uint64_t failing_since_ns = 0;  // The time when the socket started to refuse sends, or 0 if sends work.
+        int good_pongs = 0;            // The number of good pongs in sequence.
+        std::map<uint64_t, uint64_t> pings;   // This map gives the send time for each seq.
     };
 
     void run();
@@ -127,10 +87,10 @@ private:
     void receive(Path *path, int fd, uint64_t now);
     void handle(Path *path, const link::Message &m, const sockaddr_in &from, uint64_t now);
     void choose(uint64_t now);
-    bool send(int fd, const sockaddr_in &to, const link::Message &m);   // false if the socket refused it
-    void send_on(Path &p, const sockaddr_in &to, const link::Message &m);   // tracks a path that stops sending
-    bool open_socket(Path &p);   // (re)binds the path's socket to its interface address
-    void check_data(uint64_t now);   // 1 Hz: are we sending, and does the module see it?
+    bool send(int fd, const sockaddr_in &to, const link::Message &m);   // It fails if the socket refuses.
+    void send_on(Path &p, const sockaddr_in &to, const link::Message &m);   // Records when a path stops sending.
+    bool open_socket(Path &p);   // Binds the socket of the path to the address of its interface.
+    void check_data(uint64_t now);   // Once each second, finds out if the module gets the data.
     link::Message base(const std::string &type) const;
     bool alive(const Path &p, uint64_t now) const;
     int rank(const std::string &kind) const;
@@ -152,14 +112,14 @@ private:
 
     std::thread thread_;
     std::atomic<bool> stop_{false};
-    int listen_sock_ = -1;             // :control_port, for the module's queries
+    int listen_sock_ = -1;             // The socket on control_port for the queries of the module.
     std::vector<std::unique_ptr<Path>> paths_;
-    std::string module_mid_;           // the module we're linked to ("" = none yet)
+    std::string module_mid_;           // The linked module, or "" if there is none.
     std::string module_name_;
     Path *active_ = nullptr;
     uint64_t seq_ = 0, next_beacon_ns_ = 0, next_ping_ns_ = 0, next_scan_ns_ = 0, last_query_beacon_ns_ = 0;
 
-    // Data arriving at the module: its rx count rising while we send.
+    // The sink knows that data arrives when the rx count of the module increases.
     uint64_t sent_last_ = 0, last_sent_ns_ = 0, sending_since_ns_ = 0, linked_ns_ = 0;
     std::optional<uint64_t> rx_last_;
     uint64_t rx_seen_ns_ = 0;
@@ -170,7 +130,7 @@ private:
     Status status_;
 
     Counter switches_;
-    std::map<std::string, std::unique_ptr<LatencyStat>> rtt_;   // per path kind
+    std::map<std::string, std::unique_ptr<LatencyStat>> rtt_;   // There is one stat for each path kind.
 };
 
-} // namespace babble
+}

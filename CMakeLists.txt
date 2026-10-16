@@ -1,11 +1,7 @@
 cmake_minimum_required(VERSION 3.24)
 project(babble_frame_runtime CXX)
 
-# Version: "V<feature/major>.<bugfix/incremental> <Alpha|Beta|RC|Release> [N]",
-# e.g. "V0.1 Alpha" or "V0.1 Alpha 2" (the Nth build of that stage). Release
-# builds pass it in (-DBABBLE_VERSION="V0.2 Beta 1"; hyphens instead of spaces,
-# "V0.2-Beta-1", also work, for use as a git tag). Otherwise it comes from the
-# VERSION file and the build is marked as a dev build with its commit.
+# Release builds set BABBLE_VERSION, and other builds use the VERSION file and are dev builds.
 set(BABBLE_VERSION "" CACHE STRING "Release version, \"Vx.x Stage [N]\"; empty = VERSION file, dev build")
 if(BABBLE_VERSION)
     set(babble_version "${BABBLE_VERSION}")
@@ -16,7 +12,7 @@ else()
     set(babble_dev ON)
 endif()
 string(STRIP "${babble_version}" babble_version)
-string(REPLACE "-" " " babble_version "${babble_version}")   # the git-tag spelling
+string(REPLACE "-" " " babble_version "${babble_version}")   # Accept the git-tag format with hyphens.
 if(NOT babble_version MATCHES "^V[0-9]+\\.[0-9]+ (Alpha|Beta|RC|Release)( [0-9]+)?$")
     message(FATAL_ERROR "Version \"${babble_version}\" is not \"Vx.x Stage [N]\" "
                         "(Stage: Alpha, Beta, RC or Release; N optional, e.g. \"V0.1 Alpha 2\")")
@@ -26,14 +22,11 @@ message(STATUS "Babble version: ${babble_version}")
 set(BABBLE_GENERATED_DIR ${CMAKE_BINARY_DIR}/generated)
 file(MAKE_DIRECTORY ${BABBLE_GENERATED_DIR})
 
-# The build profile (-DBABBLE_PROFILE=dev|release) and the config files derived
-# from it at configure time (cmake/babble_profile.cmake); the runtime embeds
-# the generated defaults.json, so this comes before add_subdirectory(runtime).
+# Make the profile config files before add_subdirectory(runtime) because the runtime embeds defaults.json.
 include(cmake/babble_profile.cmake)
 babble_profile_generate(${CMAKE_CURRENT_SOURCE_DIR} ${BABBLE_GENERATED_DIR})
 
-# Generates generated/babble_version.h and the versioned settings schema at
-# every build (cmake/babble_version.cmake).
+# Make babble_version.h and the versioned settings schema at every build.
 add_custom_target(babble_version ALL
     COMMAND ${CMAKE_COMMAND} -DSRC_DIR=${CMAKE_CURRENT_SOURCE_DIR} -DOUT_DIR=${BABBLE_GENERATED_DIR}
             -DVERSION=${babble_version} -DDEV=${babble_dev} -DPROFILE=${BABBLE_PROFILE}
@@ -43,10 +36,6 @@ add_custom_target(babble_version ALL
     COMMENT "Version ${babble_version} (${BABBLE_PROFILE} profile)"
     VERBATIM)
 
-# Builds the runtime daemon first, then the SteamVR driver folder that bundles it:
-#   build/babble/driver.vrdrivermanifest
-#   build/babble/bin/<platform>/driver_babble.so
-#   build/babble/bin/<platform>/babble-runtime
-#   build/babble/resources/...
+# Build the runtime daemon first because the SteamVR driver folder in build/babble contains it.
 add_subdirectory(runtime)
 add_subdirectory(driver)

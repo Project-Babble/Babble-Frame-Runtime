@@ -1,16 +1,4 @@
-// babble-setup: what Steam runs when the user presses Play on the Babble
-// Frame Runtime app.
-//
-// The driver folder Steam installs is only useful once SteamVR knows about
-// it, so this registers the folder as an external driver (the same edit
-// `vrpathreg adddriver` makes to openvrpaths.vrpath) and, if SteamVR is
-// running without the driver loaded, restarts SteamVR so vrserver picks it
-// up. On later launches the driver is already active and this just says so.
-//
-// Steam launches it inside the Steam Linux Runtime container, so it depends
-// only on files under $HOME, /proc and whatever systemd or D-Bus tooling is
-// reachable from there; every attempt is logged to
-// $XDG_STATE_HOME/babble-frame-runtime/setup.log for debugging.
+// Steam runs babble-setup on Play, and it registers the driver folder with SteamVR and restarts SteamVR if necessary.
 
 #include <nlohmann/json.hpp>
 
@@ -69,10 +57,10 @@ fs::path state_dir() {
     return dir;
 }
 
-// The runtime's user settings (settings.json).
+// The runtime keeps its user settings.json in this directory.
 fs::path config_dir() { return xdg_dir("XDG_CONFIG_HOME", ".config") / "babble-frame-runtime"; }
 
-// <install dir>/bin/linuxarm64/babble-setup -> <install dir>
+// Get the install directory, which is three levels above the babble-setup binary.
 fs::path install_dir() {
     char buf[4096];
     ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
@@ -82,8 +70,7 @@ fs::path install_dir() {
     return fs::path(buf).parent_path().parent_path().parent_path();
 }
 
-// $XDG_CONFIG_HOME/openvr/openvrpaths.vrpath, where vrpathreg keeps the
-// runtime, config and external driver lists.
+// vrpathreg keeps the list of external drivers in this file.
 fs::path vrpath_file() { return xdg_dir("XDG_CONFIG_HOME", ".config") / "openvr" / "openvrpaths.vrpath"; }
 
 bool is_driver_folder(const fs::path &dir) {
@@ -103,10 +90,7 @@ std::string driver_name_of(const fs::path &dir) {
     }
 }
 
-// Adds (or with remove=true drops) the install dir in external_drivers.
-// Stale entries for a previous install of this same driver are dropped too,
-// so moving the Steam library does not leave SteamVR looking at both.
-// Returns true if the file changed; *ok is false if it could not be updated.
+// Add or remove the install dir in external_drivers, and return true if the file changed.
 bool update_registration(const fs::path &dir, bool remove, bool *ok) {
     *ok = false;
     const fs::path file = vrpath_file();
@@ -138,7 +122,7 @@ bool update_registration(const fs::path &dir, bool remove, bool *ok) {
         const fs::path p(d.get<std::string>());
         std::error_code ec;
         if (p == dir || fs::equivalent(p, dir, ec)) {
-            if (remove || present) {   // present twice: keep one
+            if (remove || present) {   // Keep only one entry if the list has the folder two times.
                 changed = true;
                 continue;
             }
@@ -146,9 +130,7 @@ bool update_registration(const fs::path &dir, bool remove, bool *ok) {
             kept.push_back(dir.string());
             continue;
         }
-        // Another copy of this driver is stale (SteamVR would try to load
-        // both): a folder whose manifest names it, or a vanished folder with
-        // this app's install folder name. Other vendors' entries are theirs.
+        // Remove old entries for this driver because SteamVR tries to load all of them.
         const bool same_app = p.filename() == dir.filename();
         if ((fs::exists(p, ec) && driver_name_of(p) == kDriverName) || (!fs::exists(p, ec) && same_app)) {
             Log("dropping stale external driver entry %s", p.c_str());
@@ -192,8 +174,7 @@ bool update_registration(const fs::path &dir, bool remove, bool *ok) {
     return true;
 }
 
-// Processes with this comm name, from /proc (shared with the host even inside
-// the Steam Linux Runtime container).
+// Count the processes with this comm name in /proc, which the container shares with the host.
 int count_processes(const char *comm) {
     int n = 0;
     DIR *d = opendir("/proc");
@@ -251,11 +232,7 @@ bool exists(const std::string &path) {
     return stat(path.c_str(), &st) == 0;
 }
 
-// Asks the user session's systemd to restart SteamVR. On the Frame vrserver
-// lives in steamvr.service and the gamescope session is part of it, so this
-// is the same restart the system itself performs. Tried in order until one
-// exits 0: systemctl from PATH, the host's systemctl through /run/host (how
-// the Steam Linux Runtime container exposes the host), then the session bus.
+// Ask the systemd of the user session to restart steamvr.service, and try each method until one succeeds.
 bool restart_steamvr() {
     std::vector<std::vector<std::string>> attempts = {
         {"systemctl", "--user", "--no-block", "restart", kSteamVrUnit},
@@ -302,7 +279,7 @@ void usage() {
             "                                   running, remove the state and settings dirs)\n");
 }
 
-} // namespace
+}
 
 int main(int argc, char **argv) {
     bool unregister = false, status_only = false, no_restart = false, purge = false;
@@ -349,9 +326,7 @@ int main(int argc, char **argv) {
         Log(changed ? "registered %s as a SteamVR driver" : "%s is already registered as a SteamVR driver", dir.c_str());
 
     if (purge) {
-        // Steam deletes the install folder next; the running driver shim
-        // notices that and stops the runtime, so nothing else is needed for
-        // tracking to end. What Steam does not know about is ours to remove.
+        // Remove the state and settings dirs because Steam removes only the install folder.
         if (g_log) {
             fclose(g_log);
             g_log = nullptr;
@@ -363,9 +338,7 @@ int main(int argc, char **argv) {
         }
     }
 
-    // SteamVR reads the list when it starts, so with no vrserver there is
-    // nothing more to do; likewise when the driver is already in the state
-    // we want.
+    // SteamVR reads the driver list when it starts, so a restart is necessary only if vrserver runs.
     if (vrserver_procs <= 0) {
         Log("SteamVR is not running; it will %s the driver next time it starts", unregister ? "skip" : "load");
         return 0;

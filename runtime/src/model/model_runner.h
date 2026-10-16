@@ -29,9 +29,7 @@ struct TensorView {
     const TensorSpec *spec = nullptr;
 };
 
-// One inference model. Milestone 2 adds an ExecuTorch implementation; the
-// pipeline only sees this interface, so separate eye/mouth models and a
-// future merged model are just different pipeline configurations.
+// This interface is one inference model, so the pipeline does not depend on the model type.
 class IModelRunner {
 public:
     virtual ~IModelRunner() = default;
@@ -41,4 +39,4 @@ public:
     virtual bool run(std::span<const TensorView> in, std::span<TensorView> out) = 0;
 };
 
-} // namespace babble
+}

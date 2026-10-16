@@ -10,7 +10,7 @@
 
 namespace {
 const babble::log::Logger LOG("debug");
-} // namespace
+}
 
 namespace babble {
 
@@ -65,7 +65,7 @@ void DebugSink::offer_frames(const std::string &source, const StereoFrame &sf) {
 }
 
 void DebugSink::write_pgm(const std::string &source, Channel &ch, const StereoFrame &sf) {
-    // Side by side, left view first; both views share a height.
+    // Put the left view and the right view side by side with the same height.
     const Frame &l = *sf.left, &r = *sf.right;
     uint32_t h = std::min(l.height, r.height), w = l.width + r.width;
     std::vector<uint8_t> img(size_t(w) * h);
@@ -120,10 +120,10 @@ void DebugSink::run() {
             LOG.debug("signals: %s", line.c_str());
             next_log = now + period;
         }
-        // Poll quickly only while dumps are pending (or may start); otherwise the log rate.
+        // Poll quickly only when a frame dump is pending or can start.
         bool dumping = dump_count_ > 0 && (pending_ > 0 || !any_channel_);
         sleep_ns(dumping ? 5000000ull : std::min<uint64_t>(period, 200000000ull));
     }
 }
 
-} // namespace babble
+}

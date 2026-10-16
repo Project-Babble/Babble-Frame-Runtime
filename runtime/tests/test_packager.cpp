@@ -29,8 +29,7 @@ std::string slurp(const fs::path &p) {
     return std::string(std::istreambuf_iterator<char>(f), {});
 }
 
-// A complete session: n frames of w x h gray (a moving gradient plus sensor-like
-// noise) as lossless x264 in eye.mkv, with stamps, labels and a routine.
+// Makes a complete session with n gray frames of w x h as lossless x264 in eye.mkv, with stamps, labels and a routine.
 bool make_session(const fs::path &dir, uint32_t w, uint32_t h, int n) {
     fs::create_directories(dir);
     std::mt19937 rng(1);
@@ -65,7 +64,7 @@ bool make_session(const fs::path &dir, uint32_t w, uint32_t h, int n) {
     return true;
 }
 
-} // namespace
+}
 
 TEST_CASE("packager: refuses what it can't package, and a missing encoder is retried") {
     const fs::path dir = fs::temp_directory_path() / ("babble_pkg_" + std::to_string(getpid()));
@@ -83,7 +82,8 @@ TEST_CASE("packager: refuses what it can't package, and a missing encoder is ret
 
     if (Process::find_in_path("ffmpeg") && make_session(dir / "c", 64, 32, 10)) {
         PackagerOptions o;
-        o.encoder_device = "/dev/null";   // not an encoder: a passing problem, tried again later
+        // This path is not an encoder, so the problem is temporary and the packager tries again later.
+        o.encoder_device = "/dev/null";
         r = make_package(dir / "c", o);
         CHECK_FALSE(r.ok);
         CHECK(r.retry);
@@ -101,7 +101,7 @@ TEST_CASE("packager: a session becomes a verified, hashed H.265 package (hardwar
     }
     const fs::path dir = fs::temp_directory_path() / ("babble_pkg_hw_" + std::to_string(getpid())) / "s1";
     fs::remove_all(dir.parent_path());
-    const int n = 300;   // a little over 4 s at 72: three stills
+    const int n = 300;   // This is a little more than 4 s at 72 fps, which gives three stills.
     REQUIRE(make_session(dir, 320, 160, n));
     PackagerOptions o;
     double last = 0;
@@ -110,7 +110,7 @@ TEST_CASE("packager: a session becomes a verified, hashed H.265 package (hardwar
     REQUIRE_MESSAGE(r.ok, r.error);
     CHECK(last == 1.0);
     CHECK(r.tar == dir / "package.tar");
-    CHECK_FALSE(fs::exists(dir / "package"));   // built in, then removed
+    CHECK_FALSE(fs::exists(dir / "package"));   // The packager builds and then removes this directory.
 
     const json &src = r.package["sources"]["eye"];
     CHECK(src["frames"] == n);

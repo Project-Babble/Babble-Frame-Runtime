@@ -6,7 +6,7 @@
 #include <sstream>
 #include <vector>
 
-// Vulkan structs are initialised as {sType} with the rest zeroed on purpose.
+// The code sets only sType in Vulkan structs and intentionally leaves the other fields at zero.
 #pragma GCC diagnostic ignored "-Wmissing-field-initializers"
 
 namespace babble::ui {
@@ -28,7 +28,7 @@ std::vector<const char *> c_strs(const std::vector<std::string> &v) {
     return out;
 }
 
-} // namespace
+}
 
 struct VkUploader::Impl {
     VkInstance instance = VK_NULL_HANDLE;
@@ -287,4 +287,4 @@ bool VkUploader::upload(const uint8_t *rgba, vr::VRVulkanTextureData_t *out, std
 
 void VkUploader::release() { impl_->release(); }
 
-} // namespace babble::ui
+}

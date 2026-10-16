@@ -30,7 +30,7 @@ mouth::Calibration shipped_calibration() {
 }
 #endif
 
-} // namespace
+}
 
 #if BABBLE_FRUNK_MOUTH
 TEST_CASE("mouth post-processing: unfiltered it is the reference calibration") {
@@ -56,7 +56,7 @@ TEST_CASE("mouth post-processing: the One Euro filter steadies noise and follows
     mouth::Post post(mouth::kOneEuro, mouth::CalibMode::Raw, mouth::Calibration{});
     mouth::Vec p{};
     double sum = 0, sq = 0;
-    for (int i = 0; i < 240; i++) {   // 4 s of +-0.05 jitter around 0.3 at 60 Hz
+    for (int i = 0; i < 240; i++) {   // The input has 4 s of +-0.05 jitter around 0.3 at 60 Hz.
         p[4] = 0.3f + ((i % 2) ? 0.05f : -0.05f);
         const float y = post.process(p, i ? 1.0 / 60 : 0.0)[4];
         if (i >= 120) {
@@ -66,9 +66,9 @@ TEST_CASE("mouth post-processing: the One Euro filter steadies noise and follows
     }
     const double mean = sum / 120, sd = std::sqrt(sq / 120 - mean * mean);
     CHECK(mean == doctest::Approx(0.3).epsilon(0.02));
-    CHECK(sd < 0.01);   // the input's is 0.05
+    CHECK(sd < 0.01);   // The standard deviation of the input is 0.05.
     float y = 0;
-    for (int i = 0; i < 12; i++) {   // the jaw drops to 0.9: within 200 ms
+    for (int i = 0; i < 12; i++) {   // The jaw drops to 0.9, and the output must follow within 200 ms.
         p[4] = 0.9f;
         y = post.process(p, 1.0 / 60)[4];
     }
@@ -101,8 +101,7 @@ TEST_CASE("eye lid calibration and pupil gating match eye_osc_pc.py") {
             std::optional<double> y;
             if (int(i) % every == 0)
                 y = pupil[i][e].get<double>();
-            // The shown diameter is filtered differently now (One Euro, not the
-            // reference's EMA); whether the pupil is live is unchanged.
+            // Only the pupil liveness must match the reference, because the shown diameter uses a different filter.
             auto r = trk[e].update(o[e], y);
             CHECK(r.live == expected[i]["live"][e].get<bool>());
         }
@@ -118,7 +117,7 @@ TEST_CASE("one_euro_params: settings, true for the defaults, false for none") {
 }
 
 TEST_CASE("the eye openness filter steadies the rest and still shows a blink") {
-    // The lid default against jitter at neutral (1.0 +- 0.03) and a 150 ms blink at 90 Hz.
+    // Test the lid default with jitter at neutral (1.0 +- 0.03) and a 150 ms blink at 90 Hz.
     OneEuro f(1, eye::kLidOneEuro);
     const double dt = 1.0 / 90;
     double y = f.apply(1.0, 0.0), sq = 0;
@@ -127,15 +126,15 @@ TEST_CASE("the eye openness filter steadies the rest and still shows a blink") {
         if (i >= 90)
             sq += (y - 1.0) * (y - 1.0);
     }
-    CHECK(std::sqrt(sq / 90) < 0.015);   // the input's is 0.03
+    CHECK(std::sqrt(sq / 90) < 0.015);   // The jitter of the input is 0.03.
     double low = y;
-    for (int i = 0; i < 14; i++)          // closed (0.1) for ~150 ms
+    for (int i = 0; i < 14; i++)          // The lid is closed (0.1) for about 150 ms.
         low = std::min(low, f.apply(0.1, dt));
-    CHECK(low < 0.2);                     // the blink reaches nearly closed
+    CHECK(low < 0.2);                     // The blink reaches almost closed.
     int frames = 0;
     for (y = low; y < 0.9 && frames < 90; frames++)
         y = f.apply(1.0, dt);
-    CHECK(frames <= 6);                   // and opens again within ~65 ms
+    CHECK(frames <= 6);                   // The lid opens again within about 65 ms.
 }
 
 TEST_CASE("percentile matches numpy linear interpolation") {
@@ -153,33 +152,32 @@ TEST_CASE("rate scaling is the identity at the reference rate") {
     CHECK(s.limit(0.6) == 0.6);
     CHECK(s.count(20 * 90.0) == 1800);
     CHECK(s.count(3 * 90.0) == 270);
-    CHECK(s.count(0.1 * 90.0) == 9);   // int(0.1 * 90) like the reference
+    CHECK(s.count(0.1 * 90.0) == 9);   // The count is int(0.1 * 90), as in the reference.
     CHECK(s.count(30) == 30);
 }
 
 TEST_CASE("at 30 Hz the eye filters behave like 90 Hz over the same time") {
     eye::RateScale s{90, 30};
     CHECK(s.k() == doctest::Approx(3.0));
-    CHECK(s.count(20 * 90.0) == 600);   // 20 s window
-    CHECK(s.count(3 * 90.0) == 90);     // 3 s warm-up
-    CHECK(s.count(0.1 * 90.0) == 3);    // 0.1 s blink hold
-    CHECK(s.count(30) == 10);           // lid reference recomputed every 1/3 s
+    CHECK(s.count(20 * 90.0) == 600);   // The window is 20 s.
+    CHECK(s.count(3 * 90.0) == 90);     // The warm-up is 3 s.
+    CHECK(s.count(0.1 * 90.0) == 3);    // The blink hold is 0.1 s.
+    CHECK(s.count(30) == 10);           // The lid reference is calculated again every 1/3 s.
 
-    // Lid smoothing: one 30 Hz step equals three 90 Hz steps.
+    // For lid smoothing, one 30 Hz step is equal to three 90 Hz steps.
     double at90 = 0, at30 = 0;
     for (int i = 0; i < 3; i++)
         at90 += 0.6 * (1.0 - at90);
     at30 += s.alpha(0.6) * (1.0 - at30);
     CHECK(at30 == doctest::Approx(at90).epsilon(1e-12));
 
-    // Pupil display: a step in the pupil size is followed at the same speed
-    // (per second) at both rates, rate limit included.
+    // The pupil display follows a step in pupil size at the same speed per second at both rates, with the rate limit.
     auto follow = [](double hz, double seconds) {
         eye::RateScale r{90, hz};
         eye::PupilTracker t(0.4, 0.1, int(r.count(9)), eye::kPupilOneEuro, 0.6, 10, 5);
-        const double small = 0.5, large = 2.0, dt = 1.0 / hz;   // model outputs (area / 3000)
+        const double small = 0.5, large = 2.0, dt = 1.0 / hz;   // These are model outputs (area / 3000).
         auto res = t.update(1.0, small, r.k());
-        for (int i = 0; i < int(1.0 * hz); i++)   // settle at the small size, eye open
+        for (int i = 0; i < int(1.0 * hz); i++)   // Let the size settle at the small value with the eye open.
             res = t.update(1.0, small, r.k(), dt);
         res = t.update(1.0, large, r.k(), dt);
         for (int i = 1; i < int(seconds * hz); i++)
@@ -190,7 +188,7 @@ TEST_CASE("at 30 Hz the eye filters behave like 90 Hz over the same time") {
     for (double sec : {0.1, 0.3, 1.0}) {
         const double p90 = follow(90, sec), p30 = follow(30, sec);
         CAPTURE(sec);
-        // Same progress towards the new size within a couple of percent of the step.
+        // The progress towards the new size must be the same within a few percent of the step.
         CHECK(std::fabs(p90 - p30) < 0.03 * (target - start));
     }
 }
@@ -200,7 +198,7 @@ TEST_CASE("lid calibrator keeps its samples when retimed") {
     for (int i = 0; i < 400; i++)
         c.update(0.9);
     CHECK(c.ready());
-    c.set_timing(600, 90, 10);   // switched to 30 Hz
+    c.set_timing(600, 90, 10);   // The rate changed to 30 Hz.
     CHECK(c.ready());
     CHECK(c.ref() == doctest::Approx(0.9));
     CHECK(c.update(0.9) == doctest::Approx(1.0));
@@ -212,13 +210,13 @@ TEST_CASE("update rate follows frame intervals and skips pauses") {
     for (int i = 0; i < 300; i++, t += 33'333'333)
         r.tick(t);
     CHECK(r.hz() == doctest::Approx(30).epsilon(0.01));
-    r.tick(t + 5'000'000'000ull);   // a 5 s pause is not an interval
+    r.tick(t + 5'000'000'000ull);   // A 5 s pause is not an interval.
     CHECK(r.hz() == doctest::Approx(30).epsilon(0.01));
 }
 
 namespace {
 
-// Feeds a constant raw openness for `seconds` at `hz`; returns the last output.
+// Feeds a constant raw openness for `seconds` at `hz` and returns the last output.
 eye::OpennessCalibrator::Out hold(eye::OpennessCalibrator &c, double raw, double seconds, double hz = 90) {
     eye::OpennessCalibrator::Out out;
     for (int i = 0; i < int(seconds * hz); i++)
@@ -228,18 +226,19 @@ eye::OpennessCalibrator::Out hold(eye::OpennessCalibrator &c, double raw, double
 
 eye::OpennessCalibrator seeded(double neutral) {
     eye::OpennessCalibrator c;
-    hold(c, neutral, 4.0);   // 1 s skipped, 2 s warm-up, then running
+    hold(c, neutral, 4.0);   // The calibrator skips 1 s, warms up for 2 s and then runs.
     REQUIRE(c.ready());
     return c;
 }
 
-} // namespace
+}
 
 TEST_CASE("openness baseline: seeds from the warm-up and reads 1 at neutral") {
     eye::OpennessCalibrator c;
     auto first = hold(c, 0.7, 0.5);
     CHECK_FALSE(first.ready);
-    CHECK(first.openness == doctest::Approx(0.7));   // uncalibrated pass-through until seeded
+    // The value passes through without calibration until the calibrator has a seed.
+    CHECK(first.openness == doctest::Approx(0.7));
     auto out = hold(c, 0.7, 3.5);
     REQUIRE(out.ready);
     CHECK(c.baseline() == doctest::Approx(0.7));
@@ -259,24 +258,24 @@ TEST_CASE("openness baseline: a 10 s wide hold keeps the neutral and keeps Widen
     hold(c, 0.7, 20);
     const double b = c.baseline();
     double min_widen = 1;
-    for (int i = 0; i < 900; i++) {   // 10 s at 0.85 (1.21x neutral)
+    for (int i = 0; i < 900; i++) {   // The input is 10 s at 0.85, which is 1.21x neutral.
         auto out = c.update(0.85, 1.0 / 90);
-        if (i > 45)   // after the smoothing has caught up
+        if (i > 45)   // Wait until the smoothing catches up.
             min_widen = std::min(min_widen, out.widen);
     }
     CHECK(c.baseline() == doctest::Approx(b).epsilon(0.01));
-    CHECK(min_widen > 0.95);   // no erosion over the hold
+    CHECK(min_widen > 0.95);   // The value does not erode during the hold.
 }
 
 TEST_CASE("openness baseline: blinks don't move it, slow drift is followed") {
     auto c = seeded(0.7);
-    for (int k = 0; k < 20; k++) {   // 20 blinks of 150 ms every second
+    for (int k = 0; k < 20; k++) {   // Make 20 blinks of 150 ms, one each second.
         hold(c, 0.7, 0.85);
         hold(c, 0.05, 0.15);
     }
     CHECK(c.baseline() == doctest::Approx(0.7).epsilon(0.005));
 
-    for (int s = 0; s < 60; s++)     // 10% higher over a minute (a strap shift)
+    for (int s = 0; s < 60; s++)     // The value increases by 10% over a minute, as from a strap shift.
         hold(c, 0.7 * (1.0 + 0.1 * (s + 1) / 60.0), 1.0);
     hold(c, 0.77, 60);
     CHECK(c.baseline() == doctest::Approx(0.77).epsilon(0.02));
@@ -286,16 +285,16 @@ TEST_CASE("openness ceiling: seed first, then the person's own wide peak") {
     auto c = seeded(0.7);
     hold(c, 0.7, 5);
     CHECK(c.ceiling() == doctest::Approx(1.15));
-    // A mild widening before any peak is scaled by the seed.
+    // The seed scales a mild widening that comes before a peak.
     auto mild = hold(c, 0.7 * 1.075, 1);
     CHECK(mild.widen == doctest::Approx(0.5).epsilon(0.05));
     hold(c, 0.7, 2);
-    // A sustained wide at 1.21x raises the ceiling; the same wide later reads ~1.
+    // A sustained wide at 1.21x raises the ceiling, so the same wide later reads about 1.
     hold(c, 0.85, 2);
     CHECK(c.ceiling() == doctest::Approx(0.85 / 0.7).epsilon(0.02));
     hold(c, 0.7, 3);
     CHECK(hold(c, 0.85, 1).widen > 0.95);
-    // A single-frame spike doesn't move it; the cap bounds glitches.
+    // A single-frame spike does not move the ceiling.
     const double before = c.ceiling();
     c.update(3.0, 1.0 / 90);
     hold(c, 0.7, 1);
@@ -322,7 +321,7 @@ TEST_CASE("openness calibration behaves the same over time at 30 Hz") {
 }
 
 TEST_CASE("openness ceiling never exceeds the model's saturation, per eye") {
-    // Two eyes with different neutrals: at raw 1.0 (saturation) both reach Widen 1.
+    // Two eyes with different neutrals both reach Widen 1 at raw 1.0 (saturation).
     for (double neutral : {0.72, 0.9}) {
         CAPTURE(neutral);
         auto c = seeded(neutral);
@@ -330,13 +329,13 @@ TEST_CASE("openness ceiling never exceeds the model's saturation, per eye") {
         CHECK(c.ceiling() <= 1.0 / neutral + 1e-9);
         hold(c, 1.0, 2);
         CHECK(hold(c, 1.0, 1).widen > 0.95);
-        // Glitches above saturation can't raise the ceiling past it.
+        // Glitches above saturation cannot raise the ceiling past it.
         hold(c, 1.4, 1);
         hold(c, neutral, 2);
         CHECK(c.ceiling() * c.baseline() <= 1.0 + 1e-9);
         CHECK(hold(c, 1.0, 1).widen > 0.95);
     }
-    // A neutral at saturation still gets a small span, never a division by ~0.
+    // A neutral at saturation still gets a small span, so there is never a division by about 0.
     auto c = seeded(0.99);
     CHECK(c.ceiling() >= 1.02);
 }

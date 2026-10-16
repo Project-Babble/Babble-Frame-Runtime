@@ -8,11 +8,7 @@
 
 namespace babble::capture {
 
-// The dataset capture app's control socket: a Unix stream socket speaking
-// JSON lines (capture_protocol.h), one client at a time. Main thread,
-// non-blocking: main adds fds() to its epoll and calls on_readable(); a second
-// client is told "busy" and closed. If the client goes away mid-recording the
-// recording is stopped.
+// The non-blocking Unix control socket for the capture app, which accepts one client at a time on the main thread.
 class Server {
 public:
     explicit Server(Backend &backend) : backend_(backend) {}
@@ -22,18 +18,17 @@ public:
     void close();
     const std::filesystem::path &path() const { return path_; }
 
-    std::vector<int> fds() const;   // the listening socket, and the client's if connected
+    std::vector<int> fds() const;   // Returns the listening socket and the client socket if a client is connected.
     void on_readable(int fd);
     bool connected() const { return client_ >= 0; }
     bool greeted() const { return client_ >= 0 && conn_.greeted(); }
 
-    // An event for the client (status, stopped); dropped if none is connected.
+    // Sends an event to the client, or drops it if no client is connected.
     void send(const nlohmann::json &event);
-    // The recording finished: sends "stopped" (with the stop request's id).
+    // Sends the "stopped" event with the id of the stop request after the recording is finished.
     void stopped(nlohmann::json event);
 
-    // Main loop hook: called after the client fd set changes (connect or
-    // disconnect), so main can update its epoll.
+    // Returns true once after the client fd set changes, so that main can update its epoll.
     bool take_fds_changed() {
         const bool c = fds_changed_;
         fds_changed_ = false;
@@ -54,4 +49,4 @@ private:
     bool fds_changed_ = false;
 };
 
-} // namespace babble::capture
+}

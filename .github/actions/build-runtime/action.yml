@@ -46,9 +46,7 @@ runs:
         echo "et-sha=$(git rev-parse HEAD:third_party/executorch)" >> "$GITHUB_OUTPUT"
         echo "package-dir=${GITHUB_WORKSPACE}/build/babble" >> "$GITHUB_OUTPUT"
 
-    # ExecuTorch (XNNPACK + the selected portable kernels) takes far longer to
-    # build than the runtime itself, so its install prefix is cached. The key
-    # changes whenever the pinned ExecuTorch commit or the build script changes.
+    # Cache the ExecuTorch install prefix because ExecuTorch takes much longer to build than the runtime.
     - name: Restore ExecuTorch build
       id: et-cache
       uses: actions/cache@v4
@@ -61,7 +59,7 @@ runs:
       run: |
         python3 -m venv "${{ steps.paths.outputs.et-venv }}"
         "${{ steps.paths.outputs.et-venv }}/bin/pip" install --upgrade pip
-        # ExecuTorch's vendored third-party projects still need a pre-4.0 CMake.
+        # The vendored third-party projects of ExecuTorch need a CMake version before 4.0.
         "${{ steps.paths.outputs.et-venv }}/bin/pip" install "cmake>=3.24,<4" ninja
         echo "${{ steps.paths.outputs.et-venv }}/bin" >> "$GITHUB_PATH"
 
@@ -69,10 +67,7 @@ runs:
       if: steps.et-cache.outputs.cache-hit != 'true'
       shell: bash
       run: |
-        # Build-time only: ExecuTorch generates its kernel registration code
-        # with torchgen, which ships inside the torch wheel. The binaries this
-        # action produces do not depend on torch. CPU wheel, pinned version
-        # first (the one this ExecuTorch commit was released against).
+        # ExecuTorch uses torchgen from the torch wheel to make its kernel registration code at build time only.
         pip install pyyaml
         pip install "torch==2.13.0" --index-url https://download.pytorch.org/whl/cpu \
           || pip install torch --index-url https://download.pytorch.org/whl/cpu

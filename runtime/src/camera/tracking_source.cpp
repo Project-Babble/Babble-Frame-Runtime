@@ -9,7 +9,7 @@
 
 namespace {
 const babble::log::Logger LOG("source");
-} // namespace
+}
 
 namespace babble {
 
@@ -32,4 +32,4 @@ std::unique_ptr<ITrackingSource> make_tracking_source(const nlohmann::json &cfg,
     return nullptr;
 }
 
-} // namespace babble
+}

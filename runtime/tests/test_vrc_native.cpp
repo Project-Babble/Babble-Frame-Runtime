@@ -26,13 +26,13 @@ using json = nlohmann::json;
 TEST_CASE("OSC blob messages are encoded per the OSC 1.0 spec") {
     uint8_t buf[64];
     const uint8_t data[5] = {1, 2, 3, 4, 5};
-    // "/b" -> 4; ",b" -> 4; size 5 big-endian -> 4; data 5 padded to 8.
+    // The parts are "/b" (4), ",b" (4), the big-endian size 5 (4) and the data 5 padded to 8.
     const size_t n = osc::encode_blob("/b", data, sizeof(data), buf, sizeof(buf));
     REQUIRE(n == 20);
     const uint8_t expect[20] = {'/', 'b', 0, 0, ',', 'b', 0, 0, 0, 0, 0, 5, 1, 2, 3, 4, 5, 0, 0, 0};
     CHECK(memcmp(buf, expect, 20) == 0);
     CHECK(osc::encode_blob("/b", data, sizeof(data), buf, 19) == 0);
-    // The face blob: 20-byte address block + 4 + 4 + 104.
+    // The face blob is a 20-byte address block + 4 + 4 + 104.
     uint8_t face[vrc_native::kBlobSize] = {};
     CHECK(osc::encode_blob(vrc_native::kAddress, face, sizeof(face), buf, 0) == 0);
     uint8_t big[160];
@@ -45,10 +45,11 @@ TEST_CASE("signals map onto VRCFaceTracking's blob as its module maps them") {
     CHECK(vrc_native::target_of("jawOpen").shapes == std::vector<uint8_t>{22});
     CHECK(vrc_native::target_of("mouthFunnel").shapes.size() == 4);
     CHECK(vrc_native::target_of("LeftEyeWiden").shapes == std::vector<uint8_t>{3});
-    CHECK(vrc_native::target_of("LeftEyeDilation").kind == vrc_native::Target::None);   // not in the blob
+    // This signal is not in the blob.
+    CHECK(vrc_native::target_of("LeftEyeDilation").kind == vrc_native::Target::None);
     CHECK(vrc_native::target_of("_LeftEyeLidRaw").kind == vrc_native::Target::None);
 
-    // Nothing set: eyes open (closed bytes 0), everything else 0.
+    // When nothing is set, the eyes are open (closed bytes are 0) and all other values are 0.
     CHECK(vrc_native::encode({}, {}) == vrc_native::Blob{});
 
     const std::vector<std::string> names = {"RightEyeX", "RightEyeY", "LeftEyeX", "LeftEyeY",
@@ -59,24 +60,24 @@ TEST_CASE("signals map onto VRCFaceTracking's blob as its module maps them") {
     const std::vector<std::optional<float>> values = {0.5f, -1.0f, -0.25f, 2.0f, 0.0f, 0.75f, 1.0f, 0.5f,
                                                       std::nullopt};
     const auto b = vrc_native::encode(targets, values);
-    // Right gaze: +x, -x, +y, -y (VRCFT truncates: 0.5 * 255 = 127).
+    // The right gaze is +x, -x, +y, -y, and VRCFT truncates, so 0.5 * 255 = 127.
     CHECK(b[0] == 127);
     CHECK(b[1] == 0);
     CHECK(b[2] == 0);
     CHECK(b[3] == 255);
-    // Left gaze: -x, +x, +y, -y (clamped).
+    // The left gaze is -x, +x, +y, -y, with a clamp.
     CHECK(b[4] == 63);
     CHECK(b[5] == 0);
     CHECK(b[6] == 255);
     CHECK(b[7] == 0);
-    // Closed = 1 - openness: right shut, left a quarter closed.
+    // Closed is 1 - openness, so the right eye is shut and the left eye is a quarter closed.
     CHECK(b[8] == 255);
     CHECK(b[9] == 63);
     for (int i = 10; i < 14; i++)
         CHECK(b[size_t(i)] == 0);
-    CHECK(b[14 + 22] == 255);   // JawOpen
-    CHECK(b[14 + 83] == 127);   // TongueTwistLeft
-    CHECK(b[14 + 36] == 0);     // LipFunnelUpperRight: mouthFunnel unset
+    CHECK(b[14 + 22] == 255);   // This is JawOpen.
+    CHECK(b[14 + 83] == 127);   // This is TongueTwistLeft.
+    CHECK(b[14 + 36] == 0);     // This is LipFunnelUpperRight, and mouthFunnel is not set.
 }
 
 TEST_CASE("the streaming PC comes from the latest Steam Link session") {
@@ -93,7 +94,7 @@ TEST_CASE("the streaming PC comes from the latest Steam Link session") {
         "Tue Sep 29 2026 20:45:06.180 [Info] - SVLDataLinkTransferUDP::SetPeer 10.35.78.1 -> 10.35.78.25 (Connect: 0)\n";
     CHECK(vrc_native::streaming_pc(log) == "192.168.0.149");
 
-    // No marked address: the latest link peer.
+    // Without a marked address, the result is the latest link peer.
     CHECK(vrc_native::streaming_pc("x [Info] - UDPServerAddresses:\nx [Info] - \t192.168.0.149  \n"
                                    "x [Info] - SVLDataLinkTransferUDP::SetPeer 10.35.78.1 -> 10.35.78.25 (Connect: 0)\n") ==
           "10.35.78.25");
@@ -127,7 +128,7 @@ ssize_t receive(int rx, uint8_t *buf, size_t cap, int timeout_ms) {
     return recv(rx, buf, cap, 0);
 }
 
-} // namespace
+}
 
 TEST_CASE("the vrc_native module sends the blob to its target") {
     sockaddr_in addr{};
@@ -147,10 +148,9 @@ TEST_CASE("the vrc_native module sends the blob to its target") {
     const ssize_t n = receive(rx, buf, sizeof(buf), 2000);
     REQUIRE(n == 132);
     CHECK(memcmp(buf, "/tracking/face/v1\0\0\0,b\0\0", 24) == 0);
-    CHECK(buf[27] == 102);             // blob size
-    CHECK(buf[28 + 14 + 22] == 255);   // JawOpen
-    // The sink counts a send after sendto() returns, so the packet can arrive
-    // before the count moves.
+    CHECK(buf[27] == 102);             // This is the blob size.
+    CHECK(buf[28 + 14 + 22] == 255);   // This is JawOpen.
+    // The sink counts a send after sendto() returns, so the packet can arrive before the count changes.
     auto st = static_cast<VrcNativeSink *>(sink.get())->status();
     for (int i = 0; i < 100 && st.sent < 1; i++) {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
@@ -159,7 +159,7 @@ TEST_CASE("the vrc_native module sends the blob to its target") {
     CHECK(st.kind == "host");
     CHECK(st.sent >= 1);
 
-    // Stopped (the Output setting moved away): nothing more.
+    // After a stop (the Output setting changed), the sink sends nothing more.
     sink->stop();
     while (receive(rx, buf, sizeof(buf), 100) > 0) {}
     u.second = Signal{0.5f, 1.0f, 43};
@@ -180,7 +180,7 @@ TEST_CASE("auto targets the Steam Link PC while its session runs, else this head
             << "x [Info] - \t10.0.0.9 *\n"
             << "x [Info] - Soft AES PERF\n";
     };
-    // A live "vrlink" process: sleep, named vrlink.
+    // Make a live process named vrlink that sleeps.
     const pid_t child = fork();
     if (child == 0) {
         execl("/bin/sleep", "vrlink", "20", static_cast<char *>(nullptr));
@@ -211,7 +211,7 @@ TEST_CASE("auto targets the Steam Link PC while its session runs, else this head
     CHECK(st.address == "10.0.0.9");
     sink->stop();
 
-    // The session ended: its process is gone.
+    // The session ended, so its process is gone.
     kill(child, SIGKILL);
     waitpid(child, nullptr, 0);
     REQUIRE(sink->start());

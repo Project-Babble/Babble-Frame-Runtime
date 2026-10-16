@@ -41,7 +41,7 @@ template <typename Pred> bool wait_for(Pred p, int ms = 20000) {
     return p();
 }
 
-} // namespace
+}
 
 TEST_CASE("versions: both spellings parse, and order by number, stage, build") {
     const auto a = parse_version("V1.0 Alpha 4");
@@ -53,7 +53,7 @@ TEST_CASE("versions: both spellings parse, and order by number, stage, build") {
     CHECK(a->prerelease());
     CHECK(a->tag() == "V1.0-Alpha-4");
     CHECK(parse_version("V1.0-Alpha-4") == a);
-    CHECK(parse_version("V0.1 Alpha")->n == 1);   // no N: the stage's first build
+    CHECK(parse_version("V0.1 Alpha")->n == 1);   // Without N, the version is the first build of the stage.
     CHECK_FALSE(parse_version("V1.0 Release")->prerelease());
 
     CHECK(*parse_version("V1.0 Alpha 4") < *parse_version("V1.0 Alpha 10"));
@@ -68,9 +68,9 @@ TEST_CASE("versions: both spellings parse, and order by number, stage, build") {
 }
 
 TEST_CASE("runtime updates: the newest newer release with a Steam Frame build") {
-    const json api = json::array({release("V1.0-Alpha-6", true, true),   // draft
+    const json api = json::array({release("V1.0-Alpha-6", true, true),   // This release is a draft.
                                   release("V1.0-Alpha-5", false, true),
-                                  release("V1.0-Beta-1", false, true, false),   // no .sha256
+                                  release("V1.0-Beta-1", false, true, false),   // This release has no .sha256 file.
                                   release("V0.9-Release", false, false),
                                   release("not-a-version", false, false)});
     const Version alpha4 = *parse_version("V1.0 Alpha 4");
@@ -80,9 +80,9 @@ TEST_CASE("runtime updates: the newest newer release with a Steam Frame build") 
     CHECK(u->prerelease);
     CHECK(u->tarball.name == "babble-frame-runtime.linuxarm64.V1.0-Alpha-5.tar.xz");
     CHECK(u->sha256.name == u->tarball.name + ".sha256");
-    CHECK_FALSE(pick_update(api, alpha4, false));                       // only prereleases are newer
-    CHECK_FALSE(pick_update(api, *parse_version("V1.0 Alpha 5"), true));   // nothing newer
-    // Order in the reply doesn't matter; the version does.
+    CHECK_FALSE(pick_update(api, alpha4, false));                       // Only prereleases are newer.
+    CHECK_FALSE(pick_update(api, *parse_version("V1.0 Alpha 5"), true));   // No release is newer.
+    // The order in the reply does not matter, only the version does.
     const json shuffled = json::array({release("V1.0-Alpha-5", false, true), release("V1.0-Release", false, false),
                                        release("V1.0-RC-2", false, true)});
     CHECK(pick_update(shuffled, alpha4, true)->tag == "V1.0-Release");
@@ -95,7 +95,8 @@ TEST_CASE("runtime updates: only release builds that install.sh put in place") {
     RuntimeUpdater::Options o{"V1.0 Alpha 4", false, root};
     CHECK(RuntimeUpdater::unsupported_reason(o).find("driver folder") != std::string::npos);
     write(root / "driver.vrdrivermanifest", "{}");
-    CHECK(RuntimeUpdater::unsupported_reason(o).find("Steam") != std::string::npos);   // no marker: Steam
+    // Without a marker, the install source is Steam.
+    CHECK(RuntimeUpdater::unsupported_reason(o).find("Steam") != std::string::npos);
     write(root / ".install-source", "install.sh\n");
     CHECK(RuntimeUpdater::unsupported_reason(o) == "");
     CHECK(RuntimeUpdater::unsupported_reason({"V1.0 Alpha 4", true, root}).find("dev") != std::string::npos);
@@ -107,13 +108,13 @@ TEST_CASE("runtime updates: only release builds that install.sh put in place") {
 
 TEST_CASE("runtime updates: download, check and run the release's install.sh from file:// URLs") {
     if (!Process::find_in_path("curl") || !Process::find_in_path("tar") || !Process::find_in_path("xz"))
-        return;   // the tools the updater drives
+        return;   // The updater needs curl, tar and xz.
     const fs::path base = fs::temp_directory_path() / ("babble_upd_" + std::to_string(getpid()));
     fs::remove_all(base);
     const fs::path root = base / "install" / "babble", rel = base / "release", pkg = base / "pkg";
     write(root / "driver.vrdrivermanifest", "{}");
     write(root / ".install-source", "install.sh\n");
-    // A stand-in install.sh: records how it was called, as the real one would install.
+    // This fake install.sh records how the updater called it.
     write(pkg / "install.sh", "#!/bin/bash\necho \"args: $*\" > \"$3/installed-by-update\"\necho done\n");
     write(pkg / "babble" / "driver.vrdrivermanifest", "{}");
     const std::string tag = "V1.0-Alpha-5", name = "babble-frame-runtime.linuxarm64." + tag + ".tar.xz";
@@ -132,7 +133,7 @@ TEST_CASE("runtime updates: download, check and run the release's install.sh fro
     const json cfg = {{"api_url", "file://" + (rel / "releases.json").string()}};
     const RuntimeUpdater::Options o{"V1.0 Alpha 4", false, root};
 
-    publish(std::string(64, '0'));   // wrong digest
+    publish(std::string(64, '0'));   // The digest is wrong.
     {
         RuntimeUpdater bad(cfg, o, json::object());
         bad.start();
@@ -156,7 +157,7 @@ TEST_CASE("runtime updates: download, check and run the release's install.sh fro
     std::getline(f, line);
     CHECK(line.find("--dir " + root.string() + " --no-restart") != std::string::npos);
     CHECK_FALSE(fs::exists(base / "install" / ".babble-runtime-update"));
-    up.check();   // after an install, nothing more until SteamVR restarts into it
+    up.check();   // After an install, the updater does nothing more until SteamVR restarts into the new version.
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
     CHECK(up.snapshot().state == RuntimeUpdater::State::Installed);
     fs::remove_all(base);

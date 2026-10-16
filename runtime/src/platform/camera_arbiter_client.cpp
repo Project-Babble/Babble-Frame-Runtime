@@ -11,7 +11,7 @@
 
 namespace {
 const babble::log::Logger LOG("arbiter");
-} // namespace
+}
 
 namespace babble {
 
@@ -33,7 +33,7 @@ std::string run_capture(const std::string &cmd) {
     return out;
 }
 
-} // namespace
+}
 
 const char *to_string(ArbiterState s) {
     switch (s) {
@@ -60,7 +60,7 @@ CameraArbiterClient::CameraArbiterClient(const nlohmann::json &cfg)
 }
 
 bool CameraArbiterClient::unit_active() const {
-    // systemd keeps this symlink exactly while a system unit is active; no exec needed.
+    // Read the systemd symlink that exists only while the unit is active, so no exec is necessary.
     std::error_code ec;
     fs::path marker = fs::path("/run/systemd/units") / ("invocation:" + unit_);
     if (fs::is_directory("/run/systemd/units", ec))
@@ -72,7 +72,7 @@ std::optional<uint32_t> CameraArbiterClient::fpga_mode() const {
     std::error_code ec;
     if (!fs::exists(read_reg_, ec))
         return std::nullopt;
-    // Prints e.g. " FPGA reg 0x12 = 0x00021211"; the value is the last token.
+    // The tool prints a line such as " FPGA reg 0x12 = 0x00021211" with the value as the last token.
     std::string out = run_capture(read_reg_ + " 0x12 2>/dev/null");
     auto pos = out.find_last_of("x");
     if (pos == std::string::npos || pos == 0)
@@ -111,10 +111,9 @@ ArbiterState CameraArbiterClient::poll() {
             state_ = ArbiterState::Unrouted;
         else {
             auto mode = fpga_mode();
-            // Unknown FPGA mode (tool missing): trust the streams unit, which refuses to route without VCINT.
+            // If the FPGA mode is unknown, trust the streams unit because it does not route without VCINT.
             bool fpga_ok = !mode || *mode == kFpgaVcint;
-            // The unit stays active after routing even if the links are later
-            // disabled (SteamVR restarts do this), so check the graph itself.
+            // Check the media graph because a SteamVR restart can disable the links while the unit stays active.
             RouteCheck rc = check_sensor_routes(media_dev_, sensor_prefixes_);
             if (!rc.error.empty() && rc.error != last_route_error_)
                 LOG.warn("arbiter: cannot read media graph (%s); trusting the streams unit", rc.error.c_str());
@@ -156,4 +155,4 @@ std::string CameraArbiterClient::describe() const {
     return "";
 }
 
-} // namespace babble
+}

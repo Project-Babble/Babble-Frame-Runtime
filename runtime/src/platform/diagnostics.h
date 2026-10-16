@@ -1,7 +1,6 @@
 #pragma once
 
-// What to put in the log at startup and in a diagnostics file, so a problem
-// report can be understood without access to the headset.
+// These functions collect the data for the startup log and for a diagnostics file, for problem reports.
 
 #include <nlohmann/json.hpp>
 
@@ -11,15 +10,13 @@
 
 namespace babble::diag {
 
-// The session header: version, kernel, SteamOS build, uptime, what the
-// config changes from the defaults, the model files, the USB devices.
+// Returns the session header with the version, the system, the config changes, the model files and the USB devices.
 std::vector<std::string> session_info(const nlohmann::json &cfg, const std::filesystem::path &models_dir);
 
-// Every thread of this process: name, state, what it's waiting in, CPUs.
+// Returns the name, state, wait channel and CPUs of each thread of this process.
 std::vector<std::string> thread_report();
 
-// Writes text to <dir>/diag-YYYYMMDD-HHMMSS.txt, keeping the newest `keep`
-// such files; returns the path ("" on failure).
+// Writes text to <dir>/diag-YYYYMMDD-HHMMSS.txt and returns the path, or an empty path on failure.
 std::filesystem::path write_file(const std::filesystem::path &dir, const std::string &text, int keep = 5);
 
-} // namespace babble::diag
+}

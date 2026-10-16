@@ -22,8 +22,7 @@ struct Rect {
     bool contains(float px, float py) const { return px >= x && py >= y && px < x + w && py < y + h; }
 };
 
-// An RGBA8 image drawn on the CPU, row 0 at the top. Shapes are anti-aliased
-// from signed distances; the destination stays opaque.
+// An RGBA8 image that the CPU draws on, with anti-aliased shapes from signed distances.
 class Canvas {
 public:
     Canvas(int w, int h);
@@ -35,19 +34,17 @@ public:
     void fill_rect(Rect r, Color c, float radius = 0);
     void stroke_rect(Rect r, Color c, float radius, float width);
     void fill_circle(float cx, float cy, float radius, Color c);
-    void line(float x0, float y0, float x1, float y1, float width, Color c);   // round caps
-    // Settings cog centred on (cx, cy), outer radius r.
+    void line(float x0, float y0, float x1, float y1, float width, Color c);   // The line has round caps.
+    // Draws a settings cog with its centre at (cx, cy) and an outer radius of r.
     void cog(float cx, float cy, float r, Color c);
-    // Blends an RGBA image 1:1 with its top-left at (x, y), corners rounded to radius.
+    // Blends an RGBA image 1:1 with its top-left corner at (x, y) and rounded corners.
     void image(const Image &img, int x, int y, float radius = 0);
 
     // Blends c over one pixel with coverage 0..1.
     void blend(int x, int y, Color c, float coverage);
 
 private:
-    // Blends by coverage from sdf(px, py) at each pixel centre in the box.
-    // inner(x, y), if it returns true, promises the pixel is fully covered
-    // and skips the SDF (the solid interior of large shapes).
+    // Blends each pixel in the box by the coverage from sdf, and skips sdf where inner(x, y) is true.
     template <typename Sdf, typename Inner>
     void fill_sdf(float x0, float y0, float x1, float y1, Color c, Sdf sdf, Inner inner) {
         const int ix0 = std::max(0, int(std::floor(x0 - 1))), iy0 = std::max(0, int(std::floor(y0 - 1)));
@@ -69,7 +66,7 @@ private:
     void fill_sdf(float x0, float y0, float x1, float y1, Color c, Sdf sdf) {
         fill_sdf(x0, y0, x1, y1, c, sdf, [](int, int) { return false; });
     }
-    // Blends c over one pixel with alpha 0..255 (integer, exact at 0 and 255).
+    // Blends c over one pixel with an integer alpha of 0..255 that is exact at 0 and 255.
     static void put(uint8_t *p, Color c, int a) {
         if (a >= 255) {
             p[0] = c.r;
@@ -86,4 +83,4 @@ private:
     std::vector<uint8_t> px_;
 };
 
-} // namespace babble::ui
+}

@@ -12,7 +12,7 @@ TEST_CASE("process: run captures output and the exit code") {
     CHECK(out == "hello\n");
     CHECK(err == "oops\n");
     CHECK(Process::run({"/nonexistent/thing"}, &out, &err, 1000) == -1);
-    CHECK(Process::run({"sleep", "5"}, nullptr, nullptr, 200) == -1);   // timed out, killed
+    CHECK(Process::run({"sleep", "5"}, nullptr, nullptr, 200) == -1);   // The process timed out and was killed.
 }
 
 TEST_CASE("process: stdin pipe, environment and PATH lookup") {
@@ -39,5 +39,5 @@ TEST_CASE("process: terminate stops a child that ignores its input") {
     CHECK(p.running());
     p.terminate(1000);
     CHECK_FALSE(p.running());
-    CHECK_FALSE(p.exit_code());   // ended by a signal
+    CHECK_FALSE(p.exit_code());   // A signal ended the process.
 }

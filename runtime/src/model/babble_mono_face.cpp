@@ -10,18 +10,18 @@
 
 namespace {
 const babble::log::Logger LOG("pipe.face");
-} // namespace
+}
 
 namespace babble {
 
 namespace {
 
 constexpr uint32_t kSize = 224;
-constexpr size_t kMaxSide = 1024;   // largest camera image we preprocess
+constexpr size_t kMaxSide = 1024;   // This is the largest image side, in pixels, that prepare() uses.
 
 bool is_float(DType t) { return t == DType::F32 || t == DType::F16; }
 
-} // namespace
+}
 
 bool BabbleMonoFace::init() {
     if (!bind_input())
@@ -89,8 +89,7 @@ bool BabbleMonoFace::init() {
 }
 
 void BabbleMonoFace::prepare(const Frame &f, float *input) {
-    // Crop (a view into the frame), as Baballonia's ImageTransformer: an ROI
-    // that doesn't fit, or is empty, means the whole image.
+    // An ROI that is empty or does not fit selects the full image, as in the Baballonia ImageTransformer.
     img::View cur{f.data, f.width, f.height, f.stride};
     if (roi_.w && roi_.h && roi_.x + roi_.w <= f.width && roi_.y + roi_.h <= f.height)
         cur = {f.data + size_t(roi_.y) * f.stride + roi_.x, roi_.w, roi_.h, f.stride};
@@ -98,7 +97,7 @@ void BabbleMonoFace::prepare(const Frame &f, float *input) {
     cur.width = w;
     cur.height = h;
 
-    if (gain_ != 1.0f) {   // saturating linear gain, rounded like OpenCV's convertTo
+    if (gain_ != 1.0f) {   // The gain saturates and rounds as the OpenCV convertTo does.
         for (uint32_t y = 0; y < h; y++)
             for (uint32_t x = 0; x < w; x++)
                 tmp_a_[size_t(y) * w + x] =
@@ -189,4 +188,4 @@ void BabbleMonoFace::process(const StereoFrame &sf) {
     inference_.add(t2 - t1);
 }
 
-} // namespace babble
+}

@@ -9,7 +9,7 @@ double percentile(std::vector<double> v, double pct) {
     if (v.empty())
         return 0.0;
     std::sort(v.begin(), v.end());
-    // numpy "linear": position = (n - 1) * pct / 100, interpolate between neighbours.
+    // Interpolate between neighbours at position (n - 1) * pct / 100, as numpy "linear" does.
     double pos = double(v.size() - 1) * pct / 100.0;
     size_t lo = size_t(std::floor(pos));
     size_t hi = std::min(lo + 1, v.size() - 1);
@@ -66,9 +66,7 @@ OpennessCalibrator::OpennessCalibrator(Params p, std::optional<OneEuroParams> fi
         filter_.emplace(1, *filter);
 }
 
-// At the model's saturation the ratio can't exceed saturation / baseline: a
-// ceiling above that would make Widen unreachable. Never below a small
-// span, so an eye whose neutral sits at saturation doesn't divide by ~0.
+// Keep the ceiling at or below saturation / baseline, because a higher ceiling makes Widen unreachable.
 double OpennessCalibrator::cap() const {
     return std::min(p_.ceiling_max, std::max(1.02, p_.saturation / b_));
 }
@@ -88,7 +86,7 @@ OpennessCalibrator::Out OpennessCalibrator::update(double x, double dt_s) {
     n_++;
     double value;
     if (!ready_) {
-        // Seed: the median of non-blink samples after the first second.
+        // The seed is the median of the non-blink samples after the first second.
         if (n_ > p_.skip && x > p_.floor) {
             seed_.push_back(x);
             if (seed_.size() > p_.warmup)
@@ -101,12 +99,11 @@ OpennessCalibrator::Out OpennessCalibrator::update(double x, double dt_s) {
             ready_ = true;
             seed_.clear();
             if (filter_)
-                filter_->reset();   // the ratio starts clean rather than blending with the pass-through
+                filter_->reset();   // Reset the filter so that the ratio does not blend with the earlier raw values.
         }
-        value = std::min(x, 1.0);   // uncalibrated until the seed exists, like the reference
+        value = std::min(x, 1.0);   // The value has no calibration until the seed exists, as in the reference.
     } else {
-        // SRanipal _update_calibration: every `every` updates, a guarded
-        // Kalman-like step towards the chunk's median.
+        // Move the baseline toward the chunk median after each `every` updates, as SRanipal _update_calibration does.
         chunk_.push_back(x);
         if (chunk_.size() >= p_.every) {
             const double xm = median(std::vector<double>(chunk_.begin(), chunk_.end()));
@@ -126,13 +123,13 @@ OpennessCalibrator::Out OpennessCalibrator::update(double x, double dt_s) {
     out.openness = std::max(value, 0.0);
     out.ready = ready_;
     if (ready_) {
-        // Ceiling: the largest sustained ratio (short median), seeded and capped.
+        // The ceiling is the largest sustained ratio.
         recent_.push_back(out.openness);
         if (recent_.size() > p_.peak_window)
             recent_.pop_front();
         if (recent_.size() == p_.peak_window)
             c_ = std::max(c_, median(std::vector<double>(recent_.begin(), recent_.end())));
-        c_ = std::min(c_, cap());   // also as the baseline drifts
+        c_ = std::min(c_, cap());   // Apply the cap again because the baseline drifts.
         out.widen = std::clamp((out.openness - 1.0) / (c_ - 1.0), 0.0, 1.0);
     }
     return out;
@@ -175,14 +172,14 @@ PupilTracker::Result PupilTracker::update(double openness, std::optional<double>
             if (base_buf_.size() >= base_min_ && (base_buf_.size() % 10 == 0 || !base_))
                 base_ = median(std::vector<double>(base_buf_.begin(), base_buf_.end()));
         }
-    } else {   // lid shut or blinking: hold a robust recent value
+    } else {   // Hold a recent value while the lid is shut.
         if (held_n_ == 0 && !recent_.empty())
             target_ = median(std::vector<double>(recent_.begin(), recent_.end()));
         held_n_++;
     }
     if (!target_)
         return {};
-    // The filtered target, followed at no more than `rate` per reference update.
+    // Follow the filtered target at no more than `rate` for each reference update.
     const double want = filter_ ? filter_->apply(*target_, dt_s) : *target_;
     if (!disp_)
         disp_ = want;
@@ -190,7 +187,7 @@ PupilTracker::Result PupilTracker::update(double openness, std::optional<double>
     *disp_ += std::max(-rate, std::min(rate, want - *disp_));
     Result r;
     r.px = disp_;
-    // Python "if self.base" is falsy for a 0.0 baseline as well as None.
+    // A 0.0 baseline counts as no baseline, as in the Python "if self.base".
     if (base_ && *base_ != 0.0)
         r.ratio = *disp_ / *base_;
     r.live = live;
@@ -203,4 +200,4 @@ std::optional<double> dilation(const PupilTracker::Result &r, double gain) {
     return std::max(0.0, std::min(1.0, 0.5 + gain * (*r.ratio - 1.0)));
 }
 
-} // namespace babble::eye
+}

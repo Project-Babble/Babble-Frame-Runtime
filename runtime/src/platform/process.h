@@ -10,63 +10,52 @@
 
 namespace babble {
 
-// A child process the runtime drives: the recorder's encoder, curl, tar.
-// Started with posix_spawn like AppLauncher (clean signal mask and
-// dispositions, fd 3 closed), but in the caller's session, and with optional
-// pipes. The child inherits the calling thread's CPU pinning and nice value,
-// so spawn it from a thread with the ThreadSpec it should have. Not
-// thread-safe; one owner thread.
+// A child process that gets the CPU pinning and nice value of the calling thread, so spawn it from the correct thread.
 class Process {
 public:
     struct Options {
-        bool stdin_pipe = false;     // write with write_stdin(); otherwise /dev/null
-        bool stdout_pipe = false;    // read with read_stdout(); otherwise stdout_file or /dev/null
-        bool stderr_pipe = false;    // read with read_stderr(); otherwise stderr_file or /dev/null
-        std::string stdout_file;     // appended to
-        std::string stderr_file;     // appended to
-        std::map<std::string, std::string> env;   // added to (or replacing) the runtime's environment
+        bool stdin_pipe = false;     // Use write_stdin() with the pipe, or the child gets /dev/null.
+        bool stdout_pipe = false;    // Use read_stdout() with the pipe, or the output goes to stdout_file or /dev/null.
+        bool stderr_pipe = false;    // Use read_stderr() with the pipe, or the output goes to stderr_file or /dev/null.
+        std::string stdout_file;     // The child appends to this file.
+        std::string stderr_file;     // The child appends to this file.
+        std::map<std::string, std::string> env;   // These entries replace or add to the environment of the runtime.
     };
 
     Process() = default;
-    ~Process();   // terminates a child still running (1 s grace)
+    ~Process();   // Terminates a child that still runs, with a grace time of 1 s.
     Process(const Process &) = delete;
     Process &operator=(const Process &) = delete;
 
-    // argv[0] is looked up on PATH when it has no slash. False (with *err) if
-    // it can't be started.
+    // Starts argv and looks up argv[0] on PATH if it has no slash, and returns false with *err on failure.
     bool spawn(const std::vector<std::string> &argv, const Options &opt, std::string *err = nullptr);
 
     pid_t pid() const { return pid_; }
-    bool running();   // reaps the child once it exits
+    bool running();   // Also reaps the child after it exits.
 
-    // Writes all of data to the child's stdin, waiting up to timeout_ms in
-    // total for room. False on timeout, a closed pipe (the child exited) or no pipe.
+    // Writes all of data to the stdin of the child within timeout_ms, or returns false.
     bool write_stdin(const void *data, size_t n, int timeout_ms);
     void close_stdin();
 
-    // Whatever is available now, without waiting ("" when nothing is).
+    // Returns the output that is available now, and does not wait.
     std::string read_stdout();
-    // Exactly n bytes of stdout, waiting up to timeout_ms between bytes
-    // arriving. 1 = read, 0 = clean end of output before any byte, -1 = a
-    // short read, a timeout or no pipe.
+    // Reads n bytes and returns 1 on success, 0 at a clean end of output, or -1 on any failure.
     int read_stdout_exact(void *buf, size_t n, int timeout_ms);
     std::string read_stderr();
 
-    // Waits for the child to exit, up to timeout_ms (-1 = forever). True if it did.
+    // Waits up to timeout_ms, or forever for -1, and returns true if the child exited.
     bool wait(int timeout_ms);
-    // SIGTERM, then SIGKILL after grace_ms if it's still there; reaps it.
+    // Sends SIGTERM, then sends SIGKILL after grace_ms if the child still runs, and reaps the child.
     void terminate(int grace_ms);
 
-    // The exit code once reaped; nullopt while running, or if a signal ended it.
+    // Returns the exit code after the reap, or nullopt if the child runs or a signal stopped it.
     std::optional<int> exit_code() const { return exit_code_; }
     int exit_signal() const { return exit_signal_; }
 
-    // The full path of an executable on PATH (or the argument itself if it has
-    // a slash and is executable); nullopt if there's none.
+    // Returns the full path of an executable on PATH, or nullopt if there is no such executable.
     static std::optional<std::string> find_in_path(const std::string &name);
 
-    // Runs argv to completion: stdout captured (up to max_out bytes), stderr
-    // into *err_out. Exit code, or -1 if it couldn't start or timed out (killed).
+    // Runs argv until it exits and returns the exit code, or -1 if it did not start or did not finish in time.
     static int run(const std::vector<std::string> &argv, std::string *out, std::string *err_out, int timeout_ms,
                    size_t max_out = 16u << 20);
 
@@ -80,4 +69,4 @@ private:
     int exit_signal_ = 0;
 };
 
-} // namespace babble
+}

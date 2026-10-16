@@ -32,7 +32,7 @@ bool executable(const std::string &path) {
     return stat(path.c_str(), &st) == 0 && S_ISREG(st.st_mode) && access(path.c_str(), X_OK) == 0;
 }
 
-} // namespace
+}
 
 std::optional<std::string> Process::find_in_path(const std::string &name) {
     if (name.empty())
@@ -74,7 +74,7 @@ bool Process::spawn(const std::vector<std::string> &argv, const Options &opt, st
     if (pid_ > 0)
         return fail("already running");
     if (opt.stdin_pipe)
-        signal(SIGPIPE, SIG_IGN);   // a child that exits early must fail the write, not kill us (the runtime ignores it anyway)
+        signal(SIGPIPE, SIG_IGN);   // If the child exits early, the write must fail and not kill the runtime.
     if (argv.empty())
         return fail("no command");
     const auto exe = find_in_path(argv[0]);
@@ -111,7 +111,7 @@ bool Process::spawn(const std::vector<std::string> &argv, const Options &opt, st
     };
     output(STDOUT_FILENO, opt.stdout_pipe, out[1], opt.stdout_file);
     output(STDERR_FILENO, opt.stderr_pipe, er[1], opt.stderr_file);
-    posix_spawn_file_actions_addclose(&fa, 3);   // the shim link is the runtime's alone
+    posix_spawn_file_actions_addclose(&fa, 3);   // Close fd 3 because only the runtime can use the shim link.
 
     posix_spawnattr_t at;
     posix_spawnattr_init(&at);
@@ -124,7 +124,7 @@ bool Process::spawn(const std::vector<std::string> &argv, const Options &opt, st
     posix_spawnattr_setsigdefault(&at, &defaults);
     posix_spawnattr_setflags(&at, POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF);
 
-    // The environment: the runtime's, with opt.env replacing or adding entries.
+    // Use the environment of the runtime, and let opt.env replace or add entries.
     std::vector<std::string> env_store;
     for (char **e = environ; e && *e; e++) {
         std::string kv = *e;
@@ -149,7 +149,7 @@ bool Process::spawn(const std::vector<std::string> &argv, const Options &opt, st
     const int rc = posix_spawn(&pid, exe->c_str(), &fa, &at, cargv.data(), envp.data());
     posix_spawn_file_actions_destroy(&fa);
     posix_spawnattr_destroy(&at);
-    // The child's ends.
+    // Close the pipe ends that belong to the child.
     for (int fd : {in[0], out[1], er[1]})
         if (fd >= 0)
             ::close(fd);
@@ -189,7 +189,7 @@ bool Process::running() {
         return false;
     }
     if (r < 0 && errno == ECHILD) {
-        pid_ = -1;   // reaped elsewhere
+        pid_ = -1;   // Another caller reaped the child.
         return false;
     }
     return true;
@@ -210,7 +210,7 @@ bool Process::write_stdin(const void *data, size_t n, int timeout_ms) {
         if (w < 0 && errno == EINTR)
             continue;
         if (w < 0 && errno != EAGAIN)
-            return false;   // EPIPE: the child closed its stdin or exited
+            return false;   // EPIPE means that the child closed its stdin or exited.
         const uint64_t now = mono_ns();
         if (now >= deadline)
             return false;
@@ -254,7 +254,7 @@ int Process::read_stdout_exact(void *buf, size_t n, int timeout_ms) {
             continue;
         }
         if (r == 0)
-            return got == 0 ? 0 : -1;   // the child closed its stdout
+            return got == 0 ? 0 : -1;   // The child closed its stdout.
         if (errno == EINTR)
             continue;
         if (errno != EAGAIN)
@@ -344,4 +344,4 @@ int Process::run(const std::vector<std::string> &argv, std::string *out, std::st
     }
 }
 
-} // namespace babble
+}

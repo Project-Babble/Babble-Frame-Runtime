@@ -9,11 +9,8 @@
 
 namespace babble::capture {
 
-// Picking the dataset capture app's release from GitHub's releases API, and
-// checking what it ships. Pure (no network): tested on canned JSON.
-
 struct Asset {
-    std::string name, url;   // url: browser_download_url
+    std::string name, url;   // The url is the browser_download_url.
     uint64_t size = 0;
 };
 
@@ -29,25 +26,22 @@ struct Candidate {
     Asset tarball, sha256, manifest;
 };
 
-// The app's manifest.json: {"name", "version", "protocol", "entry"}.
+// The manifest.json of the capture app.
 struct Manifest {
     std::string name, version, entry;
     int protocol = 0;
 };
 
-// GET /repos/<owner>/<repo>/releases (newest first).
+// Parses the reply of GET /repos/<owner>/<repo>/releases, which has the newest release first.
 std::vector<Release> parse_releases(const nlohmann::json &api);
 
-// Releases with a tarball named <prefix><version>-linuxarm64.tar.gz, its
-// .sha256, and manifest.json, newest first. Drafts never; prereleases only if asked.
+// Returns the releases that have the tarball, its .sha256 and manifest.json, with the newest first.
 std::vector<Candidate> candidates(const std::vector<Release> &releases, const std::string &prefix, bool prereleases);
 
-// A manifest, or nullopt with *err. entry must be a relative path inside the
-// app folder (no "..", not absolute).
+// Returns the manifest, or nullopt with *err if entry is not a relative path inside the app folder.
 std::optional<Manifest> parse_manifest(const nlohmann::json &j, std::string *err);
 
-// The digest for `file` from a .sha256 file ("<hex>  <name>" lines, or a bare
-// hex digest); lowercase hex, or nullopt.
+// Returns the lowercase hex digest for `file` from the text of a .sha256 file, or nullopt.
 std::optional<std::string> parse_sha256_file(const std::string &text, const std::string &file);
 
-} // namespace babble::capture
+}

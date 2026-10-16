@@ -11,7 +11,7 @@
 
 namespace {
 const babble::log::Logger LOG("sink");
-} // namespace
+}
 
 namespace babble {
 
@@ -35,4 +35,4 @@ std::unique_ptr<ISink> make_sink(const nlohmann::json &cfg, SinkDeps deps) {
     return nullptr;
 }
 
-} // namespace babble
+}

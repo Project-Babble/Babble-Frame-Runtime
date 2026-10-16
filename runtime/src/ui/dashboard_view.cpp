@@ -11,12 +11,12 @@ namespace babble::ui {
 
 namespace {
 
-// Baballonia's dark Fluent palette (App.axaml / SettingsBlock.axaml).
+// These colours copy the dark Fluent palette of Baballonia.
 constexpr Color kBg = Color::hex(0x181818);
 constexpr Color kPanel = Color::hex(0x202020);
 constexpr Color kCard = Color::hex(0x292929);
 constexpr Color kCardHover = Color::hex(0x343434);
-constexpr Color kOnCard = Color::hex(0x3a3a3a), kOnCardHover = Color::hex(0x454545);   // secondary buttons on a card
+constexpr Color kOnCard = Color::hex(0x3a3a3a), kOnCardHover = Color::hex(0x454545);   // For secondary buttons on a card.
 constexpr Color kLine = Color::hex(0x343434);
 constexpr Color kText = Color::hex(0xffffff);
 constexpr Color kMuted = Color::hex(0x9d9d9d);
@@ -29,7 +29,7 @@ constexpr Color kGrey = Color::hex(0x6b6b6b);
 
 constexpr float kMargin = 56;
 
-// Each eye has a gaze plot and three labelled output meters.
+// Each eye has a gaze plot and three output meters with labels.
 constexpr float kPlot = 174, kEyeGroupW = 532;
 constexpr Color kViolet = Color::hex(0xa78bfa);
 
@@ -49,7 +49,7 @@ const char *health_word(Health h) {
     case Health::Working: return "Tracking";
     case Health::Starting: return "Starting";
     case Health::Paused: return "Paused";
-    case Health::Off: return "Off";   // FeedStatus::tracking false, or not configured
+    case Health::Off: return "Off";   // The user turned the feed off, or the feed has no configuration.
     case Health::Fault: return "Error";
     }
     return "";
@@ -67,7 +67,7 @@ std::string format_hz(double hz) {
     return buf;
 }
 
-} // namespace
+}
 
 bool DashboardView::load_fonts(const std::filesystem::path &dir) {
     return regular_.load(dir / "NotoSans-Regular.ttf") && medium_.load(dir / "NotoSans-Medium.ttf");
@@ -88,7 +88,7 @@ bool DashboardView::load_icons(const std::filesystem::path &dir) {
 void DashboardView::render_icon(Canvas &c, Icon icon, float x, float y, Color color) {
     const auto &img = icons_[size_t(icon)];
     if (!img)
-        return;   // optional assets; text and hit targets still work
+        return;   // The assets are optional, and text and hit targets work without them.
     for (int iy = 0; iy < img->height; iy++)
         for (int ix = 0; ix < img->width; ix++) {
             const uint8_t alpha = img->rgba[(size_t(iy) * img->width + ix) * 4 + 3];
@@ -110,7 +110,7 @@ std::string DashboardView::fit(const Font &f, const std::string &text, float px,
         return text;
     std::string s = text;
     while (!s.empty()) {
-        // Drop whole UTF-8 sequences.
+        // Remove whole UTF-8 sequences.
         do
             s.pop_back();
         while (!s.empty() && (static_cast<unsigned char>(s.back()) & 0xc0) == 0x80);
@@ -146,7 +146,7 @@ void DashboardView::render_home(Canvas &c, const Status &s) {
         title_x += logo_small_->width + 16;
     }
     medium_.draw(c, title_x, 78, "Babble Frame Runtime", 32, kText);
-    regular_.draw(c, title_x, 108, "Debug Dashboard \u00b7 " BABBLE_VERSION_DISPLAY, 20, kMuted);
+    regular_.draw(c, title_x, 108, BABBLE_VERSION_DISPLAY, 20, kMuted);
     render_update_pill(c, title_x + medium_.measure("Babble Frame Runtime", 32) + 20, 78, s.update);
 
     render_eye(c, kMargin, 146, "Left Eye", s.eyes[0]);
@@ -176,8 +176,7 @@ void DashboardView::render_home(Canvas &c, const Status &s) {
         if (f.available) {
             const Rect sw{r.x + r.w - 32 - 92, r.y + (ch - 52) / 2, 92, 52};
             const Rect hit{sw.x - 24, r.y, r.x + r.w - (sw.x - 24), r.h};
-            // On, the switch shows the feed's health (green tracking, amber starting,
-            // red error, grey paused) in place of a separate status dot.
+            // When the switch is on, its colour shows the health of the feed.
             render_switch(c, sw, f.tracking, hovered(hit), health_color(f.health));
             hits_.push_back({Hit::Toggle, hit, size_t(i), f.tracking ? 0.0 : 1.0});
             text_right = hit.x - 12;
@@ -251,7 +250,7 @@ float DashboardView::render_visualizer_button(Canvas &c, AppState state) {
     return r.x;
 }
 
-// Bottom right of Settings. Restart requires a second click within 3 s.
+// Draws the restart button, which needs a second click in less than 3 s.
 void DashboardView::render_restart_button(Canvas &c) {
     const bool armed = restart_armed(mono_ns());
     const std::string text = armed ? "Confirm Restart" : "Restart Runtime";
@@ -265,8 +264,7 @@ void DashboardView::render_restart_button(Canvas &c) {
     hits_.push_back({Hit::Restart, r});
 }
 
-// The output on one line, between the cog and the visualizer button:
-// The host, transport, address and round-trip time, or VRChat's native output.
+// Draws the output status on one line between the cog and the visualizer button.
 void DashboardView::render_link(Canvas &c, const LinkReading &link, float right) {
     if (!link.available)
         return;
@@ -287,7 +285,7 @@ void DashboardView::render_link(Canvas &c, const LinkReading &link, float right)
         const std::string path = link.path == "lan" ? "LAN" : link.path == "usb" ? "USB" : link.path;
         text = (link.pc.empty() ? std::string("VRCFaceTracking") : link.pc) + " via " + path + "  \u00b7  ";
         if (link.no_data) {
-            text += "no data reaching it";   // instead of the address: the line has no room for both
+            text += "no data reaching it";   // This replaces the address because the line has no space for both.
         } else {
             text += link.address;
         }
@@ -304,10 +302,10 @@ void DashboardView::render_link(Canvas &c, const LinkReading &link, float right)
 }
 
 void DashboardView::render_switch(Canvas &c, Rect r, bool on, bool hover, std::optional<Color> on_color) {
-    // Fluent's compact switch inside the existing generous VR hit area.
+    // Draw a compact Fluent switch inside the larger VR hit area.
     const Rect track{r.x + 8, r.y + 6, r.w - 16, r.h - 12};
     Color fill = hover ? kCardHover : kBg;
-    if (on && on_color) {   // lighter while hovered, like the accent
+    if (on && on_color) {   // The colour is lighter during hover, as the accent is.
         const auto mix = [&](uint8_t v) { return uint8_t(hover ? v + (255 - v) * 0.15f : v); };
         fill = {mix(on_color->r), mix(on_color->g), mix(on_color->b), 255};
     } else if (on) {
@@ -390,8 +388,7 @@ void DashboardView::render_settings(Canvas &c, const std::vector<Choice> &choice
         y += 124;
     }
 
-    // Where the mouth comes from (when there is a choice), and for USB which
-    // camera (its own page).
+    // Show the mouth source if there is a choice, and for USB a link to the camera page.
     const bool selectable = s.mouth_source_selectable;
     const bool usb = !selectable || s.mouth_source == "usb";
     if (selectable) {
@@ -427,7 +424,7 @@ void DashboardView::render_settings(Canvas &c, const std::vector<Choice> &choice
     }
 }
 
-// The runtime update, as a small button beside the title (x: its left edge).
+// Draws the runtime update as a small button next to the title, with its left edge at x.
 void DashboardView::render_update_pill(Canvas &c, float x, float baseline, const UpdateNotice &u) {
     using S = UpdateNotice::State;
     char pct[64];
@@ -465,7 +462,7 @@ void DashboardView::render_update_pill(Canvas &c, float x, float baseline, const
     }
 }
 
-// A button; primary ones use the accent colour.
+// Draws a button, which uses the accent colour if it is primary.
 Rect DashboardView::render_button(Canvas &c, float right, float y, const std::string &text, bool primary, bool on_card) {
     const float px = 24, pad = 24, h = 64;
     const float w = medium_.measure(text, px) + 2 * pad;
@@ -476,13 +473,12 @@ Rect DashboardView::render_button(Canvas &c, float right, float y, const std::st
     return r;
 }
 
-// An on/off setting: label and hint, a switch at the right; a click anywhere
-// near the switch flips it.
+// Draws an on/off setting row with a switch that a click near the switch changes.
 void DashboardView::render_switch_row(Canvas &c, float y, size_t index, const Choice &ch, float row_h) {
     const float W = float(c.width());
     const float tx = render_block(c, y, Icon::Camera, row_h);
     const bool on = ch.value != 0;
-    const float d = (124 - row_h) / 2;   // rows shorter than 124 px keep their content centred
+    const float d = (124 - row_h) / 2;   // This offset keeps the content of short rows in the centre.
     const Rect sw{W - kMargin - 92, y + 36 - d, 92, 52};
     const Rect hit{sw.x - 24, y, W - kMargin - (sw.x - 24), row_h};
     render_switch(c, sw, on, hovered(hit));
@@ -491,7 +487,7 @@ void DashboardView::render_switch_row(Canvas &c, float y, size_t index, const Ch
     regular_.draw(c, tx, y + 83 - d, fit(regular_, ch.hint, 21, hit.x - tx - 24), 21, kMuted);
 }
 
-// The dataset capture app: what it's doing, its main button and Remove.
+// Draws the dataset capture row with its status, its main button and the Remove button.
 void DashboardView::render_capture_row(Canvas &c, float y, float row_h, const CaptureRow &row) {
     using S = CaptureRow::State;
     const float W = float(c.width());
@@ -557,7 +553,7 @@ void DashboardView::render_capture_row(Canvas &c, float y, float row_h, const Ca
 void DashboardView::render_diagnostics(Canvas &c, const std::vector<Choice> &choices, const Status &s) {
     const float W = float(c.width());
     render_back(c, "Diagnostics");
-    // Shorter rows than Settings: up to four of them, then the log paths, fit.
+    // Use shorter rows than Settings so that four rows and the log paths fit.
     constexpr float kRow = 112, d = (124 - kRow) / 2;
     float y = 160;
     {
@@ -575,7 +571,7 @@ void DashboardView::render_diagnostics(Canvas &c, const std::vector<Choice> &cho
         regular_.draw(c, tx, y + 83 - d, fit(regular_, hint, 21, hit.x - tx - 24), 21, kMuted);
         y += kRow;
     }
-    {   // A diagnostics report, to send with a problem.
+    {   // The user can send a diagnostics report with a problem.
         const float tx = render_block(c, y, Icon::Document, kRow);
         const Rect b = render_button(c, W - kMargin - 16, y + 28 - d, "Save Report", true);
         hits_.push_back({Hit::WriteDiagnostics, b});
@@ -596,7 +592,7 @@ void DashboardView::render_diagnostics(Canvas &c, const std::vector<Choice> &cho
         y += kRow;
     }
     y += 38;
-    // Low on the page (four rows) the paths go right of the Dashboard button in the corner.
+    // Put the paths to the right of the Dashboard button if they are low on the page.
     const float x0 = y + 38 > 620 ? 150 : kMargin;
     for (const auto &[label, path] : {std::pair<const char *, const std::string &>{"Log File", s.log_file},
                                       {"Stats File", s.stats_file}}) {
@@ -608,7 +604,7 @@ void DashboardView::render_diagnostics(Canvas &c, const std::vector<Choice> &cho
     }
 }
 
-// The USB camera page: automatic, then each camera found at the last refresh.
+// Draws the USB camera page with the automatic choice and each camera from the last refresh.
 void DashboardView::render_cameras(Canvas &c, const Status &s) {
     const float W = float(c.width());
     render_back(c, "USB Camera");
@@ -631,11 +627,11 @@ void DashboardView::render_cameras(Canvas &c, const Status &s) {
     const float row_h = 92;
     for (const Row &r : rows) {
         if (y + row_h > float(c.height()) - 150)
-            break;   // the cog's corner stays clear
+            break;   // Keep the corner of the cog clear.
         const Rect box{kMargin, y, W - 2 * kMargin, row_h - 12};
         const bool on = r.id == s.camera;
         c.fill_rect(box, on ? kCardHover : hovered(box) ? kCardHover : kCard, 6);
-        if (on) {   // a check mark
+        if (on) {   // Draw a check mark.
             c.line(box.x + 26, box.y + 42, box.x + 38, box.y + 54, 5, kAccent);
             c.line(box.x + 38, box.y + 54, box.x + 60, box.y + 28, 5, kAccent);
         }
@@ -684,7 +680,7 @@ void DashboardView::render_thumbnail(Canvas &c) {
         c.image(*logo_thumb_, 0, 0, sz * 0.22f);
         return;
     }
-    // Fallback without the icon files: a "B" badge.
+    // Draw a "B" badge if the icon files are not available.
     c.fill_rect({sz * 0.08f, sz * 0.08f, sz * 0.84f, sz * 0.84f}, kAccent, sz * 0.22f);
     const float px = sz * 0.62f;
     medium_.draw(c, (sz - medium_.measure("B", px)) / 2, (sz + medium_.cap_height(px)) / 2 + sz * 0.02f, "B", px, kText);
@@ -730,7 +726,7 @@ DashboardView::ClickResult DashboardView::click(Point p) {
             out.redraw = true;
             break;
         case Hit::Update: {
-            // The pill's text says what a click does; restarting SteamVR asks twice.
+            // A restart of SteamVR needs two clicks.
             const uint64_t now = mono_ns();
             if (h.text != "restart" || update_armed(now)) {
                 out.update = true;
@@ -756,7 +752,7 @@ DashboardView::ClickResult DashboardView::click(Point p) {
         case Hit::OpenCameras:
             restart_armed_until_ns_ = 0;
             page_ = Page::Cameras;
-            out.refresh_cameras = true;   // show what's plugged in now
+            out.refresh_cameras = true;   // Show the cameras that are connected now.
             out.redraw = true;
             break;
         case Hit::Camera:
@@ -795,4 +791,4 @@ DashboardView::ClickResult DashboardView::click(Point p) {
     return out;
 }
 
-} // namespace babble::ui
+}

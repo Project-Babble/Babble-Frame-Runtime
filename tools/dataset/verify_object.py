@@ -1,24 +1,5 @@
 #!/usr/bin/env python3
-"""Checks an uploaded dataset object end to end (docs/dataset-format.md).
-
-    python3 -I tools/dataset/verify_object.py <object.tar.bin> --key <private.pem> [--keep DIR]
-    python3 -I tools/dataset/verify_object.py <package.tar>                        [--keep DIR]
-
-An object (.tar.bin) is decrypted first: [i32 LE wrapped-key length][RSA-OAEP
-SHA-256 wrapped AES-256 key][16 B IV][AES-256-CBC ciphertext]. A package.tar
-(for example copied from the headset) is checked as is. Then:
-
-- every file's SHA-256 against the package block in session.json;
-- each source's H.265 file: decodes (full range, back to gray) to exactly as
-  many frames as its stamps file has records, tagged full range;
-- the lossless stills against the H.265 frames at the same indices (PSNR);
-- stamps increase; labels lie inside the session and carry step/phase
-  (format 2); routine.json matches routine_sha256; valve_eye.bin has whole
-  88-byte records spanning the session.
-
-Needs ffmpeg, ffprobe and openssl on PATH. Prints a report; exit code 0 only
-if everything passed.
-"""
+"""Decrypt an uploaded dataset object (or read a package.tar) and examine all of its parts."""
 import argparse
 import hashlib
 import json
@@ -72,7 +53,7 @@ def decrypt(obj, key, out):
 
 
 def frames(path, w, h):
-    """Yields each decoded frame of a video as bytes (full range gray)."""
+    """Yields each decoded frame of a video as full-range gray bytes."""
     p = subprocess.Popen(["ffmpeg", "-v", "error", "-nostdin", "-i", path, "-map", "0:v:0", "-f", "rawvideo",
                           "-pix_fmt", "gray", "-fps_mode", "passthrough", "-"], stdout=subprocess.PIPE)
     size = w * h

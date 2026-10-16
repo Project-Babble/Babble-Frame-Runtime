@@ -24,7 +24,7 @@ namespace {
 
 template <typename T> void put(uint8_t *p, size_t off, T v) { memcpy(p + off, &v, sizeof(v)); }
 
-// A record whose every value identifies its own field.
+// Writes a record in which each value identifies its own field.
 void write_record(uint8_t *r, uint32_t state) {
     put<uint32_t>(r, rec::kProducerState, state);
     put<double>(r, rec::kSampleTime, 123.5);
@@ -39,12 +39,12 @@ void write_record(uint8_t *r, uint32_t state) {
     put<float>(r, rec::kOpenness + 4, 0.75f);
 }
 
-// Plays the eye service: a version-N file with a robust process-shared mutex.
+// Acts as the eye service with a version-N file and a robust process-shared mutex.
 struct FakeService {
     std::string path;
     int fd = -1;
     uint8_t *base = nullptr;
-    size_t size = 0x4f21f, record = 0x157;   // an unknown version gets the version-5 shape
+    size_t size = 0x4f21f, record = 0x157;   // An unknown version gets the version-5 shape.
 
     explicit FakeService(uint32_t version) {
         for (const auto &l : kLayouts)
@@ -77,7 +77,7 @@ struct FakeService {
     pthread_mutex_t *mutex() { return reinterpret_cast<pthread_mutex_t *>(base + kMutexOffset); }
     uint32_t *word(size_t off) { return reinterpret_cast<uint32_t *>(base + off); }
 
-    // Writes a record, bumps the sequence and wakes waiters, like the service.
+    // Writes a record, increments the sequence and wakes the waiters, as the service does.
     void produce(uint32_t state) {
         pthread_mutex_lock(mutex());
         write_record(base + record, state);
@@ -100,7 +100,7 @@ std::optional<Sample> wait_for_sample(FakeService &svc, EyeServerClient &c, uint
     return std::nullopt;
 }
 
-} // namespace
+}
 
 TEST_CASE("an eye-service record decodes field by field") {
     std::vector<uint8_t> r(kRecordBytes, 0);
@@ -116,7 +116,7 @@ TEST_CASE("an eye-service record decodes field by field") {
     CHECK(s.openness[0] == 0.25f);
     CHECK(s.openness[1] == 0.75f);
 
-    write_record(r.data(), 0);   // producer says invalid
+    write_record(r.data(), 0);   // The producer marks the record as invalid.
     CHECK_FALSE(parse_record(r.data(), &s));
     write_record(r.data(), 1);
     put<float>(r.data(), rec::kOpenness, std::nanf(""));
@@ -127,14 +127,14 @@ TEST_CASE("the client follows the service's protocol and publishes samples") {
     FakeService svc(4);
     EyeServerClient c;
     c.start(ThreadSpec{"t-eyesrv", {}, 0}, {svc.path}, nullptr);
-    CHECK_FALSE(c.latest(1000000000ull));   // nobody wants it yet
+    CHECK_FALSE(c.latest(1000000000ull));   // No consumer wants the data yet.
     c.want(EyeServerClient::Gaze, true);
     auto s = wait_for_sample(svc, c, 1, 3000000000ull);
     REQUIRE(s);
     CHECK(c.available());
     CHECK(s->pre_fusion_gaze[1] == Vec3{110, 111, 112});
     CHECK(s->openness[1] == 0.75f);
-    CHECK(svc.requested() == 1);   // asked the service for records
+    CHECK(svc.requested() == 1);   // The client asked the service for records.
     c.stop();
 }
 
@@ -148,8 +148,8 @@ TEST_CASE("the recorder consumer gets every published sample through the listene
         last_seq = s.seq;
     });
     c.start(ThreadSpec{"t-eyesrv", {}, 0}, {svc.path}, nullptr);
-    CHECK(c.layout_version() == 0);   // nothing open yet
-    c.want(EyeServerClient::Record, true);   // the recorder alone keeps the reader going
+    CHECK(c.layout_version() == 0);   // The client has not opened a file yet.
+    c.want(EyeServerClient::Record, true);   // The recorder alone keeps the reader active.
     auto s = wait_for_sample(svc, c, 1, 3000000000ull);
     REQUIRE(s);
     CHECK(c.layout_version() == 4);
@@ -181,7 +181,7 @@ TEST_CASE("an unknown layout version is left alone") {
     c.want(EyeServerClient::Openness, true);
     CHECK_FALSE(wait_for_sample(svc, c, 1, 500000000ull));
     CHECK_FALSE(c.available());
-    CHECK(svc.requested() == 0);   // never wrote to it
+    CHECK(svc.requested() == 0);   // The client never wrote to the file.
     c.stop();
 }
 

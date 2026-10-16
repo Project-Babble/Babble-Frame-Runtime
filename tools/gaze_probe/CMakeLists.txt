@@ -1,7 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(gaze_probe CXX)
-# Standalone research tool: reads SteamVR eye-tracking input as a background
-# OpenVR client. Not part of the runtime build.
+# This research tool is not part of the runtime build, and it reads SteamVR eye tracking as a background client.
 set(CMAKE_CXX_STANDARD 17)
 set(OPENVR ${CMAKE_CURRENT_SOURCE_DIR}/../../third_party/openvr)
 add_executable(gaze_probe gaze_probe.cpp)

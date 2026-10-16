@@ -19,31 +19,26 @@ struct Signal {
     uint64_t t_ns = 0;
 };
 
-// Single source of truth for tracked values (blendshapes, eye openness,
-// gaze...). Pipelines write, output modules read snapshots at their own rate
-// or wait for the next update. Filtering and calibration land here in
-// Milestone 2.
+// The single source of truth for tracked values, which pipelines write and output modules read.
 class ExpressionState {
 public:
     struct Snapshot {
-        uint64_t seq = 0;   // increments on every update
+        uint64_t seq = 0;   // Increments on each update.
         std::vector<std::string> names;
         std::vector<Signal> signals;
     };
 
-    // Registers a signal name (idempotent) and returns its id. Call before streaming starts.
+    // Registers a signal name and returns its id, so call it before the stream starts.
     SignalId add_signal(const std::string &name);
 
     void update(std::span<const std::pair<SignalId, Signal>> values);
     Snapshot snapshot() const;
-    // Current values of a few signals (out[i] for ids[i]; unknown ids read as
-    // default); returns the sequence number they belong to.
+    // Writes the current value for ids[i] to out[i] and returns the sequence number of the values.
     uint64_t read(std::span<const SignalId> ids, Signal *out) const;
-    size_t count() const;                 // registered signals; ids are 0 .. count-1
-    std::string name(SignalId id) const;  // "" for an unknown id
+    size_t count() const;                 // The number of registered signals, with ids from 0 to count-1.
+    std::string name(SignalId id) const;  // Returns "" for an unknown id.
 
-    // Blocks until an update newer than `after_seq`, or the timeout; returns
-    // the current sequence number either way.
+    // Waits for an update newer than `after_seq` or for the timeout, and returns the current sequence number.
     uint64_t wait_update(uint64_t after_seq, std::chrono::nanoseconds timeout) const;
 
 private:
@@ -54,4 +49,4 @@ private:
     std::vector<Signal> signals_;
 };
 
-} // namespace babble
+}

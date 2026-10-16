@@ -23,55 +23,30 @@ class ExpressionState;
 
 namespace vrc_native {
 
-// VRChat's native ("full") face tracking input, as VRCFaceTracking 6 sends
-// it (VRCFaceTracking.Core/Services/BinaryFaceDataSender.cs and
-// Params/Data/UnifiedData.cs, CopyTo): one OSC blob at /tracking/face/v1 of
-// 102 bytes, each a value clamped to 0..1 and scaled to 0..255:
-//   0..3    right gaze +x, -x, +y, -y
-//   4..7    left gaze  -x, +x, +y, -y
-//   8, 9    right, left eye closed (1 - openness)
-//   10..13  unused (0)
-//   14..101 the 88 Unified Expressions shapes, in enum order
+// The native face tracking input of VRChat is one 102-byte OSC blob, with each value scaled from 0..1 to 0..255.
 constexpr size_t kBlobSize = 102;
 constexpr std::string_view kAddress = "/tracking/face/v1";
 using Blob = std::array<uint8_t, kBlobSize>;
 
-// Where each signal goes in the blob. Signal names are the osc sink's (the
-// Baballonia module's spellings); the shapes they drive follow that module's
-// BabbleOSC.cs.
+// The position of a signal in the blob, with the same signal names as the osc sink.
 struct Target {
     enum Kind : uint8_t { None, Shapes, LeftX, LeftY, RightX, RightY, LeftOpen, RightOpen };
     Kind kind = None;
-    std::vector<uint8_t> shapes;   // Unified Expressions indices, for Shapes
+    std::vector<uint8_t> shapes;   // The Unified Expressions indices for the Shapes kind.
 };
 Target target_of(std::string_view signal);
 
-// Builds the blob from values per signal (targets[i] for values[i]; a value
-// of nullopt is unset: eyes open, everything else 0).
+// Makes the blob from the values, where a nullopt value gives open eyes or 0 for the other shapes.
 Blob encode(const std::vector<Target> &targets, const std::vector<std::optional<float>> &values);
 
-// The address of the PC that the headset streams from, per SteamVR's Steam
-// Link log (vrlink.txt): the entry marked '*' in the latest session's
-// "UDPServerAddresses:" list, else the latest "SetPeer <us> -> <pc>".
+// Finds the address of the PC that the headset streams from in the Steam Link log of SteamVR.
 std::optional<std::string> streaming_pc(std::string_view log_text);
-// The latest session's vrlink process ("vrlink ... startup with PID=N").
+// Finds the PID of the vrlink process of the latest session in the log.
 std::optional<int> session_pid(std::string_view log_text);
 
-} // namespace vrc_native
+}
 
-// Config type "vrc_native": sends VRChat's native face tracking blob
-// (vrc_native::encode) straight to VRChat, skipping VRCFaceTracking. VRChat
-// runs either on the PC the headset streams from (Steam Link) or on the
-// Frame itself; with target "auto" the blob goes to the PC while a Steam Link
-// session is live, else to this headset.
-//
-// Config:
-//   output         the Output setting that runs this module ("vrc_native")
-//   target         "auto", "pc" (the Steam Link PC), "frame" (127.0.0.1)
-//   host           a fixed address instead (overrides target)
-//   port           VRChat's OSC input (default 9000)
-//   steam_link_log default ~/.local/share/Steam/logs/vrlink.txt
-//   max_rate_hz    cap on sends per second (0 = every update)
+// Config type "vrc_native" sends the native face tracking blob of VRChat directly to VRChat without VRCFaceTracking.
 class VrcNativeSink : public ISink {
 public:
     VrcNativeSink(const nlohmann::json &cfg, SinkDeps deps);
@@ -80,18 +55,18 @@ public:
     bool start() override;
     void stop() override;
 
-    // For the debug overlay: where the blob goes ("" kind = nowhere yet).
+    // The destination of the blob, where an empty kind means that there is no destination yet.
     struct Status {
-        std::string kind, address;   // kind: "pc", "frame" or "host"
-        uint64_t sent = 0;            // blobs sent so far
+        std::string kind, address;   // The kind is "pc", "frame" or "host".
+        uint64_t sent = 0;            // The number of blobs that the sink sent.
     };
     Status status() const;
 
 private:
     void run();
-    // Re-checks where VRChat is (every few seconds); true if dest_ is usable.
+    // Finds VRChat again every few seconds and returns true if dest_ is usable.
     bool refresh_destination(uint64_t now);
-    // The Steam Link PC while its session is live, re-reading the log when it changed.
+    // Returns the Steam Link PC while its session is live, and reads the log again when it changes.
     std::optional<std::string> live_pc();
     void send(const vrc_native::Blob &blob);
 
@@ -112,7 +87,7 @@ private:
     uint64_t next_check_ns_ = 0;
     std::filesystem::file_time_type log_mtime_{};
     uintmax_t log_size_ = 0;
-    std::optional<std::string> log_pc_;   // from the last read of the log
+    std::optional<std::string> log_pc_;   // The PC from the last read of the log.
     std::optional<int> log_pid_;
     mutable std::mutex status_mutex_;
     Status status_;
@@ -125,4 +100,4 @@ private:
     uint64_t last_error_log_ns_ = 0;
 };
 
-} // namespace babble
+}

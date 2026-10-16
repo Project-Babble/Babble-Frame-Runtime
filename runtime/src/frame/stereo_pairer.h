@@ -8,10 +8,7 @@
 
 namespace babble {
 
-// Pairs frames from two independent capture streams by capture timestamp.
-// A frame waits for its counterpart; when the counterpart arrives within the
-// tolerance they are emitted as one StereoFrame. Frames that never find a
-// partner are dropped and counted, never emitted alone.
+// Pairs frames from two capture streams by capture time, and drops and counts the frames that have no partner.
 class StereoPairer {
 public:
     struct Counts {
@@ -20,7 +17,7 @@ public:
 
     StereoPairer(uint64_t tolerance_ns, FrameOrigin left, FrameOrigin right);
 
-    // Thread-safe; called from both capture threads.
+    // Both capture threads call this function, and it is thread-safe.
     std::optional<StereoFrame> push(FramePtr frame);
 
     void reset();
@@ -34,4 +31,4 @@ private:
     Counts counts_;
 };
 
-} // namespace babble
+}

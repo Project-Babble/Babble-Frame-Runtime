@@ -15,71 +15,57 @@
 
 namespace babble {
 
-// SteamVR's private eye-service shared memory, /dev/shm/eye-server.mmap.
-// Beyond the fused gaze the public input API gives, it carries each eye's
-// gaze before stereo fusion and Valve's own lid openness. Layout and access
-// protocol as documented by konsti219/frameeyeosc (MIT), for layout versions 4
-// (SteamVR 2.17.10) and 5 (2.18.1); see docs/eye-tracking.md.
+// The private eye-service shared memory of SteamVR, as konsti219/frameeyeosc documents it (see docs/eye-tracking.md).
 namespace eye_server {
 
-// What differs between layout versions: the file size and where the record
-// sits. Everything before 0x40 and the record itself are the same.
+// The file size and the record offset are the only differences between the layout versions.
 struct Layout {
     uint32_t version;
     size_t file_size, record_offset;
 };
 inline constexpr Layout kLayouts[] = {{4, 0x4f21a, 0x152}, {5, 0x4f21f, 0x157}};
-inline constexpr size_t kMinFileSize = 0x4f21a;   // the smallest known layout
+inline constexpr size_t kMinFileSize = 0x4f21a;   // The size of the smallest known layout.
 inline constexpr size_t kVersionOffset = 0x00, kInitializedOffset = 0x04;
-inline constexpr size_t kMutexOffset = 0x08;       // glibc pthread_mutex_t, process-shared + robust
+inline constexpr size_t kMutexOffset = 0x08;       // A glibc pthread_mutex_t that is process-shared and robust.
 inline constexpr size_t kMutexBytes = 0x30;
-inline constexpr size_t kSequenceOffset = 0x38;    // bumped (and futex-woken) per new record
-inline constexpr size_t kRequestedOffset = 0x3c;   // consumers set 1 to ask for records
+inline constexpr size_t kSequenceOffset = 0x38;    // The service increments this word and wakes the futex per record.
+inline constexpr size_t kRequestedOffset = 0x3c;   // Consumers set this word to 1 to ask for records.
 inline constexpr size_t kRecordBytes = 0xebc;
 
-// Offsets inside the packed record.
+// The offsets inside the packed record.
 namespace rec {
-inline constexpr size_t kProducerState = 0x00;   // u32, 1 = valid
-inline constexpr size_t kSampleTime = 0x05;      // f64
-inline constexpr size_t kGaze = 0x0d;            // f32[2][3], per eye after stereo fusion
-inline constexpr size_t kGazeCov = 0x25;         // f32[2][3]
-inline constexpr size_t kFixation = 0x3d;        // f32[3], head-relative, -z forward, metres
-inline constexpr size_t kPreFusionGaze = 0x49;   // f32[2][3], per eye before fusion
-inline constexpr size_t kPreFusionCov = 0x61;    // f32[2][3]
-inline constexpr size_t kOpenness = 0x79;        // f32[2]
-} // namespace rec
+inline constexpr size_t kProducerState = 0x00;   // A u32 that is 1 when the record is valid.
+inline constexpr size_t kSampleTime = 0x05;      // An f64.
+inline constexpr size_t kGaze = 0x0d;            // An f32[2][3] for each eye after stereo fusion.
+inline constexpr size_t kGazeCov = 0x25;         // An f32[2][3].
+inline constexpr size_t kFixation = 0x3d;        // An f32[3] in metres, relative to the head, with -z forward.
+inline constexpr size_t kPreFusionGaze = 0x49;   // An f32[2][3] for each eye before fusion.
+inline constexpr size_t kPreFusionCov = 0x61;    // An f32[2][3].
+inline constexpr size_t kOpenness = 0x79;        // An f32[2].
+}
 
 using Vec3 = std::array<float, 3>;
 
-// Per-eye arrays: index 0 is the wearer's left eye, 1 the right, as
-// frameeyeosc reads them ("left, right"). Confirmed in VRChat for gaze
-// (convergence) and closed eyes. The mirrored visualizer shows the sides
-// swapped; judge sides in game, not there.
+// In the arrays for each eye, index 0 is the left eye of the wearer and index 1 is the right eye.
 inline constexpr int kLeftEye = 0, kRightEye = 1;
 
-// One eye-service sample; per-eye arrays indexed kRightEye / kLeftEye.
-// Directions: +x right, +y up, -z forward (head space).
+// One eye-service sample in head space, with +x right, +y up and -z forward.
 struct Sample {
-    uint64_t seq = 0;           // ours: increments per published sample
-    uint64_t received_ns = 0;   // mono_ns when we copied it
-    uint32_t layout = 0;        // the file's layout version
-    double sample_time = 0;     // the service's clock
+    uint64_t seq = 0;           // The runtime increments this counter for each published sample.
+    uint64_t received_ns = 0;   // The mono_ns time when the runtime copied the sample.
+    uint32_t layout = 0;        // The layout version of the file.
+    double sample_time = 0;     // The time on the clock of the service.
     std::array<Vec3, 2> gaze{}, pre_fusion_gaze{};
     Vec3 fixation{};
     std::array<float, 2> openness{};
 };
 
-// Decodes a record (kRecordBytes at rec). False if the producer marked it
-// invalid or any value isn't finite.
+// Decodes kRecordBytes at rec and returns false if the record is invalid or a value is not finite.
 bool parse_record(const uint8_t *rec, Sample *out);
 
-} // namespace eye_server
+}
 
-// Reads the eye-service shared memory on its own thread while any consumer
-// wants it. Validates the file (size, layout version, initialized) before
-// touching it and never writes anything but the consumer protocol: the shared
-// mutex and the metadata_requested flag. An unknown layout is left alone
-// (logged once) and retried every few seconds; so is a missing file.
+// Reads the eye-service shared memory on its own thread, and writes only the mutex and the request flag.
 class EyeServerClient {
 public:
     enum Consumer : uint32_t { Gaze = 1, Openness = 2, Record = 4 };
@@ -91,23 +77,22 @@ public:
     void start(ThreadSpec thread, Options options, StatsRegistry *stats);
     void stop();
 
-    // A consumer starts or stops needing samples; the reader idles when none do.
+    // Tells the reader that a consumer needs samples or not, and the reader waits when no consumer needs them.
     void want(Consumer c, bool on);
-    // True while the file is open and validated.
+    // Returns true while the file is open and valid.
     bool available() const { return available_.load(); }
-    // The newest sample if it arrived within max_age_ns.
+    // Returns the newest sample if it arrived within max_age_ns.
     std::optional<eye_server::Sample> latest(uint64_t max_age_ns) const;
-    // Called on the reader thread with every published sample (the recorder
-    // keeps them all); must be quick. Empty to remove.
+    // Sets a function that the reader thread calls for each sample, so the function must be fast.
     void set_listener(std::function<void(const eye_server::Sample &)> fn);
-    // The layout version of the open file; 0 while none is open.
+    // Returns the layout version of the open file, or 0 if no file is open.
     uint32_t layout_version() const { return version_.load(); }
 
 private:
     void run();
     bool open_map();
     void close_map();
-    bool read_one();   // one request/wait/copy round; true if a new sample was published
+    bool read_one();   // Requests, waits for and copies one record, and returns true for a new sample.
 
     ThreadSpec thread_spec_;
     Options options_;
@@ -134,4 +119,4 @@ private:
     Counter timeouts_, reopens_;
 };
 
-} // namespace babble
+}

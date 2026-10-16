@@ -24,7 +24,7 @@ std::string read_line(const std::filesystem::path &p) {
     return s;
 }
 
-// Every USB device in sysfs, optionally filtered.
+// Returns the USB devices in sysfs that the filter accepts.
 std::vector<Found> scan(const std::function<bool(const std::filesystem::path &, const Found &)> &want) {
     namespace fs = std::filesystem;
     std::vector<Found> out;
@@ -32,7 +32,7 @@ std::vector<Found> scan(const std::function<bool(const std::filesystem::path &, 
     for (const auto &e : fs::directory_iterator("/sys/bus/usb/devices", ec)) {
         const auto vid = read_line(e.path() / "idVendor"), pid = read_line(e.path() / "idProduct");
         if (vid.empty() || pid.empty())
-            continue;   // an interface, not a device
+            continue;   // This is an interface, not a device.
         Found f;
         f.vendor = uint16_t(std::stoul(vid, nullptr, 16));
         f.product = uint16_t(std::stoul(pid, nullptr, 16));
@@ -53,7 +53,7 @@ std::vector<Found> scan(const std::function<bool(const std::filesystem::path &, 
     return out;
 }
 
-} // namespace
+}
 
 std::vector<Found> find(uint16_t vendor, uint16_t product) {
     return scan([&](const std::filesystem::path &, const Found &f) {
@@ -68,14 +68,14 @@ std::vector<Found> list_all() {
 std::vector<Found> list_uvc() {
     namespace fs = std::filesystem;
     return scan([](const fs::path &dev, const Found &) {
-        // Interfaces are siblings named "<device>:<config>.<interface>".
+        // The interfaces are siblings with the name "<device>:<config>.<interface>".
         const std::string prefix = dev.filename().string() + ":";
         std::error_code ec;
         for (const auto &i : fs::directory_iterator(dev, ec)) {
             const std::string name = i.path().filename().string();
             if (name.rfind(prefix, 0) == 0 && read_line(i.path() / "bInterfaceClass") == "0e" &&
                 read_line(i.path() / "bInterfaceSubClass") == "02")
-                return true;   // a video streaming interface
+                return true;   // This is a video streaming interface.
         }
         return false;
     });
@@ -129,7 +129,7 @@ void Device::close() {
 }
 
 std::vector<uint8_t> Device::config_descriptor() const {
-    // sysfs "descriptors": the 18-byte device descriptor, then the configuration(s).
+    // The sysfs "descriptors" file has the 18-byte device descriptor and then the configurations.
     std::ifstream in(sysfs_ + "/descriptors", std::ios::binary);
     std::vector<uint8_t> all((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     if (all.size() <= 18)
@@ -217,7 +217,7 @@ bool BulkReader::start(std::string *error) {
 
 bool BulkReader::wait(int timeout_ms, const std::function<void(const uint8_t *, size_t)> &on_data,
                       std::string *error) {
-    // usbfs signals completed transfers as POLLOUT.
+    // usbfs shows completed transfers as POLLOUT.
     pollfd p{dev_.fd(), POLLOUT, 0};
     const int r = poll(&p, 1, timeout_ms);
     if (r < 0 && errno != EINTR) {
@@ -247,7 +247,7 @@ bool BulkReader::wait(int timeout_ms, const std::function<void(const uint8_t *, 
         }
         if (urb->status == 0 && urb->actual_length > 0)
             on_data(static_cast<const uint8_t *>(urb->buffer), size_t(urb->actual_length));
-        // -EPIPE: the endpoint stalled; clear it and keep reading.
+        // Clear a stalled endpoint and continue to read.
         if (urb->status == -EPIPE)
             dev_.clear_halt(endpoint_);
         if (!submit(urb)) {
@@ -266,7 +266,7 @@ void BulkReader::stop() {
     }
     for (auto &u : urbs_)
         ioctl(dev_.fd(), USBDEVFS_DISCARDURB, u.get());
-    // Reap everything we submitted, so the kernel no longer writes into our buffers.
+    // Reap all submitted transfers, so that the kernel does not write into the buffers.
     for (int tries = 0; in_flight_ > 0 && tries < 50; tries++) {
         usbdevfs_urb *urb = nullptr;
         if (ioctl(dev_.fd(), USBDEVFS_REAPURBNDELAY, &urb) == 0) {
@@ -280,4 +280,4 @@ void BulkReader::stop() {
     in_flight_ = 0;
 }
 
-} // namespace babble::usb
+}

@@ -1,9 +1,4 @@
-// Streams a Babble face tracker (or any MJPEG UVC camera) over usbfs for a few
-// seconds and reports what arrives; optionally saves frames.
-//
-//   babble_usb_probe [--seconds N] [--save DIR] [--count N] [--vid 303a] [--pid 8000] [--fps 60]
-//
-// Saves DIR/frame_NNN.jpg as received and DIR/frame_NNN.pgm decoded to grayscale.
+// Streams a Babble face tracker or another MJPEG UVC camera over usbfs for a few seconds and reports what arrives.
 #include "camera/usb/jpeg.h"
 #include "camera/usb/uvc_camera.h"
 #include "core/clock.h"
