@@ -51,4 +51,4 @@ the only output; it leaves out the Frame's front-port mouth cameras and their ca
 the visualizer launcher, the camera-stream switch and the unused models. The default, `dev`, builds everything including unfinished features. 
 ## License
 
-Licensed under the [Babble Software Distribution License 1.0](LICENSE) non-commercial use only, and derivative works must be released under the same license with their source. Third-party code in `third_party/` keeps its own license.
+Licensed under the [GNU General Public License v3.0](LICENSE). Third-party code in `third_party/` keeps its own license.
