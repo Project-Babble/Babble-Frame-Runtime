@@ -4,7 +4,7 @@
 
 Eye and mouth expression tracking that runs on the Steam Frame itself.
 
-Babble Frame Runtime reads the Steam Frame's eye cameras, and a wired Babble face tracker for the mouth, and runs a set of optimized neural networks to output expression values (eye openness, widening, pupil dilation and per-eye gaze; jaw, lips, cheeks and
+Babble Frame Runtime reads the Steam Frame's eye cameras, and a wired Babble face tracker for the mouth, and runs a set of optimized neural networks to output expression values (eye openness, widening, pupil dilation; jaw, lips, cheeks and
 tongue), which it sends to VRCFaceTracking on your PC.
 
 It is installed as a SteamVR driver for settings integration. The driver starts the runtime as a separate process and restarts it if it stops,
@@ -13,7 +13,7 @@ so a problem in the runtime never affects SteamVR.
 ## Features
 
 - **Eye expressions:** openness, widen and pupil dilation per eye.
-- **Mouth tracking:** 43 blendshapes from a wired Babble face tracker plugged into the headset, with a neural network running on the CPU (ExecuTorch with XNNPACK).
+- **Mouth tracking:** 43 blendshapes from a wired Babble face tracker plugged into the headset.
 - **Gaze:** each eye's own gaze from the headset's eye service, or SteamVR's combined gaze.
 - **Presence:** tracking pauses while the headset is off the head (proximity sensor), and the cameras turn off.
 - **SteamVR Settings:** an Expression Tracking section to turn mouth and eye tracking on and off and set the eye
