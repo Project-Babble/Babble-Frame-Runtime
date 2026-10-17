@@ -72,6 +72,8 @@ struct FakeModule {
     uint64_t rx = 0;                      // The number of data datagrams that the module received.
     int data_messages = 0;
     int beacons = 0;
+    std::optional<bool> ping_eye, ping_face;   // These are the tracking flags of the last ping.
+    std::optional<bool> claims_eye, claims_face, restart;   // The pongs report these claims.
     std::thread thread;
     std::atomic<bool> stop{false};
 
@@ -129,6 +131,8 @@ struct FakeModule {
                 reply(from, offer);
             } else if (m->type == "ping") {
                 std::lock_guard lock(mutex);
+                ping_eye = m->eye;
+                ping_face = m->face;
                 if (silent_paths.count(m->path))
                     continue;
                 link::Message pong;
@@ -136,6 +140,9 @@ struct FakeModule {
                 pong.mid = mid;
                 pong.seq = m->seq;
                 pong.rx = rx;
+                pong.eye = claims_eye;
+                pong.face = claims_face;
+                pong.restart = restart;
                 reply(from, pong);
             }
         }
@@ -156,6 +163,16 @@ struct FakeModule {
     int beacon_count() {
         std::lock_guard lock(mutex);
         return beacons;
+    }
+    void claim(bool eye, bool face, bool restart_needed) {
+        std::lock_guard lock(mutex);
+        claims_eye = eye;
+        claims_face = face;
+        restart = restart_needed;
+    }
+    bool ping_flags(bool eye, bool face) {
+        std::lock_guard lock(mutex);
+        return ping_eye == eye && ping_face == face;
     }
 };
 
@@ -199,6 +216,16 @@ TEST_CASE("link messages round trip and reject strangers") {
     CHECK(back->path == "dongle");
     CHECK(back->seq == 42);
     CHECK(back->active);
+    CHECK_FALSE(back->eye);   // An older headset does not send the tracking flags.
+    CHECK_FALSE(back->face);
+    m.eye = false;
+    m.face = true;
+    const std::string flags = link::encode(m);
+    back = link::decode(flags.data(), flags.size());
+    REQUIRE(back);
+    CHECK(back->eye == false);
+    CHECK(back->face == true);
+    CHECK_FALSE(back->restart);
 
     link::Message offer;
     offer.type = "offer";
@@ -225,7 +252,8 @@ TEST_CASE("link messages round trip and reject strangers") {
 
     for (const char *bad : {"", "not json", "/jawOpen", R"({"proto":"other","v":1,"type":"ping"})",
                             R"({"proto":"bfr-link","v":2,"type":"ping"})", R"({"proto":"bfr-link","v":1})",
-                            R"({"proto":"bfr-link","v":1,"type":"ping","seq":"x"})"})
+                            R"({"proto":"bfr-link","v":1,"type":"ping","seq":"x"})",
+                            R"({"proto":"bfr-link","v":1,"type":"ping","eye":"yes"})"})
         CHECK_FALSE(link::decode(bad, strlen(bad)));
 }
 
@@ -269,6 +297,34 @@ TEST_CASE("link: finds the module, streams, fails over and back, and searches wh
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
     CHECK_FALSE(module.got_data("/jawOpen"));
 
+    sink.stop();
+}
+
+TEST_CASE("link: pings tell the module which tracking is on") {
+    FakeModule module;
+    ExpressionState state;
+    StatsRegistry stats;
+    const json threads = json::object();
+    LinkSink sink(fast_config(module.control_port), SinkDeps{"pc", threads, state, stats});
+    sink.set_interface_source(two_paths);
+    REQUIRE(sink.start());
+    CHECK(eventually([&] { return module.ping_flags(true, true); }));
+    sink.set_features(false, true);
+    CHECK(eventually([&] { return module.ping_flags(false, true); }));
+    sink.set_features(true, false);
+    CHECK(eventually([&] { return module.ping_flags(true, false); }));
+
+    // An older module reports no claims.
+    CHECK(eventually([&] { return sink.status().linked; }));
+    CHECK_FALSE(sink.status().claims_eye);
+    CHECK_FALSE(sink.status().restart);
+    // The pongs report what the module claims, and if VRCFaceTracking must restart.
+    module.claim(false, true, true);
+    CHECK(eventually([&] { return sink.status().restart; }));
+    CHECK(sink.status().claims_eye == false);
+    CHECK(sink.status().claims_face == true);
+    module.claim(true, false, false);
+    CHECK(eventually([&] { return !sink.status().restart && sink.status().claims_eye == true; }));
     sink.stop();
 }
 

@@ -66,6 +66,7 @@ void Dashboard::set_status(const Status &s) {
         !same_feed(s.eye, status_.eye) || s.visualizer != status_.visualizer ||
         s.link.available != status_.link.available || s.link.linked != status_.link.linked ||
         s.link.path != status_.link.path || s.link.pc != status_.link.pc || s.link.address != status_.link.address ||
+        s.link.no_data != status_.link.no_data || s.link.restart != status_.link.restart ||
         std::lround(s.link.rtt_ms) != std::lround(status_.link.rtt_ms) || s.mouth_source != status_.mouth_source ||
         s.mouth_source_selectable != status_.mouth_source_selectable ||
         s.camera != status_.camera || s.active_camera != status_.active_camera ||

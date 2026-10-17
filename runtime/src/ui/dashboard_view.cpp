@@ -269,7 +269,7 @@ void DashboardView::render_link(Canvas &c, const LinkReading &link, float right)
     if (!link.available)
         return;
     const float x = 150, y = float(c.height()) - 84, px = 26, dot_r = 9;
-    c.fill_circle(x + dot_r, y, dot_r, link.linked && !link.no_data ? kGreen : kAmber);
+    c.fill_circle(x + dot_r, y, dot_r, link.linked && !link.no_data && !link.restart ? kGreen : kAmber);
     const float label_x = x + 2 * dot_r + 14;
     const float base = y + medium_.cap_height(px) / 2;
     const char *label = link.native ? "VRChat" : "PC";
@@ -284,12 +284,14 @@ void DashboardView::render_link(Canvas &c, const LinkReading &link, float right)
     } else if (link.linked) {
         const std::string path = link.path == "lan" ? "LAN" : link.path == "usb" ? "USB" : link.path;
         text = (link.pc.empty() ? std::string("VRCFaceTracking") : link.pc) + " via " + path + "  \u00b7  ";
-        if (link.no_data) {
-            text += "no data reaching it";   // This replaces the address because the line has no space for both.
-        } else {
+        // A problem replaces the address because the line has no space for both.
+        if (link.no_data)
+            text += "no data reaching it";
+        else if (link.restart)
+            text += "Mode changed, restart VRCFT";
+        else
             text += link.address;
-        }
-        if (!link.no_data && link.rtt_ms >= 0) {
+        if (!link.no_data && !link.restart && link.rtt_ms >= 0) {
             char ms[32];
             snprintf(ms, sizeof(ms), "  \u00b7  %.0f ms", link.rtt_ms);
             text += ms;

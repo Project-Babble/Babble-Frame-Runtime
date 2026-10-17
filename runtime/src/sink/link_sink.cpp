@@ -42,6 +42,12 @@ std::string encode(const Message &m) {
         j["rx"] = *m.rx;
     if (m.type == "offer")
         j["busy"] = m.busy;
+    if (m.eye)
+        j["eye"] = *m.eye;
+    if (m.face)
+        j["face"] = *m.face;
+    if (m.restart)
+        j["restart"] = *m.restart;
     return j.dump();
 }
 
@@ -63,6 +69,12 @@ std::optional<Message> decode(const char *data, size_t size) {
             m.rx = j["rx"].get<uint64_t>();
         m.busy = j.value("busy", false);
         m.active = j.value("active", false);
+        if (j.contains("eye"))
+            m.eye = j["eye"].get<bool>();
+        if (j.contains("face"))
+            m.face = j["face"].get<bool>();
+        if (j.contains("restart"))
+            m.restart = j["restart"].get<bool>();
     } catch (const nlohmann::json::exception &) {
         return std::nullopt;   // A field has the wrong type.
     }
@@ -248,13 +260,48 @@ std::string LinkSink::active_path() const {
 
 LinkSink::Status LinkSink::status() const {
     std::lock_guard lock(status_mutex_);
-    return status_;
+    Status s = status_;
+    if (s.linked) {
+        s.claims_eye = claims_eye_;
+        s.claims_face = claims_face_;
+        s.restart = restart_;
+    }
+    return s;
+}
+
+void LinkSink::set_mode(const link::Message &m) {
+    if (!m.eye || !m.face)
+        return;   // An older module does not report its claims.
+    const bool restart = m.restart.value_or(false);
+    std::lock_guard lock(status_mutex_);
+    if (claims_eye_ == m.eye && claims_face_ == m.face && restart_ == restart)
+        return;
+    claims_eye_ = m.eye;
+    claims_face_ = m.face;
+    const char *eye = *m.eye ? "on" : "off", *face = *m.face ? "on" : "off";
+    if (restart)
+        LOG.warn("%s: the VRCFaceTracking module claims eye tracking %s and face tracking %s; restart VRCFaceTracking "
+                 "to match the tracking that is on", name_.c_str(), eye, face);
+    else
+        LOG.info("%s: the VRCFaceTracking module claims eye tracking %s and face tracking %s", name_.c_str(), eye, face);
+    restart_ = restart;
+}
+
+void LinkSink::set_features(bool eye, bool face) {
+    const bool changed = eye_.exchange(eye) != eye;
+    if (face_.exchange(face) != face || changed)
+        LOG.info("%s: tells the module: eye tracking %s, face tracking %s", name_.c_str(), eye ? "on" : "off",
+                 face ? "on" : "off");
 }
 
 link::Message LinkSink::base(const std::string &type) const {
     link::Message m;
     m.type = type;
     m.sid = sid_;
+    if (type == "beacon" || type == "ping") {
+        m.eye = eye_.load();
+        m.face = face_.load();
+    }
     return m;
 }
 
@@ -441,6 +488,12 @@ void LinkSink::handle(Path *path, const link::Message &m, const sockaddr_in &fro
                 return;
             module_mid_ = m.mid;
             module_name_ = m.name;
+            {
+                std::lock_guard lock(status_mutex_);
+                claims_eye_.reset();
+                claims_face_.reset();
+                restart_ = false;
+            }
             LOG.info("%s: found VRCFT module \"%s\" at %s via %s", name_.c_str(), m.name.c_str(),
                      ip_string(from).c_str(), path->kind.c_str());
         }
@@ -448,6 +501,7 @@ void LinkSink::handle(Path *path, const link::Message &m, const sockaddr_in &fro
         path->has_peer = true;
         path->peer = from;
         path->mid = m.mid;
+        set_mode(m);
         if (fresh) {
             path->last_pong_ns = now;   // The offer is also an answer.
             path->good_pongs = 0;
@@ -487,6 +541,7 @@ void LinkSink::handle(Path *path, const link::Message &m, const sockaddr_in &fro
             path->good_pongs = 0;   // The path was dead, so it must prove itself again.
         path->last_pong_ns = now;
         path->good_pongs++;
+        set_mode(m);
         choose(now);
         return;
     }

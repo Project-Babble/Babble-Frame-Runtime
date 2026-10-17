@@ -56,6 +56,7 @@ struct LinkReading {
     double rtt_ms = -1;       // The value is -1 until the first measurement.
     bool native = false;
     bool no_data = false;     // True if the PC is linked but gets none of our data.
+    bool restart = false;     // True if VRCFaceTracking must restart to claim the tracking that is on.
 };
 
 // A USB camera that the mouth can use.

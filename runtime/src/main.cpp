@@ -462,6 +462,18 @@ int main(int argc, char **argv) {
     for (auto &p : pipelines)
         p->start();
 
+    // The PC links tell the module which tracking is on, so that the module claims only that tracking.
+    auto update_link_features = [&] {
+        auto on = [&](std::initializer_list<const char *> feeds) {
+            return std::any_of(sources.begin(), sources.end(), [&](const auto &s) {
+                return s.src->tracking() && std::find(feeds.begin(), feeds.end(), s.name) != feeds.end();
+            });
+        };
+        const bool eye = on({"eye"}), face = on({"mouth", "face"});
+        for (auto &k : sinks)
+            if (auto *l = dynamic_cast<LinkSink *>(k.sink.get()))
+                l->set_features(eye, face);
+    };
     // When the user turns a feed off, its source stops the cameras and its pipelines send neutral values.
     auto set_feed_tracking = [&](const std::string &feed, bool on) {
         for (auto &s : sources)
@@ -470,10 +482,12 @@ int main(int argc, char **argv) {
         for (auto &p : pipelines)
             if (p->feed() == feed)
                 p->set_tracking(on);
+        update_link_features();
     };
     for (auto &s : sources)
         if (!s.src->tracking())
             set_feed_tracking(s.name, false);
+    update_link_features();
 
 #if BABBLE_FRUNK_MOUTH
     // The mouth_source setting selects the Frame mouth cameras or a USB camera, and the other source stays off.
@@ -730,7 +744,10 @@ int main(int argc, char **argv) {
               << (ls.rtt_ms >= 0 ? ", rtt " + std::to_string(ls.rtt_ms) + " ms" : "")
               << (ls.data == LinkSink::Data::Arriving ? ", data arriving"
                   : ls.data == LinkSink::Data::Missing ? ", DATA NOT ARRIVING" : "")
-              << "\n";
+              << (ls.claims_eye ? std::string(", module claims eye ") + (*ls.claims_eye ? "on" : "off") +
+                                      ", face " + (*ls.claims_face ? "on" : "off")
+                                : "")
+              << (ls.restart ? ", VRCFT RESTART NEEDED" : "") << "\n";
         }
         for (const auto &c : usb_cameras)
             o << "usb camera: " << c.label << " (" << c.id << ")"
@@ -1192,6 +1209,7 @@ int main(int argc, char **argv) {
                 const auto ls = pc_link->status();
                 st.link = {true, ls.linked, ls.path, ls.module, ls.address, ls.rtt_ms};
                 st.link.no_data = ls.data == LinkSink::Data::Missing;
+                st.link.restart = ls.restart;
             } else if (vrc_native && vrc_native_entry->running) {
                 // The native output shows "linked" while it sends blobs.
                 const auto ns = vrc_native->status();

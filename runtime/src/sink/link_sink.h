@@ -28,6 +28,9 @@ struct Message {
     uint64_t seq = 0;
     std::optional<uint64_t> rx;       // A pong gives the number of data datagrams that the module received.
     bool busy = false, active = false;
+    // A beacon and a ping tell the module which tracking is on, and an offer and a pong tell what the module claims.
+    std::optional<bool> eye, face;
+    std::optional<bool> restart;      // An offer and a pong tell if a VRCFaceTracking restart changes the claims.
 };
 std::string encode(const Message &m);
 std::optional<Message> decode(const char *data, size_t size);
@@ -54,6 +57,9 @@ public:
     // Tests use this to replace the interface scan, and they must call it before start().
     void set_interface_source(std::function<std::vector<link::Interface>()> f) { interfaces_fn_ = std::move(f); }
 
+    // Sets which tracking is on, so that the module claims only that tracking in VRCFaceTracking.
+    void set_features(bool eye, bool face);
+
     // Returns the name of the active path, or "" if no path is active.
     std::string active_path() const;
 
@@ -63,6 +69,8 @@ public:
         std::string path, module, address;   // The path kind, PC name and PC address of the link.
         double rtt_ms = -1;                  // The last round trip of the active path, or -1 if none.
         Data data = Data::Unknown;
+        std::optional<bool> claims_eye, claims_face;   // These are empty if the module does not report its claims.
+        bool restart = false;                          // True if VRCFaceTracking must restart to claim the tracking.
     };
     Status status() const;
 
@@ -91,6 +99,7 @@ private:
     void send_on(Path &p, const sockaddr_in &to, const link::Message &m);   // Records when a path stops sending.
     bool open_socket(Path &p);   // Binds the socket of the path to the address of its interface.
     void check_data(uint64_t now);   // Once each second, finds out if the module gets the data.
+    void set_mode(const link::Message &m);   // Records what the linked module claims.
     link::Message base(const std::string &type) const;
     bool alive(const Path &p, uint64_t now) const;
     int rank(const std::string &kind) const;
@@ -112,6 +121,7 @@ private:
 
     std::thread thread_;
     std::atomic<bool> stop_{false};
+    std::atomic<bool> eye_{true}, face_{true};
     int listen_sock_ = -1;             // The socket on control_port for the queries of the module.
     std::vector<std::unique_ptr<Path>> paths_;
     std::string module_mid_;           // The linked module, or "" if there is none.
@@ -128,6 +138,8 @@ private:
     mutable std::mutex status_mutex_;
     std::string active_name_;
     Status status_;
+    std::optional<bool> claims_eye_, claims_face_;
+    bool restart_ = false;
 
     Counter switches_;
     std::map<std::string, std::unique_ptr<LatencyStat>> rtt_;   // There is one stat for each path kind.
