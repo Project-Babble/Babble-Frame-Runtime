@@ -6,11 +6,8 @@
 
 #include <array>
 #include <atomic>
-#include <condition_variable>
 #include <memory>
-#include <mutex>
 #include <optional>
-#include <thread>
 #include <vector>
 
 namespace babble {
@@ -31,17 +28,14 @@ private:
     void process(const StereoFrame &frames) override;
     void on_start() override;
     void on_stop() override;
-    void pupil_loop();
-    // Run a one-input, one-output eye model on float data, with fp16 conversion if the model uses fp16.
-    bool run_model(ExecuTorchRunner &m, const float *x, float *y, std::vector<uint16_t> &half_in,
-                   std::vector<uint16_t> &half_out);
+    // Run the eye model on float data, with fp16 conversion if the model uses fp16.
+    bool run_model(const float *x, float *y);
 
-    std::unique_ptr<ExecuTorchRunner> lid_, pupil_;   // In the combined layout, lid_ holds the combined model.
-    bool combined_ = false;
+    std::unique_ptr<ExecuTorchRunner> model_;
     uint32_t res_ = 160;
     size_t plane_ = 160 * 160;
     std::vector<float> x_;
-    std::array<float, 4> out_{};   // The lid output is [2] in the split layout or [2,2] in the combined layout.
+    std::array<float, 4> out_{};   // The model output is [2,2], with the lid and the pupil for each view.
     std::vector<uint16_t> half_in_, half_out_;
     std::vector<uint8_t> flip_, small_;
 
@@ -70,24 +64,10 @@ private:
     Counter native_fallback_;
     bool use_calib_ = true, babble_swap_ = false;
     double pupil_gain_ = 2.0;
-    uint64_t pupil_every_ns_ = 0, last_pupil_submit_ns_ = 0;
-    bool pupil_submitted_ = false;
-
-    // The pupil worker uses the latest input and gives one result for each submission.
-    ThreadSpec pupil_thread_spec_;
-    std::thread pupil_thread_;
-    std::mutex pupil_mutex_;
-    std::condition_variable pupil_cv_;
-    std::vector<float> pupil_in_;
-    std::array<float, 2> pupil_out_{};
-    uint64_t pupil_seq_in_ = 0, pupil_seq_out_ = 0, pupil_seq_taken_ = 0;
-    bool pupil_busy_ = false, pupil_stop_ = false;
 
     std::array<SignalId, 3> left_ids_{}, right_ids_{};   // The order is Lid, Widen, Dilation.
     SignalId left_raw_id_ = 0, right_raw_id_ = 0;        // These debug signals are not sent.
     std::array<SignalId, 4> cal_ids_{};                  // These debug signals show the neutral and wide values of each eye.
-    LatencyStat pupil_time_;
-    RateStat pupil_rate_;
 };
 
 }

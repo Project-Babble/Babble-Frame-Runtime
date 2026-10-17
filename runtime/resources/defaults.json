@@ -41,10 +41,6 @@
       "cpus": [0],
       "nice": 0
     },
-    "pupil": {
-      "cpus": [4],
-      "nice": 5
-    },
     "gaze": {
       "cpus": [0, 1],
       "nice": 0
@@ -146,13 +142,9 @@
       "enabled": true,
       "from": "eye",
       "thread": "infE",
-      "pupil_thread": "pupil",
       "model": "eye_split96_uncapped_fp16.pte",
       "openness_source": "model",
-      "lid_model": "lid_mnv4_160_int8.pte",
-      "pupil_model": "pupil_cnx_160_fp32.pte",
       "update_hz": 90,
-      "pupil_hz": 3,
       "pupil_gain": 2.0,
       "lid_calibration": "baseline",
       "widen_seed": 0.15,

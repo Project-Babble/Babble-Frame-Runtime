@@ -53,8 +53,6 @@ TEST_CASE("built-in defaults parse and carry the key settings") {
         CHECK_FALSE_MESSAGE(d->contains(key), key);
     CHECK_FALSE((*d)["sinks"].contains("vrc_native"));
     CHECK((*d)["sinks"]["vrcft"]["enabled"] == false);
-    CHECK_FALSE((*d)["pipelines"]["eye"].contains("lid_model"));
-    CHECK_FALSE((*d)["pipelines"]["eye"].contains("pupil_model"));
 #endif
     // Every user setting must point at a key in the defaults, because the loader drops a bad profile
     // trim with only a warning.

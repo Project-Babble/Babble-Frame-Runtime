@@ -41,28 +41,16 @@ bool BabbleEye::init() {
     if (!bind_input())
         return false;
 
-    combined_ = !cfg_.value("model", "").empty();
-    lid_ = std::make_unique<ExecuTorchRunner>();
-    if (!lid_->load(model_path(combined_ ? "model" : "lid_model")))
+    model_ = std::make_unique<ExecuTorchRunner>();
+    if (!model_->load(model_path("model")))
         return false;
-    if (!eye_contract(*lid_, combined_ ? 4 : 2, &res_)) {
-        LOG.error("pipeline %s: %s model does not match [2,1,R,R] -> %s", name_.c_str(), combined_ ? "eye" : "lid",
-                  combined_ ? "[2,2]" : "[2]");
+    if (!eye_contract(*model_, 4, &res_)) {
+        LOG.error("pipeline %s: eye model does not match [2,1,R,R] -> [2,2]", name_.c_str());
         return false;
-    }
-    if (!combined_ && !cfg_.value("pupil_model", "").empty()) {
-        pupil_ = std::make_unique<ExecuTorchRunner>();
-        uint32_t pupil_res = 0;
-        if (!pupil_->load(model_path("pupil_model")) || !eye_contract(*pupil_, 2, &pupil_res) ||
-            pupil_res != res_) {
-            LOG.warn("pipeline %s: pupil model unusable; running without dilation", name_.c_str());
-            pupil_.reset();
-        }
     }
     plane_ = size_t(res_) * res_;
 
     const double hz = cfg_.value("update_hz", 90.0);
-    const double pupil_hz = std::min(cfg_.value("pupil_hz", 3.0), hz);
     tuned_ = eye::RateScale{hz, hz};
     update_rate_ = eye::UpdateRate(hz);
     use_calib_ = cfg_.value("calib", true);
@@ -88,7 +76,6 @@ bool BabbleEye::init() {
         }
         baseline_calib_ = mode == "baseline";
     }
-    pupil_every_ns_ = uint64_t(1e9 / pupil_hz);
 
     start_session();
 
@@ -106,18 +93,10 @@ bool BabbleEye::init() {
         cal_ids_[i] = deps_.state.add_signal(cal_names[i]);
 
     x_.resize(2 * plane_);
-    pupil_in_.resize(2 * plane_);
     flip_.resize(400 * 400);
     small_.resize(plane_);
-    pupil_thread_spec_ = thread_spec(deps_.threads, cfg_.value("pupil_thread", "pupil"), "bbl-pupil");
-    deps_.stats.add("pipe." + name_ + ".pupil_fps", &pupil_rate_);
-    deps_.stats.add("pipe." + name_ + ".pupil_inference", &pupil_time_);
-    if (combined_)
-        LOG.info("pipeline %s: combined lid + pupil model (%u px, %s) on %s, filters tuned at %.0f updates/s",
-                 name_.c_str(), res_, lid_->inputs()[0].dtype == DType::F16 ? "fp16" : "fp32", source_.c_str(), hz);
-    else
-        LOG.info("pipeline %s: lid%s on %s at %.0f updates/s%s", name_.c_str(), pupil_ ? " + pupil" : "",
-                 source_.c_str(), hz, pupil_ ? (", pupil " + std::to_string(int(pupil_hz)) + " Hz").c_str() : "");
+    LOG.info("pipeline %s: lid + pupil model (%u px, %s) on %s, filters tuned at %.0f updates/s", name_.c_str(),
+             res_, model_->inputs()[0].dtype == DType::F16 ? "fp16" : "fp32", source_.c_str(), hz);
     return true;
 }
 
@@ -144,16 +123,8 @@ void BabbleEye::start_session() {
 
 // Set the pupil baseline window and the minimum samples for the first baseline, in pupil samples.
 void BabbleEye::set_pupil_windows() {
-    const double base_s = cfg_.value("pupil_base_s", 60.0);
-    size_t window, min;
-    if (combined_) {
-        window = tuned_.count(base_s * tuned_.ref_hz);
-        min = tuned_.count(tuned_.ref_hz);
-    } else {
-        const double pupil_hz = std::min(cfg_.value("pupil_hz", 3.0), tuned_.ref_hz);
-        window = size_t(std::max(10, int(base_s * pupil_hz)));
-        min = size_t(std::max(5, int(pupil_hz)));
-    }
+    const size_t window = tuned_.count(cfg_.value("pupil_base_s", 60.0) * tuned_.ref_hz);
+    const size_t min = tuned_.count(tuned_.ref_hz);
     for (auto &t : trackers_)
         t.set_base_window(window, min);
 }
@@ -234,80 +205,33 @@ void BabbleEye::prepare(const StereoFrame &sf, float *x) {
     }
 }
 
-bool BabbleEye::run_model(ExecuTorchRunner &m, const float *x, float *y, std::vector<uint16_t> &half_in,
-                          std::vector<uint16_t> &half_out) {
-    const TensorSpec &is = m.inputs()[0], &os = m.outputs()[0];
+bool BabbleEye::run_model(const float *x, float *y) {
+    const TensorSpec &is = model_->inputs()[0], &os = model_->outputs()[0];
     const void *in = x;
     if (is.dtype == DType::F16) {
-        half_in.resize(is.elements());
-        to_half(x, half_in.data(), is.elements());
-        in = half_in.data();
+        half_in_.resize(is.elements());
+        to_half(x, half_in_.data(), is.elements());
+        in = half_in_.data();
     }
     void *out = y;
     if (os.dtype == DType::F16) {
-        half_out.resize(os.elements());
-        out = half_out.data();
+        half_out_.resize(os.elements());
+        out = half_out_.data();
     }
     std::vector<TensorView> iv{{const_cast<void *>(in), &is}};
     std::vector<TensorView> ov{{out, &os}};
-    if (!m.run(iv, ov))
+    if (!model_->run(iv, ov))
         return false;
     if (os.dtype == DType::F16)
-        from_half(half_out.data(), y, os.elements());
+        from_half(half_out_.data(), y, os.elements());
     return true;
 }
 
-void BabbleEye::on_start() {
-    update_eye_server_want();
-    if (!pupil_)
-        return;
-    {
-        std::lock_guard<std::mutex> lock(pupil_mutex_);
-        pupil_stop_ = false;
-    }
-    pupil_thread_ = start_thread(pupil_thread_spec_, [this] { pupil_loop(); });
-}
+void BabbleEye::on_start() { update_eye_server_want(); }
 
 void BabbleEye::on_stop() {
     if (deps_.eye_server)
         deps_.eye_server->want(EyeServerClient::Openness, false);
-    {
-        std::lock_guard<std::mutex> lock(pupil_mutex_);
-        pupil_stop_ = true;
-    }
-    pupil_cv_.notify_all();
-    if (pupil_thread_.joinable())
-        pupil_thread_.join();
-}
-
-void BabbleEye::pupil_loop() {
-    std::vector<float> in(2 * plane_);
-    std::array<float, 2> out{};
-    std::vector<uint16_t> half_in, half_out;
-    uint64_t done_seq = 0;
-    while (true) {
-        uint64_t seq;
-        {
-            std::unique_lock<std::mutex> lock(pupil_mutex_);
-            pupil_cv_.wait(lock, [&] { return pupil_stop_ || pupil_seq_in_ != done_seq; });
-            if (pupil_stop_)
-                return;
-            seq = pupil_seq_in_;
-            in = pupil_in_;
-            pupil_busy_ = true;
-        }
-        uint64_t t0 = mono_ns();
-        bool ok = run_model(*pupil_, in.data(), out.data(), half_in, half_out);
-        pupil_time_.add(mono_ns() - t0);
-        std::lock_guard<std::mutex> lock(pupil_mutex_);
-        if (ok) {
-            pupil_out_ = out;
-            pupil_seq_out_ = seq;
-            pupil_rate_.tick();
-        }
-        done_seq = seq;
-        pupil_busy_ = false;
-    }
 }
 
 void BabbleEye::process(const StereoFrame &sf) {
@@ -334,21 +258,14 @@ void BabbleEye::process(const StereoFrame &sf) {
     prepare(sf, x_.data());
     uint64_t t1 = mono_ns();
 
-    if (!run_model(*lid_, x_.data(), out_.data(), half_in_, half_out_))
+    if (!run_model(x_.data(), out_.data()))
         return;
     uint64_t t2 = mono_ns();
     preprocess_.add(t1 - t0);
     inference_.add(t2 - t1);
 
-    // Send input to the pupil worker only when an eye is open, the worker is idle and the rate allows it.
-    std::array<double, 2> lid;
-    std::optional<std::array<float, 2>> py;
-    if (combined_) {
-        lid = {out_[0], out_[2]};
-        py = std::array<float, 2>{out_[1], out_[3]};
-    } else {
-        lid = {out_[0], out_[1]};
-    }
+    std::array<double, 2> lid = {out_[0], out_[2]};
+    const std::array<double, 2> pupil = {out_[1], out_[3]};
     if (native_openness_ && deps_.eye_server) {
         // Index e=0 is view 2, which is the right eye of the wearer.
         if (auto s = deps_.eye_server->latest(200000000ull))
@@ -356,23 +273,6 @@ void BabbleEye::process(const StereoFrame &sf) {
         else
             native_fallback_.add();
     }
-    if (pupil_) {
-        std::lock_guard<std::mutex> lock(pupil_mutex_);
-        const uint64_t now = mono_ns();
-        const bool any_open = trackers_[0].open() || trackers_[1].open();
-        if (any_open && !pupil_busy_ && (!pupil_submitted_ || now - last_pupil_submit_ns_ >= pupil_every_ns_)) {
-            last_pupil_submit_ns_ = now;
-            pupil_submitted_ = true;
-            pupil_in_ = x_;
-            pupil_seq_in_++;
-            pupil_cv_.notify_one();
-        }
-        if (pupil_seq_out_ != 0 && pupil_seq_out_ != pupil_seq_taken_) {
-            pupil_seq_taken_ = pupil_seq_out_;
-            py = pupil_out_;
-        }
-    }
-
     double o[2], widen[2];
     std::optional<double> dil[2];
     for (int e = 0; e < 2; e++) {
@@ -392,7 +292,7 @@ void BabbleEye::process(const StereoFrame &sf) {
         widen[e] = std::clamp(o[e] - 1.0, 0.0, 1.0);
     }
     for (int e = 0; e < 2; e++) {
-        auto r = trackers_[e].update(o[e], py ? std::optional<double>((*py)[e]) : std::nullopt, tuned_.k(), dt);
+        auto r = trackers_[e].update(o[e], pupil[e], tuned_.k(), dt);
         dil[e] = eye::dilation(r, pupil_gain_);
     }
 

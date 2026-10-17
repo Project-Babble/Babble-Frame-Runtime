@@ -59,9 +59,6 @@ if(BABBLE_FRUNK_MOUTH)
     list(APPEND BABBLE_PACKAGED_MODELS fusionnet_int8_xnnpack_qat_linear.pte)
     list(APPEND BABBLE_PACKAGED_FILES calibration_mouth.json)
 endif()
-if(BABBLE_DEV_FEATURES)
-    list(APPEND BABBLE_PACKAGED_MODELS lid_mnv4_160_int8.pte pupil_cnx_160_fp32.pte)   # The split eye layout uses them.
-endif()
 set(BABBLE_RESOURCE_COMMANDS
     # Remove the old folder so that no file from a different profile stays.
     COMMAND ${CMAKE_COMMAND} -E rm -rf ${BABBLE_OUT}/resources/runtime
