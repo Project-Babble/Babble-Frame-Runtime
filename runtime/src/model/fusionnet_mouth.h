@@ -31,7 +31,7 @@ private:
     std::unique_ptr<mouth::Post> post_;
     std::array<SignalId, mouth::kNumShapes> ids_{};
 
-    std::vector<uint8_t> tmp_a_, tmp_b_, small_, eq_;
+    std::vector<uint8_t> tmp_a_, tmp_b_, small_;
     std::vector<float> in0_, in1_;
     std::array<float, mouth::kNumChannels> out_{};
     std::atomic<bool> reset_pending_{false};

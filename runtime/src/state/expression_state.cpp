@@ -41,8 +41,16 @@ std::string ExpressionState::name(SignalId id) const {
 }
 
 ExpressionState::Snapshot ExpressionState::snapshot() const {
+    Snapshot out;
+    snapshot(out);
+    return out;
+}
+
+void ExpressionState::snapshot(Snapshot &out) const {
     std::lock_guard<std::mutex> lock(mutex_);
-    return {seq_, names_, signals_};
+    out.seq = seq_;
+    out.names = names_;
+    out.signals = signals_;
 }
 
 uint64_t ExpressionState::wait_update(uint64_t after_seq, std::chrono::nanoseconds timeout) const {

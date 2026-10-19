@@ -159,6 +159,7 @@ void OscSink::run() {
     uint64_t seq = 0, last_batch_ns = 0, generation = 0;
     std::vector<uint64_t> last_sent_t;   // The t_ns of the last value that the sink sent for each signal.
     std::vector<std::string> addresses;  // The OSC address for each signal, or "" if the signal is excluded.
+    ExpressionState::Snapshot snap;
 
     while (!stop_) {
         if (test_pattern_) {
@@ -183,7 +184,7 @@ void OscSink::run() {
             generation = g;
         }
 
-        auto snap = state_.snapshot();
+        state_.snapshot(snap);
         if (addresses.size() != snap.names.size()) {
             // Make the address table again if the number of signals changes.
             addresses.clear();

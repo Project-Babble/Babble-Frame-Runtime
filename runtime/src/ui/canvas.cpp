@@ -85,12 +85,19 @@ void Canvas::line(float x0, float y0, float x1, float y1, float width, Color c) 
 void Canvas::image(const Image &img, int x, int y, float radius) {
     const Rect r{float(x), float(y), float(img.width), float(img.height)};
     const float rad = std::min({radius, r.w / 2, r.h / 2});
-    for (int iy = 0; iy < img.height; iy++)
-        for (int ix = 0; ix < img.width; ix++) {
+    const int x0 = int(std::clamp<int64_t>(-int64_t(x), 0, img.width));
+    const int x1 = int(std::clamp<int64_t>(int64_t(w_) - x, 0, img.width));
+    const int y0 = int(std::clamp<int64_t>(-int64_t(y), 0, img.height));
+    const int y1 = int(std::clamp<int64_t>(int64_t(h_) - y, 0, img.height));
+    for (int iy = y0; iy < y1; iy++)
+        for (int ix = x0; ix < x1; ix++) {
             const uint8_t *s = &img.rgba[(size_t(iy) * img.width + ix) * 4];
+            if (!s[3])
+                continue;
             // The coverage is the rounded-corner coverage multiplied by the alpha of the image.
             float cov = 1.0f;
-            if (rad > 0)
+            if (rad > 0 && (ix + 0.5f < rad || ix + 0.5f > r.w - rad) &&
+                (iy + 0.5f < rad || iy + 0.5f > r.h - rad))
                 cov = std::clamp(0.5f - round_box_sdf(x + ix + 0.5f, y + iy + 0.5f, r, rad), 0.f, 1.f);
             blend(x + ix, y + iy, Color{s[0], s[1], s[2], s[3]}, cov);
         }
