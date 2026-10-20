@@ -18,12 +18,15 @@ namespace babble {
 // The private eye-service shared memory of SteamVR, as konsti219/frameeyeosc documents it (see docs/eye-tracking.md).
 namespace eye_server {
 
-// The file size and the record offset are the only differences between the layout versions.
+// The file size, the record offset and the dominant-eye setting are the only differences between the layout versions.
+// Version 5 (SteamOS 0.4.3) inserts the 5 bytes of the setting in front of the record, as sasaken1102r/frameeyeosc
+// documents it.
 struct Layout {
     uint32_t version;
     size_t file_size, record_offset;
+    size_t dominant_eye_offset;   // This is 0 if the version has no "Track Dominant Eye Only" setting.
 };
-inline constexpr Layout kLayouts[] = {{4, 0x4f21a, 0x152}, {5, 0x4f21f, 0x157}};
+inline constexpr Layout kLayouts[] = {{4, 0x4f21a, 0x152, 0}, {5, 0x4f21f, 0x157, 0x152}};
 inline constexpr size_t kMinFileSize = 0x4f21a;   // The size of the smallest known layout.
 inline constexpr size_t kVersionOffset = 0x00, kInitializedOffset = 0x04;
 inline constexpr size_t kMutexOffset = 0x08;       // A glibc pthread_mutex_t that is process-shared and robust.
@@ -31,6 +34,7 @@ inline constexpr size_t kMutexBytes = 0x30;
 inline constexpr size_t kSequenceOffset = 0x38;    // The service increments this word and wakes the futex per record.
 inline constexpr size_t kRequestedOffset = 0x3c;   // Consumers set this word to 1 to ask for records.
 inline constexpr size_t kRecordBytes = 0xebc;
+inline constexpr size_t kDominantEyeBytes = 5;   // A u8 that is 1 when the setting is on, then the eye as an i32.
 
 // The offsets inside the packed record.
 namespace rec {
@@ -58,10 +62,17 @@ struct Sample {
     std::array<Vec3, 2> gaze{}, pre_fusion_gaze{};
     Vec3 fixation{};
     std::array<float, 2> openness{};
+    // While "Track Dominant Eye Only" is on, this is the eye that the service tracks alone, and the fused gaze of
+    // both eyes is the gaze of that eye. Otherwise it is -1. The gaze before fusion and the openness stay per eye.
+    int dominant_eye = -1;
 };
 
 // Decodes kRecordBytes at rec and returns false if the record is invalid or a value is not finite.
 bool parse_record(const uint8_t *rec, Sample *out);
+
+// Decodes the kDominantEyeBytes of the setting to kLeftEye, kRightEye or -1 for off, or nullopt for a value that is
+// not known, such as a read that the setting changed halfway through.
+std::optional<int> parse_dominant_eye(const uint8_t *p);
 
 }
 
@@ -99,7 +110,7 @@ private:
     StatsRegistry *stats_ = nullptr;
     std::thread thread_;
     std::atomic<uint32_t> version_{0};
-    size_t map_bytes_ = 0, record_offset_ = 0;
+    size_t map_bytes_ = 0, record_offset_ = 0, dominant_eye_offset_ = 0;
     std::atomic<bool> stop_{false};
     std::atomic<uint32_t> wanted_{0};
     std::atomic<bool> available_{false};
@@ -109,6 +120,7 @@ private:
     std::string last_problem_;
     bool announced_ = false;
     uint64_t seq_ = 0;
+    int dominant_eye_ = -1;   // The last value of the setting that decoded, which only the reader thread uses.
 
     mutable std::mutex mutex_;
     std::optional<eye_server::Sample> latest_;

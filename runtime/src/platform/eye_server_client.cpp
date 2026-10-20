@@ -65,6 +65,15 @@ bool parse_record(const uint8_t *r, Sample *out) {
     return true;
 }
 
+std::optional<int> parse_dominant_eye(const uint8_t *p) {
+    const int32_t eye = read_at<int32_t>(p, 1);
+    if (p[0] == 0 && eye >= -1 && eye <= 1)
+        return -1;
+    if (p[0] == 1 && (eye == kLeftEye || eye == kRightEye))
+        return eye;
+    return std::nullopt;
+}
+
 }
 
 using namespace eye_server;
@@ -171,6 +180,8 @@ bool EyeServerClient::open_map() {
             return problem(std::string("mmap: ") + strerror(errno));
     }
     record_offset_ = layout->record_offset;
+    dominant_eye_offset_ = layout->dominant_eye_offset;
+    dominant_eye_ = -1;
     if (__atomic_load_n(shm_word(base_, kInitializedOffset), __ATOMIC_ACQUIRE) != 1)
         return problem("not initialized");
     if (!announced_ || !last_problem_.empty())
@@ -207,17 +218,27 @@ bool EyeServerClient::read_one() {
     if (syscall(SYS_futex, seq_word, FUTEX_WAIT, seq, &ts, nullptr, 0) != 0 && errno == ETIMEDOUT)
         timeouts_.add();
 
-    uint8_t rec[kRecordBytes];
+    uint8_t rec[kRecordBytes], dom[2][kDominantEyeBytes];
     if (!lock(base_))
         return false;
     const bool fresh = __atomic_load_n(seq_word, __ATOMIC_ACQUIRE) != seq;
-    if (fresh)
+    if (fresh) {
         memcpy(rec, base_ + record_offset_, kRecordBytes);
+        // A client sets the setting without the lock, so read it twice and keep the last value if a change tore it.
+        if (dominant_eye_offset_) {
+            memcpy(dom[0], base_ + dominant_eye_offset_, kDominantEyeBytes);
+            memcpy(dom[1], base_ + dominant_eye_offset_, kDominantEyeBytes);
+        }
+    }
     pthread_mutex_unlock(shm_mutex(base_));
 
     Sample s;
     if (!fresh || !parse_record(rec, &s))
         return false;
+    if (dominant_eye_offset_ && memcmp(dom[0], dom[1], kDominantEyeBytes) == 0)
+        if (auto eye = parse_dominant_eye(dom[0]))
+            dominant_eye_ = *eye;
+    s.dominant_eye = dominant_eye_;
     s.received_ns = mono_ns();
     s.layout = version_.load(std::memory_order_relaxed);
     s.seq = ++seq_;

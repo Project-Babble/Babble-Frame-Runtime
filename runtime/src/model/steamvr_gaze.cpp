@@ -169,12 +169,23 @@ void SteamVrGaze::publish(double lx, double ly, double rx, double ry, uint64_t n
     deps_.state.update(u);
 }
 
-// Get the direction of each eye from the eye-service shared memory.
+// Get the direction of each eye from the eye-service shared memory. While "Track Dominant Eye Only" is on, the gaze
+// before fusion still has both eyes, so both eyes get the fused gaze of the tracked eye, as SteamVR apps do.
 bool SteamVrGaze::tick_independent(uint64_t now) {
     auto s = deps_.eye_server->latest(uint64_t(stale_ns_));
     if (!s)
         return false;
-    const auto &l = s->pre_fusion_gaze[eye_server::kLeftEye], &r = s->pre_fusion_gaze[eye_server::kRightEye];
+    if (s->dominant_eye != dominant_eye_) {
+        dominant_eye_ = s->dominant_eye;
+        if (dominant_eye_ < 0)
+            LOG.info("pipeline %s: Track Dominant Eye Only is off; gaze for each eye", name_.c_str());
+        else
+            LOG.info("pipeline %s: Track Dominant Eye Only is on; both eyes follow the %s eye", name_.c_str(),
+                     dominant_eye_ == eye_server::kLeftEye ? "left" : "right");
+    }
+    const bool one_eye = dominant_eye_ >= 0;
+    const auto &l = one_eye ? s->gaze[dominant_eye_] : s->pre_fusion_gaze[eye_server::kLeftEye];
+    const auto &r = one_eye ? s->gaze[dominant_eye_] : s->pre_fusion_gaze[eye_server::kRightEye];
     auto gl = gaze::from_direction(l[0], l[1], l[2], max_deg_, flip_y_, off_, scaling_);
     auto gr = gaze::from_direction(r[0], r[1], r[2], max_deg_, flip_y_, off_, scaling_);
     if (!gl || !gr)

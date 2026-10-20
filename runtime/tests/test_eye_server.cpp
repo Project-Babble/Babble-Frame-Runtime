@@ -86,7 +86,18 @@ struct FakeService {
         syscall(SYS_futex, word(kSequenceOffset), FUTEX_WAKE, INT_MAX, nullptr, nullptr, 0);
     }
     uint32_t requested() { return __atomic_load_n(word(kRequestedOffset), __ATOMIC_ACQUIRE); }
+    // Sets "Track Dominant Eye Only" at the version-5 offset, as the headset's settings do.
+    void set_dominant_eye(uint8_t on, int32_t eye) {
+        base[0x152] = on;
+        put<int32_t>(base, 0x153, eye);
+    }
 };
+
+std::array<uint8_t, kDominantEyeBytes> dominant_bytes(uint8_t on, int32_t eye) {
+    std::array<uint8_t, kDominantEyeBytes> b{on};
+    put<int32_t>(b.data(), 1, eye);
+    return b;
+}
 
 // Runs the producer until the client has a sample or the timeout passes.
 std::optional<Sample> wait_for_sample(FakeService &svc, EyeServerClient &c, uint32_t state, uint64_t timeout_ns) {
@@ -192,5 +203,58 @@ TEST_CASE("records the producer marks invalid are not published") {
     c.want(EyeServerClient::Gaze, true);
     CHECK_FALSE(wait_for_sample(svc, c, 0, 500000000ull));
     CHECK(c.available());
+    c.stop();
+}
+
+TEST_CASE("the dominant-eye setting decodes and rejects values it does not know") {
+    CHECK(parse_dominant_eye(dominant_bytes(0, -1).data()) == -1);
+    CHECK(parse_dominant_eye(dominant_bytes(0, 1).data()) == -1);   // Off, with the eye that was chosen last.
+    CHECK(parse_dominant_eye(dominant_bytes(1, 0).data()) == kLeftEye);
+    CHECK(parse_dominant_eye(dominant_bytes(1, 1).data()) == kRightEye);
+    CHECK_FALSE(parse_dominant_eye(dominant_bytes(1, -1).data()));   // A read torn by a change.
+    CHECK_FALSE(parse_dominant_eye(dominant_bytes(2, 0).data()));
+    CHECK_FALSE(parse_dominant_eye(dominant_bytes(0, 7).data()));
+}
+
+TEST_CASE("layout version 5: samples carry the Track Dominant Eye Only setting") {
+    FakeService svc(5);
+    svc.set_dominant_eye(1, 1);
+    EyeServerClient c;
+    c.start(ThreadSpec{"t-eyesrv", {}, 0}, {svc.path}, nullptr);
+    c.want(EyeServerClient::Gaze, true);
+    auto s = wait_for_sample(svc, c, 1, 3000000000ull);
+    REQUIRE(s);
+    CHECK(s->dominant_eye == kRightEye);
+
+    svc.set_dominant_eye(1, -1);   // A value the client does not know keeps the last one.
+    uint64_t seq = s->seq;
+    for (int i = 0; i < 300 && s->seq == seq; i++) {
+        svc.produce(1);
+        sleep_ns(10000000);
+        s = c.latest(1000000000ull);
+        REQUIRE(s);
+    }
+    CHECK(s->dominant_eye == kRightEye);
+
+    svc.set_dominant_eye(0, -1);
+    for (int i = 0; i < 300 && s->dominant_eye != -1; i++) {
+        svc.produce(1);
+        sleep_ns(10000000);
+        s = c.latest(1000000000ull);
+        REQUIRE(s);
+    }
+    CHECK(s->dominant_eye == -1);
+    c.stop();
+}
+
+TEST_CASE("layout version 4 has no dominant-eye setting and reads the record bytes as nothing") {
+    FakeService svc(4);
+    svc.set_dominant_eye(1, 0);   // In version 4 these bytes are the start of the record.
+    EyeServerClient c;
+    c.start(ThreadSpec{"t-eyesrv", {}, 0}, {svc.path}, nullptr);
+    c.want(EyeServerClient::Gaze, true);
+    auto s = wait_for_sample(svc, c, 1, 3000000000ull);
+    REQUIRE(s);
+    CHECK(s->dominant_eye == -1);
     c.stop();
 }
