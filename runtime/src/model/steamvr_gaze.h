@@ -62,6 +62,7 @@ private:
     bool tick_combined(uint64_t now);
     void publish(double lx, double ly, double rx, double ry, uint64_t now);
 
+    int dominant_eye_ = -1;   // The "Track Dominant Eye Only" eye of the last independent sample, or -1.
     std::optional<double> ipd_override_;
     uint64_t setup_connection_ = 0;
     uint64_t action_set_ = 0, action_ = 0;
