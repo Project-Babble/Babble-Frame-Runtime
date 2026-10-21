@@ -304,8 +304,9 @@ std::optional<std::string> VrcNativeSink::live_pc() {
         std::ifstream in(log_path_, std::ios::binary);
         std::stringstream text;
         text << in.rdbuf();
-        log_pc_ = vrc_native::streaming_pc(text.str());
-        log_pid_ = vrc_native::session_pid(text.str());
+        const std::string contents = text.str();
+        log_pc_ = vrc_native::streaming_pc(contents);
+        log_pid_ = vrc_native::session_pid(contents);
     }
     // The session is live if its vrlink process still runs.
     if (!log_pc_ || !log_pid_)
@@ -384,6 +385,7 @@ void VrcNativeSink::run() {
     uint64_t seq = 0, last_send_ns = 0;
     std::vector<vrc_native::Target> targets;
     std::vector<std::optional<float>> values;
+    ExpressionState::Snapshot snap;
 
     while (!stop_) {
         seq = state_.wait_update(seq, std::chrono::milliseconds(200));
@@ -396,7 +398,7 @@ void VrcNativeSink::run() {
             continue;
         last_send_ns = now;
 
-        const auto snap = state_.snapshot();
+        state_.snapshot(snap);
         if (targets.size() != snap.names.size()) {
             targets.clear();
             for (const auto &nm : snap.names)

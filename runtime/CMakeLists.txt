@@ -128,6 +128,7 @@ target_link_libraries(babble_runtime PRIVATE babble_core)
 set_target_properties(babble_runtime PROPERTIES OUTPUT_NAME babble-runtime
     BUILD_RPATH "${THIRD_PARTY}/openvr/lib/linuxarm64" INSTALL_RPATH "$ORIGIN")
 target_link_options(babble_runtime PRIVATE "-Wl,-rpath,$ORIGIN"
+    $<$<CONFIG:Release>:-Wl,--strip-all>
     -rdynamic)   # This option puts function names in crash backtraces.
 if(NOT BABBLE_ASAN)
     # Link libstdc++ statically because the binary must not use the libstdc++ of the OS.

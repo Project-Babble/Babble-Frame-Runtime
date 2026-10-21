@@ -73,8 +73,6 @@ bool BabbleMonoFace::init() {
     for (size_t i = 0; i < face::kShapes.size(); i++)
         ids_[i] = deps_.state.add_signal(face::kShapes[i]);
 
-    tmp_a_.resize(kMaxSide * kMaxSide);
-    tmp_b_.resize(kMaxSide * kMaxSide);
     small_.resize(kSize * kSize);
     input_.resize(kSize * kSize);
     out_.resize(face::kShapes.size());
@@ -96,6 +94,10 @@ void BabbleMonoFace::prepare(const Frame &f, float *input) {
     const uint32_t w = std::min<uint32_t>(cur.width, kMaxSide), h = std::min<uint32_t>(cur.height, kMaxSide);
     cur.width = w;
     cur.height = h;
+    if ((gain_ != 1.0f || flip_h_ || flip_v_ || quarter_turns_) && tmp_a_.size() < size_t(w) * h) {
+        tmp_a_.resize(size_t(w) * h);
+        tmp_b_.resize(size_t(w) * h);
+    }
 
     if (gain_ != 1.0f) {   // The gain saturates and rounds as the OpenCV convertTo does.
         for (uint32_t y = 0; y < h; y++)
@@ -160,8 +162,8 @@ void BabbleMonoFace::process(const StereoFrame &sf) {
         half_out_.resize(os.elements());
         out = half_out_.data();
     }
-    std::vector<TensorView> iv{{in, &is}};
-    std::vector<TensorView> ov{{out, &os}};
+    TensorView iv[] = {{in, &is}};
+    TensorView ov[] = {{out, &os}};
     if (!runner_->run(iv, ov))
         return;
     if (os.dtype == DType::F16)

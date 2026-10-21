@@ -616,6 +616,8 @@ void LinkSink::choose(uint64_t now) {
 
 void LinkSink::run() {
     const uint64_t scan_ns = 5'000'000'000;
+    std::vector<pollfd> fds;
+    std::vector<Path *> owners;
     while (!stop_) {
         uint64_t now = mono_ns();
         if (now >= next_scan_ns_) {
@@ -628,8 +630,8 @@ void LinkSink::run() {
             ping(now);
         choose(now);
 
-        std::vector<pollfd> fds;
-        std::vector<Path *> owners;
+        fds.clear();
+        owners.clear();
         if (listen_sock_ >= 0) {
             fds.push_back({listen_sock_, POLLIN, 0});
             owners.push_back(nullptr);

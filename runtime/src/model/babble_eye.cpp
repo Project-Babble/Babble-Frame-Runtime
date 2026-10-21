@@ -218,8 +218,8 @@ bool BabbleEye::run_model(const float *x, float *y) {
         half_out_.resize(os.elements());
         out = half_out_.data();
     }
-    std::vector<TensorView> iv{{const_cast<void *>(in), &is}};
-    std::vector<TensorView> ov{{out, &os}};
+    TensorView iv[] = {{const_cast<void *>(in), &is}};
+    TensorView ov[] = {{out, &os}};
     if (!model_->run(iv, ov))
         return false;
     if (os.dtype == DType::F16)

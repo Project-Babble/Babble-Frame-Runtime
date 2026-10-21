@@ -15,9 +15,9 @@ size_t encode_float(std::string_view address, float value, uint8_t *out, size_t 
     const size_t total = addr_len + 4 + 4;
     if (total > cap)
         return 0;
-    memset(out, 0, total);
     memcpy(out, address.data(), address.size());
-    memcpy(out + addr_len, ",f", 2);
+    memset(out + address.size(), 0, addr_len - address.size());
+    memcpy(out + addr_len, ",f\0", 4);
     uint32_t bits;
     memcpy(&bits, &value, 4);
     bits = __builtin_bswap32(bits);
@@ -42,13 +42,14 @@ size_t encode_blob(std::string_view address, const uint8_t *data, size_t size, u
     const size_t total = addr_len + 4 + 4 + data_len;
     if (total > cap || size > 0x7fffffff)
         return 0;
-    memset(out, 0, total);
     memcpy(out, address.data(), address.size());
-    memcpy(out + addr_len, ",b", 2);
+    memset(out + address.size(), 0, addr_len - address.size());
+    memcpy(out + addr_len, ",b\0", 4);
     const uint32_t n = __builtin_bswap32(uint32_t(size));
     memcpy(out + addr_len + 4, &n, 4);
     if (size)
         memcpy(out + addr_len + 8, data, size);
+    memset(out + addr_len + 8 + size, 0, data_len - size);
     return total;
 }
 

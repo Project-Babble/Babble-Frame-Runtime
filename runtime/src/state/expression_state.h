@@ -33,6 +33,7 @@ public:
 
     void update(std::span<const std::pair<SignalId, Signal>> values);
     Snapshot snapshot() const;
+    void snapshot(Snapshot &out) const;
     // Writes the current value for ids[i] to out[i] and returns the sequence number of the values.
     uint64_t read(std::span<const SignalId> ids, Signal *out) const;
     size_t count() const;                 // The number of registered signals, with ids from 0 to count-1.

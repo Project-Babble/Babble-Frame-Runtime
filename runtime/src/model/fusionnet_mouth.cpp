@@ -79,7 +79,6 @@ bool FusionNetMouth::init() {
     tmp_a_.resize(400 * 400);
     tmp_b_.resize(400 * 400);
     small_.resize(kSize * kSize);
-    eq_.resize(kSize * kSize);
     in0_.resize(kSize * kSize);
     in1_.resize(kSize * kSize);
     probe_left_ = probe_total_ = cfg_.value("probe_orientation", 0);
@@ -123,9 +122,9 @@ void FusionNetMouth::prepare(const StereoFrame &sf, float *view0, float *view1) 
             img::resize_area(cur, small);
         else
             img::resize_linear(cur, small);
-        img::equalize_hist(small, {eq_.data(), kSize, kSize, kSize});
-        for (size_t i = 0; i < eq_.size(); i++)
-            outs[v][i] = float(eq_[i]) / 255.0f;
+        img::equalize_hist(small, small);
+        for (size_t i = 0; i < small_.size(); i++)
+            outs[v][i] = float(small_[i]) / 255.0f;
     }
 }
 
@@ -140,9 +139,9 @@ void FusionNetMouth::probe(const StereoFrame &sf) {
     const int saved_turns = quarter_turns_;
     auto ri = runner_->inputs();
     auto ro = runner_->outputs();
-    std::vector<TensorView> iv{{in0_.data(), &ri[0]}, {in1_.data(), &ri[1]}};
+    TensorView iv[] = {{in0_.data(), &ri[0]}, {in1_.data(), &ri[1]}};
     std::array<float, mouth::kNumChannels> out{};
-    std::vector<TensorView> ov{{out.data(), &ro[0]}};
+    TensorView ov[] = {{out.data(), &ro[0]}};
     for (int c = 0; c < 8; c++) {
         swap_ = c >= 4;
         quarter_turns_ = c % 4;
@@ -183,8 +182,8 @@ void FusionNetMouth::process(const StereoFrame &sf) {
 
     auto ri = runner_->inputs();
     auto ro = runner_->outputs();
-    std::vector<TensorView> iv{{in0_.data(), &ri[0]}, {in1_.data(), &ri[1]}};
-    std::vector<TensorView> ov{{out_.data(), &ro[0]}};
+    TensorView iv[] = {{in0_.data(), &ri[0]}, {in1_.data(), &ri[1]}};
+    TensorView ov[] = {{out_.data(), &ro[0]}};
     if (!runner_->run(iv, ov))
         return;
     uint64_t t2 = mono_ns();

@@ -130,11 +130,15 @@ void resize_area(View src, Mut dst) {
 
     std::vector<float> buf(dw), sum(dw, 0.f);
     int prev_dy = ytab.empty() ? 0 : ytab[0].di;
+    int prev_sy = -1;
     for (const AreaTab &yt : ytab) {
-        const uint8_t *S = src.data + size_t(yt.si) * src.stride;
-        std::fill(buf.begin(), buf.end(), 0.f);
-        for (const AreaTab &xt : xtab)
-            buf[xt.di] += float(S[xt.si]) * xt.alpha;
+        if (yt.si != prev_sy) {
+            const uint8_t *S = src.data + size_t(yt.si) * src.stride;
+            std::fill(buf.begin(), buf.end(), 0.f);
+            for (const AreaTab &xt : xtab)
+                buf[xt.di] += float(S[xt.si]) * xt.alpha;
+            prev_sy = yt.si;
+        }
         if (yt.di != prev_dy) {
             uint8_t *D = dst.data + size_t(prev_dy) * dst.stride;
             for (int x = 0; x < dw; x++) {
