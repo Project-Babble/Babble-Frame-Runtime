@@ -17,7 +17,6 @@
 #include "core/threading.h"
 #include "model/executorch_runner.h"
 #include "model/pipeline.h"
-#include "model/steamvr_gaze.h"
 #include "platform/app_launcher.h"
 #include "platform/diagnostics.h"
 #if BABBLE_FRUNK_MOUTH
@@ -892,10 +891,6 @@ int main(int argc, char **argv) {
             s.src->set_frame_tap(recorder);
         // The recorder writes the Valve eye-service samples to valve_eye.bin in the session.
         eye_server.set_listener([recorder](const eye_server::Sample &s) { recorder->add_eye_sample(s); });
-        // It also writes the gaze that the outputs get to gaze.bin.
-        for (auto &p : pipelines)
-            if (auto *g = dynamic_cast<SteamVrGaze *>(p.get()))
-                g->set_listener([recorder](const gaze::Sample &s) { recorder->add_gaze_sample(s); });
     }
     auto find_source = [&](const std::string &name) -> ITrackingSource * {
         for (auto &s : sources)
@@ -957,15 +952,6 @@ int main(int argc, char **argv) {
         spec.consent = req.value("consent", json(nullptr));
         spec.routine_def = req.value("routine_def", json(nullptr));
         spec.valve_eye = find_source("eye") != nullptr;
-        for (auto &p : pipelines)
-            if (dynamic_cast<SteamVrGaze *>(p.get())) {
-                const json &gc = cfg["pipelines"][p->name()];
-                spec.gaze = json::object();
-                for (const char *k : {"gaze_source", "scaling", "max_deg", "flip_y", "yaw_offset", "pitch_offset",
-                                      "roll_offset", "rate_hz", "smoothing", "smoothing_presets"})
-                    if (gc.contains(k))
-                        spec.gaze[k] = gc[k];
-            }
         for (auto &s : sources) {
             // The encoder gets this nominal rate, and the timestamps give the real timing.
             double fps = s.src->camera_fps();
@@ -1514,9 +1500,6 @@ int main(int argc, char **argv) {
     for (auto &s : sources)
         s.src->set_frame_tap(nullptr);   // The recorder stops with the sinks.
     eye_server.set_listener(nullptr);
-    for (auto &p : pipelines)
-        if (auto *g = dynamic_cast<SteamVrGaze *>(p.get()))
-            g->set_listener(nullptr);
     // Stop the consumers first so that nothing holds frames when the sources stop.
     for (auto &p : pipelines)
         p->stop();

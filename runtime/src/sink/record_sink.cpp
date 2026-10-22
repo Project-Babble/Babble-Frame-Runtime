@@ -324,16 +324,9 @@ RecordSink::StartResult RecordSink::start_session(const SessionSpec &spec) {
     }
     eye_records_ = 0;   // The writer is idle until the session opens.
     eye_layout_ = 0;
-    {
-        std::lock_guard<std::mutex> gl(gaze_mutex_);
-        gaze_pending_.clear();
-        gaze_dropped_ = 0;
-    }
-    gaze_records_ = 0;
     write_manifest("recording", "", "");
     accepting_ = true;
     eye_accepting_ = spec.valve_eye;
-    gaze_accepting_ = !spec.gaze.is_null();
     cv_.notify_one();
     LOG.info("%s: session %s started (%s)", name_.c_str(), id.c_str(),
              spec.routine.empty() ? "no routine" : spec.routine.c_str());
@@ -380,7 +373,6 @@ bool RecordSink::stop_session(const std::string &reason) {
         stop_reason_ = reason;
         accepting_ = false;
         eye_accepting_ = false;
-        gaze_accepting_ = false;
     }
     cv_.notify_one();
     LOG.info("%s: session %s stopping%s%s", name_.c_str(), id_.c_str(), reason.empty() ? "" : ": ", reason.c_str());
@@ -441,53 +433,6 @@ void RecordSink::encode_eye_record(const eye_server::Sample &s, uint8_t out[kEye
     put_f32(out + 76, s.openness[0]);
     put_f32(out + 80, s.openness[1]);
     put_u32(out + 84, 1);   // The record is valid because the client publishes only valid records.
-}
-
-void RecordSink::add_gaze_sample(const gaze::Sample &g) {
-    if (!gaze_accepting_.load(std::memory_order_relaxed))
-        return;
-    std::lock_guard<std::mutex> lock(gaze_mutex_);
-    if (gaze_pending_.size() >= kMaxPendingEyeSamples) {
-        gaze_dropped_++;
-        return;
-    }
-    gaze_pending_.push_back(g);
-}
-
-void RecordSink::encode_gaze_record(const gaze::Sample &g, uint8_t out[kGazeRecordBytes]) {
-    put_u64(out + 0, g.ns);
-    out[8] = uint8_t(g.source);
-    out[9] = uint8_t(g.dominant_eye);
-    out[10] = g.smoothing;
-    out[11] = 0;
-    for (int k = 0; k < 4; k++) {
-        put_f32(out + 12 + 4 * k, g.raw[k]);
-        put_f32(out + 28 + 4 * k, g.out[k]);
-    }
-}
-
-void RecordSink::write_gaze_samples() {
-    std::vector<gaze::Sample> batch;
-    {
-        std::lock_guard<std::mutex> lock(gaze_mutex_);
-        batch.swap(gaze_pending_);
-    }
-    if (batch.empty())
-        return;
-    if (!gaze_file_) {
-        gaze_file_ = fopen((session_dir_ / "gaze.bin").c_str(), "wb");
-        if (!gaze_file_) {
-            LOG.error("%s: cannot write gaze.bin: %s", name_.c_str(), strerror(errno));
-            gaze_accepting_ = false;
-            return;
-        }
-    }
-    uint8_t rec[kGazeRecordBytes];
-    for (const auto &g : batch) {
-        encode_gaze_record(g, rec);
-        if (fwrite(rec, sizeof(rec), 1, gaze_file_) == 1)
-            gaze_records_++;
-    }
 }
 
 void RecordSink::write_eye_samples() {
@@ -624,7 +569,6 @@ void RecordSink::run() {
                 wrote |= write_items(*c);
         }
         write_eye_samples();
-        write_gaze_samples();
         const uint64_t now = mono_ns();
         if (!stopping && now >= next_disk_check) {
             next_disk_check = now + 5000000000ull;
@@ -650,7 +594,6 @@ void RecordSink::run() {
             stop_reason_ = "the runtime stopped";
         stop_requested_ = true;
         eye_accepting_ = false;
-        gaze_accepting_ = false;
     }
     if (open)
         finish_session(1000);   // At shutdown, drop the queued frames because mkv accepts a cut file.
@@ -693,11 +636,6 @@ void RecordSink::finish_session(int encoder_wait_ms) {
     if (eye_file_) {
         fclose(eye_file_);
         eye_file_ = nullptr;
-    }
-    write_gaze_samples();
-    if (gaze_file_) {
-        fclose(gaze_file_);
-        gaze_file_ = nullptr;
     }
     std::string reason;
     {
@@ -805,21 +743,6 @@ void RecordSink::write_manifest(const std::string &status, const std::string &er
                           {"record_format", "88 bytes little-endian: u64 received_ns, f64 sample_time, "
                                             "f32 gaze[2][3], f32 pre_fusion_gaze[2][3], f32 fixation[3], "
                                             "f32 openness[2], u32 flags (bit 0 valid); index 0 = left eye"}};
-    }
-    if (!spec_.gaze.is_null()) {
-        uint64_t dropped;
-        {
-            std::lock_guard<std::mutex> gl(gaze_mutex_);
-            dropped = gaze_dropped_;
-        }
-        m["gaze"] = {{"file", "gaze.bin"},
-                     {"records", gaze_records_},
-                     {"dropped", dropped},
-                     {"config", spec_.gaze},
-                     {"record_format", "44 bytes little-endian: u64 ns, u8 source (0 centre, 1 independent, "
-                                       "2 combined), i8 dominant_eye (-1 off, 0 left, 1 right), u8 smoothing, "
-                                       "u8 reserved, f32 raw[4], f32 out[4]; each [4] is LeftEyeX, LeftEyeY, "
-                                       "RightEyeX, RightEyeY as sent to the outputs"}};
     }
     if (!write_json_file(session_dir_ / "session.json", m))
         LOG.error("%s: cannot write %s/session.json", name_.c_str(), session_dir_.c_str());

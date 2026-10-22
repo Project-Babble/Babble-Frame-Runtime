@@ -184,11 +184,6 @@ bool SteamVrGaze::set_option(const std::string &key, const nlohmann::json &value
     return true;
 }
 
-void SteamVrGaze::set_listener(std::function<void(const gaze::Sample &)> fn) {
-    std::lock_guard<std::mutex> lock(listener_mutex_);
-    listener_ = std::move(fn);
-}
-
 void SteamVrGaze::start() {
     stop_ = false;
     thread_ = start_thread(thread_spec_, [this] { run(); });
@@ -202,33 +197,22 @@ void SteamVrGaze::stop() {
         deps_.eye_server->want(EyeServerClient::Gaze, false);
 }
 
-
-void SteamVrGaze::publish(double lx, double ly, double rx, double ry, uint64_t now, gaze::Sample::Source source) {
-    gaze::Sample g;
-    g.ns = now;
-    g.source = source;
-    g.dominant_eye = int8_t(source == gaze::Sample::Source::Independent ? dominant_eye_ : -1);
-    g.raw[0] = float(lx);
-    g.raw[1] = float(ly);
-    g.raw[2] = float(rx);
-    g.raw[3] = float(ry);
-    if (source == gaze::Sample::Source::Centre) {
+void SteamVrGaze::publish(double lx, double ly, double rx, double ry, uint64_t now, bool centre) {
+    const float raw[4] = {float(lx), float(ly), float(rx), float(ry)};
+    float out[4];
+    if (centre) {
         smoothing_reset_ = true;   // The gaze comes back from the centre without a slow glide.
-        std::copy(g.raw, g.raw + 4, g.out);
+        std::copy(raw, raw + 4, out);
     } else {
         if (smoothing_reset_.exchange(false))
             smoother_.reset();
-        g.smoothing = uint8_t(smoothing_.load());
-        smoother_.apply(g.raw, g.out, g.smoothing, now);
+        smoother_.apply(raw, out, smoothing_.load(), now);
     }
-    std::pair<SignalId, Signal> u[4] = {{ids_[0], {g.out[0], 1.0f, now}},
-                                        {ids_[1], {g.out[1], 1.0f, now}},
-                                        {ids_[2], {g.out[2], 1.0f, now}},
-                                        {ids_[3], {g.out[3], 1.0f, now}}};
+    std::pair<SignalId, Signal> u[4] = {{ids_[0], {out[0], 1.0f, now}},
+                                        {ids_[1], {out[1], 1.0f, now}},
+                                        {ids_[2], {out[2], 1.0f, now}},
+                                        {ids_[3], {out[3], 1.0f, now}}};
     deps_.state.update(u);
-    std::lock_guard<std::mutex> lock(listener_mutex_);
-    if (listener_)
-        listener_(g);
 }
 
 // Get the direction of each eye from the eye-service shared memory. While "Track Dominant Eye Only" is on, the gaze
@@ -252,7 +236,7 @@ bool SteamVrGaze::tick_independent(uint64_t now) {
     auto gr = gaze::from_direction(r[0], r[1], r[2], max_deg_, flip_y_, off_, scaling_);
     if (!gl || !gr)
         return false;
-    publish((*gl)[0], (*gl)[1], (*gr)[0], (*gr)[1], now, gaze::Sample::Source::Independent);
+    publish((*gl)[0], (*gl)[1], (*gr)[0], (*gr)[1], now);
     samples_.tick();
     return true;
 }
@@ -301,7 +285,7 @@ bool SteamVrGaze::tick_combined(uint64_t now) {
     if (!g)
         return false;
     const auto &[lx, rx, y] = *g;
-    publish(lx, y, rx, y, now, gaze::Sample::Source::Combined);
+    publish(lx, y, rx, y, now);
     samples_.tick();
     return true;
 }

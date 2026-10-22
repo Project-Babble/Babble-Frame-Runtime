@@ -2,14 +2,11 @@
 
 #include "core/metrics.h"
 #include "core/threading.h"
-#include "model/gaze_sample.h"
 #include "model/pipeline.h"
 #include "model/postprocess/one_euro.h"
 
 #include <array>
 #include <atomic>
-#include <functional>
-#include <mutex>
 #include <optional>
 #include <thread>
 #include <vector>
@@ -64,8 +61,6 @@ public:
     const std::string &name() const override { return name_; }
     void set_tracking(bool on) override { tracking_ = on; }
     bool set_option(const std::string &key, const nlohmann::json &value) override;
-    // Any thread can set the function that gets each gaze update, or clear it with nullptr.
-    void set_listener(std::function<void(const gaze::Sample &)> fn);
 
 private:
     void run();
@@ -83,8 +78,8 @@ private:
     // Each tick function returns true if it published a valid sample.
     bool tick_independent(uint64_t now);
     bool tick_combined(uint64_t now);
-    void publish(double lx, double ly, double rx, double ry, uint64_t now, gaze::Sample::Source source);
-    void centre(uint64_t now) { publish(0, 0, 0, 0, now, gaze::Sample::Source::Centre); }
+    void publish(double lx, double ly, double rx, double ry, uint64_t now, bool centre = false);
+    void centre(uint64_t now) { publish(0, 0, 0, 0, now, true); }
 
     int dominant_eye_ = -1;   // The "Track Dominant Eye Only" eye of the last independent sample, or -1.
     std::optional<double> ipd_override_;
@@ -103,8 +98,6 @@ private:
     gaze::Smoother smoother_;
     std::atomic<int> smoothing_{0};
     std::atomic<bool> smoothing_reset_{false};
-    std::mutex listener_mutex_;
-    std::function<void(const gaze::Sample &)> listener_;
     bool stats_registered_ = false;
 };
 

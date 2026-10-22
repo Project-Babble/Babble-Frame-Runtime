@@ -141,7 +141,6 @@ TEST_CASE("record: a session writes each source's frames, stamps, labels and a m
     CHECK(m["device"].is_object());
     CHECK_FALSE(m.contains("routine_file"));   // The session has no routine_def.
     CHECK_FALSE(m.contains("valve_eye"));
-    CHECK_FALSE(m.contains("gaze"));
     CHECK(m["status"] == "complete");
     CHECK(m["routine"] == "eye");
     CHECK(m["consent"]["version"] == "t1");
@@ -229,58 +228,6 @@ TEST_CASE("record format 2: routine.json, step/phase labels and Valve eye sample
     CHECK(m["valve_eye"]["records"] == 5);
     CHECK(m["valve_eye"]["layout"] == 5);
     CHECK(m["valve_eye"]["dropped"] == 0);
-    rec->stop();
-}
-
-TEST_CASE("record: gaze.bin holds the gaze that the outputs got, with its settings in the manifest") {
-    Fixture fx;
-    auto rec = fx.make();
-    REQUIRE(rec->start());
-    gaze::Sample early;
-    rec->add_gaze_sample(early);   // The sink ignores a sample when there is no session.
-    RecordSink::SessionSpec spec;
-    spec.routine = "gaze";
-    spec.gaze = {{"gaze_source", "independent"}, {"smoothing", 2}};
-    auto r = rec->start_session(spec);
-    REQUIRE_MESSAGE(r.ok, r.message);
-    for (int i = 0; i < 4; i++) {
-        gaze::Sample g;
-        g.ns = 500 + uint64_t(i);
-        g.source = i == 3 ? gaze::Sample::Source::Centre : gaze::Sample::Source::Independent;
-        g.dominant_eye = i == 1 ? 1 : -1;
-        g.smoothing = 2;
-        for (int k = 0; k < 4; k++) {
-            g.raw[k] = 0.1f * float(k + 1);
-            g.out[k] = -0.1f * float(k + 1);
-        }
-        rec->add_gaze_sample(g);
-    }
-    REQUIRE(rec->stop_session());
-    rec->add_gaze_sample(early);   // The sink ignores a sample after the stop.
-    REQUIRE(wait_for([&] { return rec->take_finished().has_value(); }));
-
-    const fs::path sdir = r.dir;
-    const std::string v = slurp(sdir / "gaze.bin");
-    REQUIRE(v.size() == 4 * RecordSink::kGazeRecordBytes);
-    const char *rec1 = v.data() + RecordSink::kGazeRecordBytes;
-    uint64_t ns;
-    float raw_ry, out_lx;
-    memcpy(&ns, rec1, 8);
-    memcpy(&raw_ry, rec1 + 12 + 4 * 3, 4);
-    memcpy(&out_lx, rec1 + 28, 4);
-    CHECK(ns == 501);
-    CHECK(uint8_t(rec1[8]) == 1);    // independent
-    CHECK(int8_t(rec1[9]) == 1);     // The right eye is dominant.
-    CHECK(uint8_t(rec1[10]) == 2);   // smoothing
-    CHECK(raw_ry == 0.4f);
-    CHECK(out_lx == -0.1f);
-    CHECK(uint8_t(v[3 * RecordSink::kGazeRecordBytes + 8]) == 0);   // The last update is the centre.
-
-    const json m = json::parse(slurp(sdir / "session.json"));
-    CHECK(m["gaze"]["file"] == "gaze.bin");
-    CHECK(m["gaze"]["records"] == 4);
-    CHECK(m["gaze"]["dropped"] == 0);
-    CHECK(m["gaze"]["config"]["smoothing"] == 2);
     rec->stop();
 }
 
