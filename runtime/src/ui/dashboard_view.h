@@ -48,15 +48,38 @@ struct EyeReading {
     double dilation = 0;                 // The Dilation output, from 0 to 1, where 0.5 is the baseline.
 };
 
-// The status of the output for the front page, which is the PC link or VRChat native face tracking.
+// The status of the output for the front page: the PC link, VRChat native face tracking or Babble OSC.
 struct LinkReading {
     bool available = false;   // False hides the line because no output runs.
     bool linked = false;
     std::string path, pc, address;
     double rtt_ms = -1;       // The value is -1 until the first measurement.
     bool native = false;
+    bool osc = false;         // True for Babble OSC, where address has the port.
     bool no_data = false;     // True if the PC is linked but gets none of our data.
     bool restart = false;     // True if VRCFaceTracking must restart to claim the tracking that is on.
+    int more = 0;             // The number of other outputs that are on.
+    bool operator==(const LinkReading &) const = default;
+};
+
+// One setting of an output module, which shows in the row of the module on the Outputs page.
+struct ModuleOption {
+    std::string id, label;    // The id is the JSON pointer of the setting.
+    bool text = false;        // A text setting opens the keyboard, and the other settings are a row of choices.
+    bool numeric = false;     // The keyboard text of a numeric setting is sent as a number.
+    std::vector<std::string> values, labels;   // The choices as JSON text, with one label for each.
+    std::string value;        // The current value: JSON text for a choice, or the text that the setting shows.
+    bool operator==(const ModuleOption &) const = default;
+};
+
+// One output module on the Outputs page.
+struct OutputModule {
+    std::string id, label, hint;   // The id is the key under "outputs".
+    bool on = false;
+    bool ok = false;               // True if the output works, which shows as a green dot.
+    std::string status;            // What the output does now, which replaces the hint while it is on.
+    std::vector<ModuleOption> options;
+    bool operator==(const OutputModule &) const = default;
 };
 
 // A USB camera that the mouth can use.
@@ -107,6 +130,9 @@ struct Status {
     std::map<std::string, std::string> choice_hints{};
     CaptureRow capture{};
     UpdateNotice update{};
+    // The data for the Outputs page, where pc_address "" means automatic.
+    std::vector<OutputModule> outputs{};
+    std::string pc_address{}, output_error{};
 };
 
 // A user setting that shows as a row of choices or as a switch, where id is its JSON pointer in the config.
@@ -117,6 +143,7 @@ struct Choice {
     bool boolean = false;
     bool diagnostics = false;
     std::vector<std::string> option_labels{};   // If set, one label for each option replaces the value and unit.
+    bool cameras = false;                       // The setting shows on the USB camera page.
 };
 
 struct Point {
@@ -127,7 +154,7 @@ struct Point {
 class DashboardView {
 public:
     static constexpr int kWidth = 1200, kHeight = 750, kThumb = 128;
-    enum class Page { Home, Settings, Cameras, Diagnostics };
+    enum class Page { Home, Settings, Cameras, Diagnostics, Outputs };
 
     bool load_fonts(const std::filesystem::path &dir);   // Loads NotoSans-Regular.ttf and NotoSans-Medium.ttf.
     bool load_icons(const std::filesystem::path &dir);   // Loads the optional logo PNG files.
@@ -152,6 +179,9 @@ public:
         enum class CaptureAction { None, Primary, Remove } capture = CaptureAction::None;
         // True if the user clicked the update pill, and the update state sets what the click does.
         bool update = false;
+        // A choice on the Outputs page as a setting id and the new value as JSON text.
+        std::optional<std::pair<std::string, std::string>> output_setting;
+        std::optional<std::string> edit_text;   // The id of the text setting to type in with the keyboard.
     };
     // Finds the element at p in the last render.
     ClickResult click(Point p);
@@ -170,17 +200,22 @@ private:
     struct Hit {
         enum Kind {
             Cog, Back, Option, Toggle, Visualizer, Restart, MouthSource, OpenCameras, Camera, Refresh,
-            OpenDiagnostics, Verbose, WriteDiagnostics, CapturePrimary, CaptureRemove, Update
+            OpenDiagnostics, Verbose, WriteDiagnostics, CapturePrimary, CaptureRemove, Update, OpenOutputs,
+            OutputSetting, EditText
         } kind;
         Rect rect;
         size_t choice = 0;   // The choice index for Option, or the feed index for Toggle.
         double value = 0;    // The value for Option, or 1 to turn on for Toggle.
-        std::string text{};  // The value for MouthSource, or the camera id for Camera.
+        std::string text{};  // The value for MouthSource, the camera id for Camera, or the setting id.
+        std::string json{};  // The new value as JSON text for OutputSetting.
     };
     void render_home(Canvas &c, const Status &s);
     void render_settings(Canvas &c, const std::vector<Choice> &choices, const Status &s);
-    void render_cameras(Canvas &c, const Status &s);
+    void render_cameras(Canvas &c, const std::vector<Choice> &choices, const Status &s);
     void render_diagnostics(Canvas &c, const std::vector<Choice> &choices, const Status &s);
+    void render_outputs(Canvas &c, const Status &s);
+    // Draws a text setting as a button with its value, and returns its left edge.
+    float render_text_field(Canvas &c, float right, float y, const std::string &id, const std::string &shown);
     void render_switch_row(Canvas &c, float y, size_t index, const Choice &ch, float row_h = 124);
     void render_capture_row(Canvas &c, float y, float row_h, const CaptureRow &row);
     void render_update_pill(Canvas &c, float x, float baseline, const UpdateNotice &u);

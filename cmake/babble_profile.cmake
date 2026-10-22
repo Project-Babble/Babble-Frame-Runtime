@@ -75,15 +75,10 @@ function(babble_profile_generate src_dir out_dir)
         string(JSON vrdefaults REMOVE "${vrdefaults}" driver_babble mouthRate)
     endif()
     if(NOT BABBLE_DEV_FEATURES)
-        # In a release, VRCFaceTracking over the PC link is the only output.
-        string(JSON defaults REMOVE "${defaults}" output)
-        string(JSON defaults REMOVE "${defaults}" sinks vrc_native)
+        # A release ships every output module, but not the local OSC sender, the visualizer or the camera stream.
         string(JSON defaults SET "${defaults}" sinks vrcft enabled false)
         string(JSON defaults REMOVE "${defaults}" visualizer)
-        babble_json_remove_where(defaults key output steamvr_settings values)
         babble_json_remove_where(defaults id /sinks/camera_stream/active dashboard settings)
-        babble_json_remove_where(schema name /settings/driver_babble/output 0 values)
-        string(JSON vrdefaults REMOVE "${vrdefaults}" driver_babble output)
     endif()
 
     file(WRITE ${out_dir}/defaults.json "${defaults}")

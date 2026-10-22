@@ -17,6 +17,7 @@
 #include "core/threading.h"
 #include "model/executorch_runner.h"
 #include "model/pipeline.h"
+#include "model/steamvr_gaze.h"
 #include "platform/app_launcher.h"
 #include "platform/diagnostics.h"
 #if BABBLE_FRUNK_MOUTH
@@ -25,10 +26,12 @@
 #include "platform/eye_server_client.h"
 #include "platform/steamvr_client.h"
 #include "platform/steamvr_settings.h"
+#include "sink/babble_osc_sink.h"
 #include "sink/link_sink.h"
 #include "sink/record_sink.h"
 #include "sink/vrc_native_sink.h"
 #include "sink/sink.h"
+#include "sink/steam_link.h"
 #include "state/expression_state.h"
 #include "ui/dashboard.h"
 
@@ -145,6 +148,9 @@ json load(const Options &opt) {
     }
     for (const auto &fix : cl.type_fixes)
         LOG.warn("config: %s; using the default", fix.c_str());
+    if (!cl.legacy_output.empty())
+        LOG.info("config: the saved output \"%s\" is now the switch of that output, and the other outputs are off",
+                 cl.legacy_output.c_str());
     json &c = cl.config;
     if (opt.no_eye && c["sources"].contains("eye")) c["sources"]["eye"]["enabled"] = false;
     // The --no-mouth option turns off the Frame mouth cameras and the USB mouth camera.
@@ -250,12 +256,41 @@ std::vector<ui::Choice> dashboard_choices(const json &cfg) {
         c.unit = row.value("unit", "");
         c.boolean = cfg[ptr].is_boolean();
         c.diagnostics = row.value("page", "settings") == "diagnostics";
+        c.cameras = row.value("page", "settings") == "cameras";
         c.options = c.boolean ? std::vector<double>{0, 1} : row.value("options", std::vector<double>{});
         c.option_labels = row.value("labels", std::vector<std::string>{});
         c.value = c.boolean ? double(cfg[ptr].get<bool>()) : cfg[ptr].get<double>();
         out.push_back(std::move(c));
     }
     return out;
+}
+
+// Returns the declared option of an output module for a setting key, or null if the module has no such option.
+const json *module_option(const json &sink_cfg, const std::string &key) {
+    for (const json &o : section(sink_cfg, "module").value("options", json::array()))
+        if (o.is_object() && o.value("key", "") == key)
+            return &o;
+    return nullptr;
+}
+
+// Returns why a value does not suit an option of an output module, or "" if it does.
+std::string module_option_error(const json &opt, const json &value) {
+    const std::string kind = opt.value("kind", "choice"), validate = opt.value("validate", "");
+    if (kind == "choice") {
+        for (const json &v : opt.value("values", json::array()))
+            if (v == value)
+                return "";
+        return "not one of the choices";
+    }
+    if (opt.value("numeric", false) && !value.is_number_integer())
+        return "not a number";
+    if (!opt.value("numeric", false) && !value.is_string())
+        return "not text";
+    if (validate == "port" && (value.get<int64_t>() < 1 || value.get<int64_t>() > 65535))
+        return "not a port from 1 to 65535";
+    if (validate == "ipv4" && !valid_pc_address(value.get<std::string>()))
+        return "not an IPv4 address";
+    return "";
 }
 
 int add_epoll(int ep, int fd) {
@@ -333,7 +368,7 @@ int main(int argc, char **argv) {
     for (auto it = scfg.begin(); it != scfg.end(); ++it)
         slots[it.key()] = std::make_unique<LatestSlot<StereoFrame>>();
 
-    // A sink with an "output" role runs only while the Output setting selects that role.
+    // A sink with an "output" role is an output module, which runs while its switch in "outputs" is on.
     struct SinkEntry {
         std::string name;
         std::unique_ptr<ISink> sink;
@@ -342,6 +377,16 @@ int main(int argc, char **argv) {
     };
     std::vector<SinkEntry> sinks;
     std::vector<ISink *> frame_taps;
+    // The config of a sink, with the shared PC address for the output modules that use it.
+    auto sink_config = [&](const std::string &name) {
+        json c = cfg["sinks"][name];
+        if (section(c, "module").value("uses_pc_address", false))
+            c["pc_address"] = cfg.value("pc_address", "");
+        return c;
+    };
+    auto sink_deps = [&](const std::string &name) {
+        return SinkDeps{name, threads, state, stats, BABBLE_VERSION_DISPLAY, BABBLE_PROFILE_NAME};
+    };
     const json kcfg = cfg.value("sinks", json::object());
     for (auto it = kcfg.begin(); it != kcfg.end(); ++it) {
         if (!it.value().value("enabled", true)) {
@@ -353,8 +398,7 @@ int main(int argc, char **argv) {
             LOG.info("sink %s: not part of this build; ignoring its saved settings", it.key().c_str());
             continue;
         }
-        auto sink = make_sink(it.value(),
-                              SinkDeps{it.key(), threads, state, stats, BABBLE_VERSION_DISPLAY, BABBLE_PROFILE_NAME});
+        auto sink = make_sink(sink_config(it.key()), sink_deps(it.key()));
         if (!sink)
             continue;
         if (sink->wants_frames())
@@ -407,19 +451,20 @@ int main(int argc, char **argv) {
             sources.push_back({it.key(), std::move(src)});
     }
 
-    // The output is VRCFaceTracking through the PC link, or VRChat.
-    auto output_choice = [&] {
-        const json &o = cfg.value("output", json("vrcft"));
-        return o.is_string() ? o.get<std::string>() : std::string("vrcft");
+    // Each output module has an on/off switch, and any number of them can run at the same time.
+    auto output_on = [&](const std::string &id) {
+        const json &o = section(cfg, "outputs");
+        return o.contains(id) && o[id].is_boolean() && o[id].get<bool>();
     };
-    // Use VRCFaceTracking if this build has no module for the saved output.
-    if (std::none_of(sinks.begin(), sinks.end(), [&](const SinkEntry &k) { return k.output == output_choice(); })) {
-        LOG.warn("output: %s is not available in this build; using VRCFaceTracking", output_choice().c_str());
-        cfg["output"] = "vrcft";
-    }
+    auto output_label = [&](const SinkEntry &k) {
+        return section(section(cfg, "sinks"), k.name.c_str()).value("module", json::object()).value("label", k.name);
+    };
+    for (auto &[id, on] : section(cfg, "outputs").items())
+        if (on == true && std::none_of(sinks.begin(), sinks.end(), [&](const SinkEntry &k) { return k.output == id; }))
+            LOG.warn("output: %s is on, but this build has no module for it", id.c_str());
     for (auto it = sinks.begin(); it != sinks.end();) {
-        if (!it->output.empty() && it->output != output_choice()) {
-            ++it;   // This sink starts when the Output setting selects it.
+        if (!it->output.empty() && !output_on(it->output)) {
+            ++it;   // This sink starts when the user turns its output on.
             continue;
         }
         if (it->sink->start()) {
@@ -431,34 +476,41 @@ int main(int argc, char **argv) {
         std::erase(frame_taps, it->sink.get());
         it = sinks.erase(it);
     }
-    LOG.info("output: %s", output_choice() == "vrc_native" ? "VRChat native" : "VRCFaceTracking");
-    auto route_output = [&] {
-        const std::string want = output_choice();
+    {
+        std::string on;
+        for (const auto &k : sinks)
+            if (!k.output.empty() && k.running)
+                on += (on.empty() ? "" : ", ") + output_label(k);
+        LOG.info("outputs: %s", on.empty() ? "none" : on.c_str());
+    }
+    auto route_outputs = [&] {
         for (auto &k : sinks) {
             if (k.output.empty())
                 continue;
-            if (k.output == want && !k.running) {
+            const bool want = output_on(k.output);
+            if (want && !k.running) {
                 k.running = k.sink->start();
-                if (!k.running)
+                if (k.running)
+                    LOG.info("output: %s on", output_label(k).c_str());
+                else
                     LOG.error("sink %s: failed to start", k.name.c_str());
-            } else if (k.output != want && k.running) {
+            } else if (!want && k.running) {
                 k.sink->stop();
                 k.running = false;
-                LOG.info("sink %s: stopped (output is %s)", k.name.c_str(), want.c_str());
+                LOG.info("output: %s off", output_label(k).c_str());
             }
         }
     };
-    // The status line of the debug overlay uses the first PC link and the first native sender.
+    // The diagnostics report has the status of the first PC link.
     LinkSink *pc_link = nullptr;
-    VrcNativeSink *vrc_native = nullptr;
-    const SinkEntry *pc_link_entry = nullptr, *vrc_native_entry = nullptr;
-    uint64_t native_sent_last = 0;   // The number of blobs sent at the last status refresh.
-    for (auto &k : sinks) {
-        if (!pc_link && (pc_link = dynamic_cast<LinkSink *>(k.sink.get())))
-            pc_link_entry = &k;
-        if (!vrc_native && (vrc_native = dynamic_cast<VrcNativeSink *>(k.sink.get())))
-            vrc_native_entry = &k;
-    }
+    std::map<std::string, uint64_t> sent_last;   // The number of messages of each output at the last status refresh.
+    auto find_status_sinks = [&] {
+        pc_link = nullptr;
+        for (auto &k : sinks)
+            if (!pc_link)
+                pc_link = dynamic_cast<LinkSink *>(k.sink.get());
+    };
+    find_status_sinks();
     for (auto &p : pipelines)
         p->start();
 
@@ -488,6 +540,22 @@ int main(int argc, char **argv) {
         if (!s.src->tracking())
             set_feed_tracking(s.name, false);
     update_link_features();
+
+    // Makes an output module again from its config, so that a change to one of its settings takes effect.
+    auto rebuild_sink = [&](SinkEntry &k) {
+        const bool was_running = k.running;
+        if (k.running)
+            k.sink->stop();
+        k.running = false;
+        k.sink.reset();   // The old module removes its stats before the new one adds them.
+        // This is never null because make_sink() made a module of the same type at startup.
+        k.sink = make_sink(sink_config(k.name), sink_deps(k.name));
+        find_status_sinks();
+        update_link_features();
+        if (was_running && !(k.running = k.sink->start()))
+            LOG.error("sink %s: failed to start", k.name.c_str());
+        LOG.info("output: %s restarted with its new settings", output_label(k).c_str());
+    };
 
 #if BABBLE_FRUNK_MOUTH
     // The mouth_source setting selects the Frame mouth cameras or a USB camera, and the other source stays off.
@@ -604,6 +672,7 @@ int main(int argc, char **argv) {
         return o == Origin::Dashboard ? "the Babble tab" : o == Origin::SteamVr ? "SteamVR Settings" : "config reload";
     };
     const std::set<std::string> unsaved = unsaved_settings(cfg);
+    std::string output_error;   // The last rejected entry on the Outputs page, which the page shows.
     auto apply_setting_unchecked = [&](const std::string &id, const json &value, Origin origin) {
         const json::json_pointer ptr(id);
         if (cfg.contains(ptr) && cfg[ptr] == value)
@@ -637,13 +706,44 @@ int main(int argc, char **argv) {
         }
         for (auto &k : sinks) {
             const std::string prefix = "/sinks/" + k.name + "/";
-            if (id.starts_with(prefix) && k.sink->set_option(id.substr(prefix.size()), value))
+            if (!id.starts_with(prefix))
+                continue;
+            const std::string key = id.substr(prefix.size());
+            if (k.sink->set_option(key, value)) {
                 applied = true;
+            } else if (const json *opt = module_option(cfg["sinks"][k.name], key)) {
+                // The module has no live option, so make it again with the new value.
+                if (const std::string err = module_option_error(*opt, value); !err.empty()) {
+                    output_error = opt->value("label", key) + ": " + (value.is_string() ? value.get<std::string>()
+                                                                                          : value.dump()) +
+                                   " is " + err;
+                    LOG.warn("settings: %s = %s is %s", id.c_str(), value.dump().c_str(), err.c_str());
+                    return;
+                }
+                cfg[ptr] = value;
+                rebuild_sink(k);
+                output_error.clear();
+                applied = true;
+            }
         }
-        if (id == "/output" && (value == "vrcft" || value == "vrc_native")) {
+        if (id.starts_with("/outputs/") && value.is_boolean() &&
+            std::any_of(sinks.begin(), sinks.end(), [&](const SinkEntry &k) { return "/outputs/" + k.output == id; })) {
             cfg[ptr] = value;
-            route_output();
-            LOG.info("output: %s", value == "vrc_native" ? "VRChat native" : "VRCFaceTracking");
+            route_outputs();
+            applied = true;
+        }
+        if (id == "/pc_address" && value.is_string()) {
+            if (!valid_pc_address(value.get<std::string>())) {
+                output_error = "PC Address: " + value.get<std::string>() + " is not an IPv4 address";
+                LOG.warn("settings: %s = %s is not an IPv4 address", id.c_str(), value.dump().c_str());
+                return;
+            }
+            cfg[ptr] = value;
+            LOG.info("output: PC address %s", value.get<std::string>().empty() ? "automatic" : value.dump().c_str());
+            for (auto &k : sinks)
+                if (!k.output.empty() && section(cfg["sinks"][k.name], "module").value("uses_pc_address", false))
+                    rebuild_sink(k);
+            output_error.clear();
             applied = true;
         }
         if (id == "/dashboard/enabled" && value.is_boolean()) {
@@ -736,7 +836,9 @@ int main(int argc, char **argv) {
         for (auto &p : pipelines)
             o << "pipeline " << p->name() << ": source " << p->source() << ", " << p->processed() << " frames\n";
         for (auto &k : sinks)
-            o << "output " << k.name << "\n";
+            o << "output " << k.name << (k.output.empty() ? "" : k.running ? " (on)" : " (off)") << "\n";
+        o << "pc address: " << (cfg.value("pc_address", "").empty() ? "automatic" : cfg.value("pc_address", ""))
+          << "\n";
         if (pc_link) {
             const auto ls = pc_link->status();
             o << "pc link: " << (ls.linked ? "linked to \"" + ls.module + "\" via " + ls.path + " (" + ls.address + ")"
@@ -790,6 +892,10 @@ int main(int argc, char **argv) {
             s.src->set_frame_tap(recorder);
         // The recorder writes the Valve eye-service samples to valve_eye.bin in the session.
         eye_server.set_listener([recorder](const eye_server::Sample &s) { recorder->add_eye_sample(s); });
+        // It also writes the gaze that the outputs get to gaze.bin.
+        for (auto &p : pipelines)
+            if (auto *g = dynamic_cast<SteamVrGaze *>(p.get()))
+                g->set_listener([recorder](const gaze::Sample &s) { recorder->add_gaze_sample(s); });
     }
     auto find_source = [&](const std::string &name) -> ITrackingSource * {
         for (auto &s : sources)
@@ -851,6 +957,15 @@ int main(int argc, char **argv) {
         spec.consent = req.value("consent", json(nullptr));
         spec.routine_def = req.value("routine_def", json(nullptr));
         spec.valve_eye = find_source("eye") != nullptr;
+        for (auto &p : pipelines)
+            if (dynamic_cast<SteamVrGaze *>(p.get())) {
+                const json &gc = cfg["pipelines"][p->name()];
+                spec.gaze = json::object();
+                for (const char *k : {"gaze_source", "scaling", "max_deg", "flip_y", "yaw_offset", "pitch_offset",
+                                      "roll_offset", "rate_hz", "smoothing", "smoothing_presets"})
+                    if (gc.contains(k))
+                        spec.gaze[k] = gc[k];
+            }
         for (auto &s : sources) {
             // The encoder gets this nominal rate, and the timestamps give the real timing.
             double fps = s.src->camera_fps();
@@ -1003,12 +1118,15 @@ int main(int argc, char **argv) {
                                         apply_setting(ptr.to_string(), fresh[ptr], Origin::Reload);
                                 }
                             for (const char *id :
-                                 {"/pipelines/eye/openness_source", "/pipelines/gaze/gaze_source", "/dashboard/enabled",
-                                  "/mouth_source"}) {
+                                 {"/pipelines/eye/openness_source", "/pipelines/gaze/gaze_source",
+                                  "/pipelines/gaze/smoothing", "/pipelines/face/mirror", "/dashboard/enabled",
+                                  "/mouth_source", "/pc_address"}) {
                                 const json::json_pointer ptr(id);
                                 if (fresh.contains(ptr))
                                     apply_setting(id, fresh[ptr], Origin::Reload);
                             }
+                            for (auto &[out_id, on] : section(fresh, "outputs").items())
+                                apply_setting("/outputs/" + out_id, on, Origin::Reload);
                         } catch (const json::exception &e) {
                             LOG.error("config: reload failed: %s", e.what());
                         }
@@ -1205,21 +1323,96 @@ int main(int argc, char **argv) {
                     st.choice_hints[ptr.to_string()] = buf;
                 }
             }
-            if (pc_link && pc_link_entry->running) {
-                const auto ls = pc_link->status();
-                st.link = {true, ls.linked, ls.path, ls.module, ls.address, ls.rtt_ms};
-                st.link.no_data = ls.data == LinkSink::Data::Missing;
-                st.link.restart = ls.restart;
-            } else if (vrc_native && vrc_native_entry->running) {
-                // The native output shows "linked" while it sends blobs.
-                const auto ns = vrc_native->status();
-                st.link.available = true;
-                st.link.native = true;
-                st.link.linked = !ns.kind.empty() && ns.sent != native_sent_last;
-                st.link.path = ns.kind;
-                st.link.address = ns.address;
-                native_sent_last = ns.sent;
+            // The Outputs page has a row for each output module, and the front page shows the first one that is on.
+            st.pc_address = cfg.value("pc_address", "");
+            st.output_error = output_error;
+            int outputs_on = 0;
+            std::vector<const SinkEntry *> modules;
+            for (const auto &k : sinks)
+                if (!k.output.empty())
+                    modules.push_back(&k);
+            auto order = [&](const SinkEntry *k) {
+                return section(section(section(cfg, "sinks"), k->name.c_str()), "module").value("order", 100);
+            };
+            std::stable_sort(modules.begin(), modules.end(),
+                             [&](const SinkEntry *a, const SinkEntry *b) { return order(a) < order(b); });
+            for (const SinkEntry *entry : modules) {
+                const SinkEntry &k = *entry;
+                const json &kc = cfg["sinks"][k.name];
+                const json &mod = section(kc, "module");
+                ui::OutputModule m;
+                m.id = k.output;
+                m.label = output_label(k);
+                m.hint = mod.value("hint", "");
+                m.on = k.running;
+                outputs_on += k.running;
+                // A sender shows that it works while its message count goes up.
+                auto sending = [&](uint64_t sent) {
+                    const bool moving = sent != sent_last[k.name];
+                    sent_last[k.name] = sent;
+                    return moving;
+                };
+                if (auto *l = dynamic_cast<LinkSink *>(k.sink.get()); l && k.running) {
+                    const auto ls = l->status();
+                    m.ok = ls.linked && ls.data != LinkSink::Data::Missing && !ls.restart;
+                    const std::string path = ls.path == "lan" ? "LAN" : ls.path == "usb" ? "USB" : ls.path;
+                    m.status = !ls.linked ? "Searching for VRCFaceTracking\u2026"
+                               : ls.data == LinkSink::Data::Missing
+                                   ? "Linked, but no data reaches it. Check Windows Firewall."
+                                   : ls.restart ? "Restart VRCFaceTracking to use the tracking that is on."
+                                                : "Linked to " + (ls.module.empty() ? ls.address : ls.module) +
+                                                      " via " + path;
+                    if (!st.link.available) {
+                        st.link = {true, ls.linked, ls.path, ls.module, ls.address, ls.rtt_ms};
+                        st.link.no_data = ls.data == LinkSink::Data::Missing;
+                        st.link.restart = ls.restart;
+                    }
+                } else if (auto *n = dynamic_cast<VrcNativeSink *>(k.sink.get()); n && k.running) {
+                    const auto ns = n->status();
+                    m.ok = !ns.kind.empty() && sending(ns.sent);
+                    m.status = ns.kind.empty()       ? "Waiting for a Steam Link session"
+                               : ns.kind == "frame" ? "Sending to VRChat on this headset"
+                                                    : "Sending to VRChat at " + ns.address;
+                    if (!st.link.available) {
+                        st.link.available = st.link.native = true;
+                        st.link.linked = m.ok;
+                        st.link.path = ns.kind;
+                        st.link.address = ns.address;
+                    }
+                } else if (auto *o = dynamic_cast<BabbleOscSink *>(k.sink.get()); o && k.running) {
+                    const auto os = o->status();
+                    const std::string to = os.kind.empty() ? "" : os.address + ":" + std::to_string(os.port);
+                    m.ok = !os.kind.empty() && sending(os.sent);
+                    m.status = to.empty() ? "Set a PC address, or stream with Steam Link" : "Sending to " + to;
+                    if (!st.link.available) {
+                        st.link.available = st.link.osc = true;
+                        st.link.linked = m.ok;
+                        st.link.address = to;
+                    }
+                } else if (k.running) {
+                    m.ok = true;
+                    m.status = "Running";
+                }
+                for (const json &o : mod.value("options", json::array())) {
+                    // A key can be a path, such as "config/port" for a setting of a plugin.
+                    const std::string key = o.value("key", "");
+                    const json::json_pointer at("/" + key);
+                    if (key.empty() || !kc.contains(at))
+                        continue;
+                    ui::ModuleOption opt;
+                    opt.id = "/sinks/" + k.name + "/" + key;
+                    opt.label = o.value("label", key);
+                    opt.text = o.value("kind", "choice") == "text";
+                    opt.numeric = o.value("numeric", false);
+                    for (const json &v : o.value("values", json::array()))
+                        opt.values.push_back(v.dump());
+                    opt.labels = o.value("labels", std::vector<std::string>{});
+                    opt.value = opt.text && kc[at].is_string() ? kc[at].get<std::string>() : kc[at].dump();
+                    m.options.push_back(std::move(opt));
+                }
+                st.outputs.push_back(std::move(m));
             }
+            st.link.more = st.link.available ? outputs_on - 1 : 0;
             {
                 using S = capture::AppInstaller::State;
                 using R = ui::CaptureRow::State;
@@ -1321,6 +1514,9 @@ int main(int argc, char **argv) {
     for (auto &s : sources)
         s.src->set_frame_tap(nullptr);   // The recorder stops with the sinks.
     eye_server.set_listener(nullptr);
+    for (auto &p : pipelines)
+        if (auto *g = dynamic_cast<SteamVrGaze *>(p.get()))
+            g->set_listener(nullptr);
     // Stop the consumers first so that nothing holds frames when the sources stop.
     for (auto &p : pipelines)
         p->stop();

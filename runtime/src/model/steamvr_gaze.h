@@ -2,12 +2,17 @@
 
 #include "core/metrics.h"
 #include "core/threading.h"
+#include "model/gaze_sample.h"
 #include "model/pipeline.h"
+#include "model/postprocess/one_euro.h"
 
 #include <array>
 #include <atomic>
+#include <functional>
+#include <mutex>
 #include <optional>
 #include <thread>
+#include <vector>
 
 namespace babble {
 
@@ -28,6 +33,22 @@ std::optional<std::array<double, 3>> convert(double x, double y, double z, doubl
 std::optional<std::array<double, 2>> from_direction(double x, double y, double z, double max_deg, bool flip_y,
                                                     const Offsets &off, Scaling scaling = Scaling::Angle);
 
+// The optional One Euro smoothing of the four gaze values, with one preset for each level above 0 (off).
+class Smoother {
+public:
+    explicit Smoother(std::vector<OneEuroParams> presets = {}) : presets_(std::move(presets)) {}
+    int levels() const { return int(presets_.size()); }
+    // Writes the smoothed raw values to out. A new level or a reset starts the filter again from raw.
+    void apply(const float raw[4], float out[4], int level, uint64_t now_ns);
+    void reset() { level_ = 0; }
+
+private:
+    std::vector<OneEuroParams> presets_;
+    OneEuro filter_{4};
+    int level_ = 0;   // The level that filter_ was made for, or 0 if it starts again.
+    uint64_t last_ns_ = 0;
+};
+
 }
 
 // The "steamvr_gaze" pipeline gets eye gaze from the SteamVR eye tracking and sends it for each eye.
@@ -43,6 +64,8 @@ public:
     const std::string &name() const override { return name_; }
     void set_tracking(bool on) override { tracking_ = on; }
     bool set_option(const std::string &key, const nlohmann::json &value) override;
+    // Any thread can set the function that gets each gaze update, or clear it with nullptr.
+    void set_listener(std::function<void(const gaze::Sample &)> fn);
 
 private:
     void run();
@@ -60,7 +83,8 @@ private:
     // Each tick function returns true if it published a valid sample.
     bool tick_independent(uint64_t now);
     bool tick_combined(uint64_t now);
-    void publish(double lx, double ly, double rx, double ry, uint64_t now);
+    void publish(double lx, double ly, double rx, double ry, uint64_t now, gaze::Sample::Source source);
+    void centre(uint64_t now) { publish(0, 0, 0, 0, now, gaze::Sample::Source::Centre); }
 
     int dominant_eye_ = -1;   // The "Track Dominant Eye Only" eye of the last independent sample, or -1.
     std::optional<double> ipd_override_;
@@ -74,6 +98,13 @@ private:
     bool flip_y_ = false;
     gaze::Scaling scaling_ = gaze::Scaling::Angle;
     gaze::Offsets off_;
+
+    // The smoothing level is 0 (off) or a preset of the smoother, and set_option changes it live.
+    gaze::Smoother smoother_;
+    std::atomic<int> smoothing_{0};
+    std::atomic<bool> smoothing_reset_{false};
+    std::mutex listener_mutex_;
+    std::function<void(const gaze::Sample &)> listener_;
     bool stats_registered_ = false;
 };
 

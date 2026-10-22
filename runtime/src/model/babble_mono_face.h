@@ -37,6 +37,7 @@ public:
 
     // Convert one camera image into the model input, which is public for the tests.
     void prepare(const Frame &f, float *input);
+    bool set_option(const std::string &key, const nlohmann::json &value) override;
 
 private:
     void process(const StereoFrame &frames) override;
@@ -50,6 +51,7 @@ private:
     float gain_ = 1.0f;
     int quarter_turns_ = 0;
     bool flip_h_ = false, flip_v_ = false;
+    std::atomic<bool> mirror_{false};   // A mirror on top of flip_h_, which the Mirror switch changes live.
     std::unique_ptr<ExecuTorchRunner> runner_;
     std::unique_ptr<OneEuro> filter_;
     std::unique_ptr<face::Calibration> calibration_;

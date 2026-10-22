@@ -434,3 +434,95 @@ TEST_CASE("an on/off setting shows as a switch that reports the flipped value") 
     REQUIRE(r.setting);
     CHECK(r.setting->second == 0);
 }
+
+TEST_CASE("the outputs page switches modules, picks their settings and asks for the keyboard") {
+    DashboardView view;
+    REQUIRE(view.load_fonts(kFonts));
+    Canvas c(DashboardView::kWidth, DashboardView::kHeight);
+    Status s{true, Worn::Yes, on(Health::Working, 120), on(Health::Working, 90)};
+    OutputModule link{"vrcft", "VRCFaceTracking", "The module on your PC.", true, true, "Linked to PC via LAN", {}};
+    OutputModule native{"vrc_native", "VRChat Native", "Into VRChat.", false, false, "", {}};
+    native.options.push_back({"/sinks/vrc_native/target", "VRChat On", false, false,
+                              {"\"auto\"", "\"pc\"", "\"frame\""}, {"Auto", "PC", "Frame"}, "\"auto\""});
+    OutputModule osc{"babble_osc", "Babble OSC", "OSC to your PC.", true, false, "Set a PC address", {}};
+    osc.options.push_back({"/sinks/babble_osc/port", "Port", true, true, {}, {}, "8888"});
+    s.outputs = {link, native, osc};
+
+    // Settings has an Outputs button next to Diagnostics, and Back goes to Settings.
+    bool opened = false;
+    for (float x = DashboardView::kWidth - 56.f; x > 600 && !opened; x -= 8) {
+        view.set_page(DashboardView::Page::Settings);
+        view.render(c, s, rates(), std::nullopt);
+        view.click({x, 74});
+        opened = view.page() == DashboardView::Page::Outputs;
+    }
+    REQUIRE(opened);
+    view.render(c, s, rates(), std::nullopt);
+
+    // Scan each row from the right for what its controls report.
+    const float row_h = 115;   // There are four rows from y 160.
+    auto scan = [&](int row) {
+        std::vector<DashboardView::ClickResult> found;
+        for (float x = DashboardView::kWidth - 60.f; x > 300; x -= 6) {
+            // The controls in the rows do not change the page.
+            auto r = view.click({x, 160 + row_h * float(row) + row_h / 2});
+            if (r.output_setting || r.edit_text)
+                found.push_back(r);
+        }
+        return found;
+    };
+    std::set<std::pair<std::string, std::string>> settings;
+    std::set<std::string> edits;
+    for (int row = 0; row < 4; row++)
+        for (const auto &r : scan(row)) {
+            if (r.output_setting)
+                settings.insert(*r.output_setting);
+            if (r.edit_text)
+                edits.insert(*r.edit_text);
+        }
+    CHECK(settings.count({"/outputs/vrcft", "false"}));       // The switch of a module that is on turns it off.
+    CHECK(settings.count({"/outputs/vrc_native", "true"}));
+    CHECK(settings.count({"/outputs/babble_osc", "false"}));
+    CHECK(settings.count({"/sinks/vrc_native/target", "\"frame\""}));
+    CHECK(edits == std::set<std::string>{"/pc_address", "/sinks/babble_osc/port"});
+    CHECK_FALSE(settings.count({"/pc_address", "\"\""}));      // Clear shows only with an address.
+
+    s.pc_address = "192.168.1.20";
+    s.output_error = "Port: abc is not a number";
+    view.render(c, s, rates(), std::nullopt);
+    bool cleared = false;
+    for (const auto &r : scan(0))
+        cleared |= r.output_setting && *r.output_setting == std::make_pair(std::string("/pc_address"), std::string("\"\""));
+    CHECK(cleared);
+
+    view.click({60, 70});
+    CHECK(view.page() == DashboardView::Page::Settings);
+}
+
+TEST_CASE("a camera setting shows as a switch on the USB camera page and not on Settings") {
+    DashboardView view;
+    REQUIRE(view.load_fonts(kFonts));
+    Canvas c(DashboardView::kWidth, DashboardView::kHeight);
+    auto choices = rates();
+    Choice mirror{"/pipelines/face/mirror", "Mirror Image", "", "", {0, 1}, 1};
+    mirror.boolean = true;
+    mirror.cameras = true;
+    choices.push_back(mirror);
+    Status s{true, Worn::Yes, on(Health::Working, 120), on(Health::Working, 90)};
+    s.mouth_source = "usb";
+    s.cameras = {{"303a:8000:ABC", "Babble tracker", "303a:8000"}};
+    view.set_page(DashboardView::Page::Cameras);
+    view.render(c, s, choices, std::nullopt);
+    auto r = view.click({DashboardView::kWidth - 56.f - 46, 150 + 52});
+    REQUIRE(r.setting);
+    CHECK(r.setting->first == 2);
+    CHECK(r.setting->second == 0);
+    // The camera rows start below the switch.
+    r = view.click({600, 150 + 104 + 40});
+    REQUIRE(r.camera);
+    CHECK(r.camera->empty());
+
+    view.set_page(DashboardView::Page::Settings);
+    view.render(c, s, choices, std::nullopt);
+    CHECK_FALSE(view.click({DashboardView::kWidth - 56.f - 46, 160 + 2 * 124 + 62}).setting);
+}

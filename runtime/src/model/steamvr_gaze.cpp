@@ -99,6 +99,22 @@ std::optional<bool> parse_gaze_source(const nlohmann::json &v) {
 
 }
 
+void gaze::Smoother::apply(const float raw[4], float out[4], int level, uint64_t now_ns) {
+    std::copy(raw, raw + 4, out);
+    if (level <= 0 || level > levels()) {
+        level_ = 0;
+        return;
+    }
+    if (level_ != level) {   // The first sample of a new filter does not change.
+        filter_ = OneEuro(4, presets_[size_t(level - 1)]);
+        level_ = level;
+        filter_.apply(out, 4, 0);
+    } else {
+        filter_.apply(out, 4, double(now_ns - last_ns_) * 1e-9);
+    }
+    last_ns_ = now_ns;
+}
+
 bool SteamVrGaze::init() {
     if (!deps_.steamvr) {
         LOG.error("pipeline %s: needs the SteamVR client", name_.c_str());
@@ -122,6 +138,17 @@ bool SteamVrGaze::init() {
     flip_y_ = cfg_.value("flip_y", false);
     stale_ns_ = cfg_.value("stale_s", 0.5) * 1e9;
     off_ = {cfg_.value("roll_offset", 0.0), cfg_.value("yaw_offset", 0.0), cfg_.value("pitch_offset", 0.0)};
+    std::vector<OneEuroParams> presets;
+    for (const auto &p : cfg_.value("smoothing_presets", nlohmann::json::array()))
+        if (auto params = one_euro_params(p, OneEuroParams{}))
+            presets.push_back(*params);
+    smoother_ = gaze::Smoother(std::move(presets));
+    const int level = cfg_.value("smoothing", 0);
+    if (level < 0 || level > smoother_.levels()) {
+        LOG.error("pipeline %s: smoothing must be 0 to %d", name_.c_str(), smoother_.levels());
+        return false;
+    }
+    smoothing_ = level;
 
     const char *names[4] = {"LeftEyeX", "LeftEyeY", "RightEyeX", "RightEyeY"};
     for (int i = 0; i < 4; i++)
@@ -132,20 +159,34 @@ bool SteamVrGaze::init() {
     deps_.stats.add(p + "reconnects", &reconnects_);
     deps_.stats.add(p + "fallback", &fallback_);
     stats_registered_ = true;
-    LOG.info("pipeline %s: SteamVR eye gaze at %.0f Hz, %s, %s scaling", name_.c_str(), cfg_.value("rate_hz", 90.0),
-             independent_ ? "independent per-eye" : "combined", scaling.c_str());
+    LOG.info("pipeline %s: SteamVR eye gaze at %.0f Hz, %s, %s scaling, smoothing %d", name_.c_str(),
+             cfg_.value("rate_hz", 90.0), independent_ ? "independent per-eye" : "combined", scaling.c_str(), level);
     return true;
 }
 
 bool SteamVrGaze::set_option(const std::string &key, const nlohmann::json &value) {
+    if (key == "smoothing") {
+        if (!value.is_number_integer() || value.get<int>() < 0 || value.get<int>() > smoother_.levels())
+            return false;
+        if (value.get<int>() != smoothing_.exchange(value.get<int>()))
+            LOG.info("pipeline %s: gaze smoothing %d", name_.c_str(), value.get<int>());
+        return true;
+    }
     if (key != "gaze_source")
         return false;
     auto source = parse_gaze_source(value);
     if (!source)
         return false;
-    if (*source != independent_.exchange(*source))
+    if (*source != independent_.exchange(*source)) {
+        smoothing_reset_ = true;   // The two sources do not line up, so the filter starts again.
         LOG.info("pipeline %s: gaze source %s", name_.c_str(), *source ? "independent per-eye" : "combined");
+    }
     return true;
+}
+
+void SteamVrGaze::set_listener(std::function<void(const gaze::Sample &)> fn) {
+    std::lock_guard<std::mutex> lock(listener_mutex_);
+    listener_ = std::move(fn);
 }
 
 void SteamVrGaze::start() {
@@ -161,12 +202,33 @@ void SteamVrGaze::stop() {
         deps_.eye_server->want(EyeServerClient::Gaze, false);
 }
 
-void SteamVrGaze::publish(double lx, double ly, double rx, double ry, uint64_t now) {
-    std::pair<SignalId, Signal> u[4] = {{ids_[0], {float(lx), 1.0f, now}},
-                                        {ids_[1], {float(ly), 1.0f, now}},
-                                        {ids_[2], {float(rx), 1.0f, now}},
-                                        {ids_[3], {float(ry), 1.0f, now}}};
+
+void SteamVrGaze::publish(double lx, double ly, double rx, double ry, uint64_t now, gaze::Sample::Source source) {
+    gaze::Sample g;
+    g.ns = now;
+    g.source = source;
+    g.dominant_eye = int8_t(source == gaze::Sample::Source::Independent ? dominant_eye_ : -1);
+    g.raw[0] = float(lx);
+    g.raw[1] = float(ly);
+    g.raw[2] = float(rx);
+    g.raw[3] = float(ry);
+    if (source == gaze::Sample::Source::Centre) {
+        smoothing_reset_ = true;   // The gaze comes back from the centre without a slow glide.
+        std::copy(g.raw, g.raw + 4, g.out);
+    } else {
+        if (smoothing_reset_.exchange(false))
+            smoother_.reset();
+        g.smoothing = uint8_t(smoothing_.load());
+        smoother_.apply(g.raw, g.out, g.smoothing, now);
+    }
+    std::pair<SignalId, Signal> u[4] = {{ids_[0], {g.out[0], 1.0f, now}},
+                                        {ids_[1], {g.out[1], 1.0f, now}},
+                                        {ids_[2], {g.out[2], 1.0f, now}},
+                                        {ids_[3], {g.out[3], 1.0f, now}}};
     deps_.state.update(u);
+    std::lock_guard<std::mutex> lock(listener_mutex_);
+    if (listener_)
+        listener_(g);
 }
 
 // Get the direction of each eye from the eye-service shared memory. While "Track Dominant Eye Only" is on, the gaze
@@ -190,7 +252,7 @@ bool SteamVrGaze::tick_independent(uint64_t now) {
     auto gr = gaze::from_direction(r[0], r[1], r[2], max_deg_, flip_y_, off_, scaling_);
     if (!gl || !gr)
         return false;
-    publish((*gl)[0], (*gl)[1], (*gr)[0], (*gr)[1], now);
+    publish((*gl)[0], (*gl)[1], (*gr)[0], (*gr)[1], now, gaze::Sample::Source::Independent);
     samples_.tick();
     return true;
 }
@@ -239,7 +301,7 @@ bool SteamVrGaze::tick_combined(uint64_t now) {
     if (!g)
         return false;
     const auto &[lx, rx, y] = *g;
-    publish(lx, y, rx, y, now);
+    publish(lx, y, rx, y, now, gaze::Sample::Source::Combined);
     samples_.tick();
     return true;
 }
@@ -258,7 +320,7 @@ void SteamVrGaze::run() {
             deps_.eye_server->want(EyeServerClient::Gaze, want_independent);
         if (!tracking_) {   // The user turned the eye feed off.
             if (!centred) {
-                publish(0, 0, 0, 0, now);
+                centre(now);
                 centred = true;
             }
             sleep_ns(100000000);
@@ -282,7 +344,7 @@ void SteamVrGaze::run() {
             last_valid = now;
             centred = false;
         } else if (!centred && now - last_valid > uint64_t(stale_ns_)) {   // Go back to centre one time, as the reference does.
-            publish(0, 0, 0, 0, now);
+            centre(now);
             centred = true;
         }
         sleep_ns(period);

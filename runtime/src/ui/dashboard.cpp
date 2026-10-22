@@ -7,7 +7,9 @@
 #include <openvr.h>
 
 #include <algorithm>
+#include <cerrno>
 #include <cmath>
+#include <cstdlib>
 
 namespace {
 const babble::log::Logger LOG("ui");
@@ -72,7 +74,9 @@ void Dashboard::set_status(const Status &s) {
         s.camera != status_.camera || s.active_camera != status_.active_camera ||
         s.verbose_minutes_left != status_.verbose_minutes_left || s.last_diagnostics != status_.last_diagnostics ||
         s.log_file != status_.log_file || s.choice_hints != status_.choice_hints || s.capture != status_.capture ||
-        s.update != status_.update ||
+        s.update != status_.update || s.link.native != status_.link.native || s.link.osc != status_.link.osc ||
+        s.link.more != status_.link.more || s.outputs != status_.outputs || s.pc_address != status_.pc_address ||
+        s.output_error != status_.output_error ||
         s.cameras.size() != status_.cameras.size() ||
         !std::equal(s.cameras.begin(), s.cameras.end(), status_.cameras.begin(),
                     [](const UsbCamera &a, const UsbCamera &b) { return a.id == b.id && a.label == b.label; }))
@@ -87,6 +91,50 @@ void Dashboard::set_choice(const std::string &id, double value) {
             c.value = value;
             dirty_ = true;
         }
+}
+
+// Shows a choice on the Outputs page immediately, and sends it to the main thread, which confirms it.
+void Dashboard::apply_output_setting(const std::string &id, const nlohmann::json &value) {
+    for (OutputModule &m : status_.outputs) {
+        if (id == "/outputs/" + m.id && value.is_boolean())
+            m.on = value.get<bool>();
+        for (ModuleOption &o : m.options)
+            if (o.id == id)
+                o.value = o.text ? (value.is_string() ? value.get<std::string>() : value.dump()) : value.dump();
+    }
+    if (id == "/pc_address" && value.is_string())
+        status_.pc_address = value.get<std::string>();
+    changes_.emplace_back(id, value);
+    dirty_ = true;
+}
+
+// Opens the SteamVR keyboard on the tab with the current text of the setting.
+void Dashboard::open_keyboard(const std::string &id) {
+    std::string label = "PC Address", current;
+    bool numeric = false;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        current = status_.pc_address;
+        for (const OutputModule &m : status_.outputs)
+            for (const ModuleOption &o : m.options)
+                if (o.id == id) {
+                    label = m.label + " " + o.label;
+                    current = o.value;
+                    numeric = o.numeric;
+                }
+    }
+    vr::EVROverlayError err = vr::VROverlayError_None;
+    vr_->with_vr([&] {
+        err = vr::VROverlay()->ShowKeyboardForOverlay(main_, vr::k_EGamepadTextInputModeNormal,
+                                                       vr::k_EGamepadTextInputLineModeSingleLine,
+                                                       vr::KeyboardFlag_Minimal, label.c_str(), 64, current.c_str(), 0);
+    });
+    if (err != vr::VROverlayError_None) {
+        LOG.warn("dashboard: cannot open the keyboard for %s (%d)", id.c_str(), int(err));
+        return;
+    }
+    editing_id_ = id;
+    editing_numeric_ = numeric;
 }
 
 std::vector<std::pair<std::string, nlohmann::json>> Dashboard::take_changes() {
@@ -237,6 +285,7 @@ void Dashboard::run() {
 
         bool redraw = false;
         std::vector<Point> clicks;
+        std::optional<std::pair<std::string, std::string>> typed;   // The setting id and the text from the keyboard.
         vr_->with_vr([&] {
             vr::VREvent_t ev;
             while (vr::VROverlay()->PollNextOverlayEvent(main_, &ev, sizeof(ev))) {
@@ -252,6 +301,18 @@ void Dashboard::run() {
                 case vr::VREvent_FocusLeave:
                     pointer_.reset();
                     break;
+                case vr::VREvent_KeyboardDone: {
+                    if (editing_id_.empty())
+                        break;
+                    char buf[256] = {};
+                    vr::VROverlay()->GetKeyboardText(buf, sizeof(buf));
+                    typed = std::make_pair(std::exchange(editing_id_, {}), std::string(buf));
+                    break;
+                }
+                case vr::VREvent_KeyboardClosed:
+                case vr::VREvent_KeyboardClosed_Global:
+                    editing_id_.clear();
+                    break;
                 case vr::VREvent_OverlayShown:
                     visible_ = true;
                     redraw = true;
@@ -266,6 +327,24 @@ void Dashboard::run() {
             }
         });
 
+        if (typed) {
+            std::string text = typed->second;
+            text.erase(0, text.find_first_not_of(" \t"));
+            text.erase(text.find_last_not_of(" \t") + 1);
+            // A number that does not parse goes as text, so that the main thread rejects it with a message.
+            nlohmann::json value = text;
+            if (editing_numeric_) {
+                char *end = nullptr;
+                errno = 0;
+                const long n = strtol(text.c_str(), &end, 10);
+                if (!text.empty() && end && *end == '\0' && errno == 0)
+                    value = n;
+            }
+            std::lock_guard<std::mutex> lock(mutex_);
+            apply_output_setting(typed->first, value);
+            redraw = true;
+        }
+        std::optional<std::string> keyboard_for;
         for (const Point &p : clicks) {
             auto r = view_.click(p);
             redraw |= r.redraw;
@@ -291,6 +370,15 @@ void Dashboard::run() {
                 status_.mouth_source = *r.mouth_source;
                 changes_.emplace_back("/mouth_source", *r.mouth_source);
             }
+            if (r.output_setting) {
+                try {
+                    apply_output_setting(r.output_setting->first, nlohmann::json::parse(r.output_setting->second));
+                } catch (const nlohmann::json::exception &) {
+                    LOG.warn("dashboard: bad value for %s", r.output_setting->first.c_str());
+                }
+            }
+            if (r.edit_text)
+                keyboard_for = r.edit_text;
             if (r.camera && *r.camera != status_.camera) {
                 status_.camera = *r.camera;
                 changes_.emplace_back("/sources/face/camera", *r.camera);
@@ -312,6 +400,9 @@ void Dashboard::run() {
                                       on);
             }
         }
+
+        if (keyboard_for)
+            open_keyboard(*keyboard_for);
 
         // Draw again only when something visible changed.
         if (visible_) {

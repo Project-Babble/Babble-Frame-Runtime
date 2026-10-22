@@ -3,13 +3,14 @@
 #include "core/metrics.h"
 #include "core/threading.h"
 #include "sink/sink.h"
+#include "sink/steam_link.h"
 
 #include <netinet/in.h>
 
 #include <array>
 #include <atomic>
 #include <cstdint>
-#include <filesystem>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -39,11 +40,6 @@ Target target_of(std::string_view signal);
 // Makes the blob from the values, where a nullopt value gives open eyes or 0 for the other shapes.
 Blob encode(const std::vector<Target> &targets, const std::vector<std::optional<float>> &values);
 
-// Finds the address of the PC that the headset streams from in the Steam Link log of SteamVR.
-std::optional<std::string> streaming_pc(std::string_view log_text);
-// Finds the PID of the vrlink process of the latest session in the log.
-std::optional<int> session_pid(std::string_view log_text);
-
 }
 
 // Config type "vrc_native" sends the native face tracking blob of VRChat directly to VRChat without VRCFaceTracking.
@@ -66,8 +62,6 @@ private:
     void run();
     // Finds VRChat again every few seconds and returns true if dest_ is usable.
     bool refresh_destination(uint64_t now);
-    // Returns the Steam Link PC while its session is live, and reads the log again when it changes.
-    std::optional<std::string> live_pc();
     void send(const vrc_native::Blob &blob);
 
     std::string name_;
@@ -76,8 +70,9 @@ private:
     StatsRegistry &stats_;
 
     std::string host_, target_;
+    std::string pc_address_;   // The PC address of the Outputs page, which the sink uses instead of Steam Link.
     int port_ = 9000;
-    std::filesystem::path log_path_;
+    std::shared_ptr<steam_link::SteamLinkPc> steam_link_;
     double max_rate_hz_ = 0;
 
     int sock_ = -1;
@@ -85,10 +80,6 @@ private:
     bool have_dest_ = false;
     std::string dest_ip_;
     uint64_t next_check_ns_ = 0;
-    std::filesystem::file_time_type log_mtime_{};
-    uintmax_t log_size_ = 0;
-    std::optional<std::string> log_pc_;   // The PC from the last read of the log.
-    std::optional<int> log_pid_;
     mutable std::mutex status_mutex_;
     Status status_;
 

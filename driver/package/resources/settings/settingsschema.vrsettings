@@ -35,6 +35,15 @@
 				"requires" : { "/settings/driver_babble/mouthTracking" : true }
 			},
 			{
+				"name" : "/settings/driver_babble/mouthMirror",
+				"control" : "toggle",
+				"label" : "Mirror USB Camera",
+				"text" : "Mirrors the image of a USB Babble face tracker. Turn off if left and right mouth movements are swapped on your avatar.",
+				"on_label" : "On",
+				"off_label" : "Off",
+				"requires" : { "/settings/driver_babble/mouthTracking" : true }
+			},
+			{
 				"name" : "/settings/driver_babble/eyeTracking",
 				"control" : "toggle",
 				"label" : "Eye Tracking",
@@ -76,14 +85,41 @@
 				"requires" : { "/settings/driver_babble/eyeTracking" : true }
 			},
 			{
-				"name" : "/settings/driver_babble/output",
+				"name" : "/settings/driver_babble/gazeSmoothing",
 				"control" : "segment",
-				"label" : "Output",
-				"text" : "Where tracking goes. VRCFaceTracking: the Babble module in VRCFaceTracking on your PC. VRChat Native: straight into VRChat's own face tracking, on the PC you stream from or on the Frame.",
+				"label" : "Gaze Smoothing",
+				"text" : "Steadies the gaze. Stronger smoothing adds a little lag to fast eye movements.",
 				"options" : [
-					{ "value" : "vrcft", "label" : "VRCFaceTracking" },
-					{ "value" : "vrc_native", "label" : "VRChat Native" }
-				]
+					{ "value" : 0, "label" : "Off" },
+					{ "value" : 1, "label" : "Low" },
+					{ "value" : 2, "label" : "Medium" },
+					{ "value" : 3, "label" : "High" }
+				],
+				"requires" : { "/settings/driver_babble/eyeTracking" : true }
+			},
+			{
+				"name" : "/settings/driver_babble/outputVrcft",
+				"control" : "toggle",
+				"label" : "VRCFaceTracking Output",
+				"text" : "Sends tracking to the Babble module in VRCFaceTracking on your PC. Set a PC address and the other output settings in the Babble app window.",
+				"on_label" : "On",
+				"off_label" : "Off"
+			},
+			{
+				"name" : "/settings/driver_babble/outputVrcNative",
+				"control" : "toggle",
+				"label" : "VRChat Native Output",
+				"text" : "Sends tracking straight into VRChat's own face tracking, on the PC you stream from or on the Frame.",
+				"on_label" : "On",
+				"off_label" : "Off"
+			},
+			{
+				"name" : "/settings/driver_babble/outputBabbleOsc",
+				"control" : "toggle",
+				"label" : "Babble OSC Output",
+				"text" : "Sends OSC in the Baballonia format to your PC on UDP 8888.",
+				"on_label" : "On",
+				"off_label" : "Off"
 			},
 			{
 				"name" : "/settings/driver_babble/debugOverlay",

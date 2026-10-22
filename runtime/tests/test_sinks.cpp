@@ -1,6 +1,7 @@
 #include <doctest/doctest.h>
 
 #include "core/metrics.h"
+#include "sink/babble_osc_sink.h"
 #include "sink/osc.h"
 #include "sink/sink.h"
 #include "state/expression_state.h"
@@ -110,4 +111,62 @@ TEST_CASE("the osc module sends changed signals to its UDP target") {
     size_t en = osc::encode_float("/babble/jawOpen", 0.25f, expect, sizeof(expect));
     CHECK(size_t(n) == en);
     CHECK(memcmp(buf, expect, en) == 0);
+}
+
+TEST_CASE("babble_osc sends Baballonia OSC to the PC address, and waits without one") {
+    using Pick = std::optional<std::pair<std::string, std::string>>;
+    CHECK(BabbleOscSink::choose("10.0.0.1", "10.0.0.2", "10.0.0.3") == Pick{{"10.0.0.1", "host"}});
+    CHECK(BabbleOscSink::choose("", "10.0.0.2", "10.0.0.3") == Pick{{"10.0.0.2", "pc_address"}});
+    CHECK(BabbleOscSink::choose("", "", "10.0.0.3") == Pick{{"10.0.0.3", "steam_link"}});
+    CHECK(BabbleOscSink::choose("", "", std::nullopt) == std::nullopt);
+
+    int rx = socket(AF_INET, SOCK_DGRAM, 0);
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    REQUIRE(bind(rx, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) == 0);
+    socklen_t len = sizeof(addr);
+    getsockname(rx, reinterpret_cast<sockaddr *>(&addr), &len);
+    timeval tv{2, 0};
+    setsockopt(rx, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+    json threads = json::object();
+    ExpressionState state;
+    StatsRegistry stats;
+    SignalId jaw = state.add_signal("jawOpen");
+    auto sink = make_sink(json{{"type", "babble_osc"}, {"port", ntohs(addr.sin_port)}, {"pc_address", "127.0.0.1"}},
+                          SinkDeps{"babble_osc", threads, state, stats});
+    REQUIRE(sink);
+    REQUIRE(sink->start());
+    auto *osc_sink = static_cast<BabbleOscSink *>(sink.get());
+    for (int i = 0; i < 100 && osc_sink->status().kind.empty(); i++)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    CHECK(osc_sink->status().kind == "pc_address");
+    CHECK(osc_sink->status().address == "127.0.0.1");
+
+    std::pair<SignalId, Signal> v{jaw, Signal{0.75f, 1.0f, 42}};
+    state.update(std::span(&v, 1));
+    uint8_t buf[256];
+    const ssize_t n = recv(rx, buf, sizeof(buf), 0);
+    REQUIRE(n > 0);
+    uint8_t expect[64];
+    const size_t en = osc::encode_float("/jawOpen", 0.75f, expect, sizeof(expect));
+    CHECK(size_t(n) == en);
+    CHECK(memcmp(buf, expect, en) == 0);
+    sink->stop();
+
+    // Without an address or a Steam Link session, the module runs but sends nothing.
+    auto idle = make_sink(json{{"type", "babble_osc"}, {"port", ntohs(addr.sin_port)},
+                               {"steam_link_log", "/nonexistent/vrlink.txt"}},
+                          SinkDeps{"babble_osc", threads, state, stats});
+    REQUIRE(idle->start());
+    timeval short_tv{0, 300000};
+    setsockopt(rx, SOL_SOCKET, SO_RCVTIMEO, &short_tv, sizeof(short_tv));
+    v.second = Signal{0.5f, 1.0f, 43};
+    state.update(std::span(&v, 1));
+    CHECK(recv(rx, buf, sizeof(buf), 0) < 0);
+    CHECK(static_cast<BabbleOscSink *>(idle.get())->status().kind.empty());
+    idle->stop();
+    CHECK_FALSE(make_sink(json{{"type", "babble_osc"}, {"port", 0}}, SinkDeps{"b", threads, state, stats})->start());
+    close(rx);
 }

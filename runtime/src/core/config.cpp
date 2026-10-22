@@ -4,6 +4,7 @@
 #include "core/paths.h"
 #include "defaults_json.h"
 
+#include <algorithm>
 #include <fstream>
 #include <sstream>
 
@@ -111,6 +112,21 @@ Layer merge_layer(const std::filesystem::path &file, json &config, std::string *
 
 }
 
+std::string migrate_output_choice(json &config, const std::vector<const json *> &layers) {
+    std::string old;
+    for (const json *layer : layers)
+        if (layer->is_object() && layer->contains("output") && (*layer)["output"].is_string())
+            old = (*layer)["output"].get<std::string>();
+    if (old.empty())
+        return "";
+    if (config.contains("outputs") && config["outputs"].is_object())
+        for (auto &[id, on] : config["outputs"].items())
+            if (std::none_of(layers.begin(), layers.end(), [&](const json *l) { return section(*l, "outputs").contains(id); }))
+                on = id == old;
+    config.erase("output");
+    return old;
+}
+
 std::filesystem::path default_settings_file() { return paths::config_dir() / "settings.json"; }
 
 bool save_setting(const std::filesystem::path &settings_file, const json::json_pointer &where, const json &value,
@@ -169,13 +185,15 @@ ConfigLoad load_config(const std::optional<std::filesystem::path> &user_file_ove
     }
 
     out.user_file = user_file_override ? *user_file_override : paths::config_dir() / "config.json";
-    out.user_loaded = merge_layer(out.user_file, out.config, &out.error) == Layer::Loaded;
+    json user_layer;
+    out.user_loaded = merge_layer(out.user_file, out.config, &out.error, &user_layer) == Layer::Loaded;
     out.settings_file = settings_file_override ? *settings_file_override : default_settings_file();
     json settings_layer;
     out.settings_loaded =
         merge_layer(out.settings_file, out.config, &out.settings_error, &settings_layer) == Layer::Loaded;
     if (out.settings_loaded)
         leaves(settings_layer, "", out.settings_overrides);
+    out.legacy_output = migrate_output_choice(out.config, {&user_layer, &settings_layer});
     if (defaults)
         out.type_fixes = fix_types(out.config, *defaults);
     return out;

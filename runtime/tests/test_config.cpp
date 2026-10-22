@@ -9,6 +9,7 @@
 #include <fstream>
 #include <iterator>
 #include <map>
+#include <set>
 
 #include <unistd.h>
 
@@ -49,11 +50,39 @@ TEST_CASE("built-in defaults parse and carry the key settings") {
     CHECK_FALSE((*d)["threads"].contains("capR"));
 #endif
 #if !BABBLE_DEV_FEATURES
-    for (const char *key : {"output", "visualizer"})
-        CHECK_FALSE_MESSAGE(d->contains(key), key);
-    CHECK_FALSE((*d)["sinks"].contains("vrc_native"));
+    CHECK_FALSE(d->contains("visualizer"));
     CHECK((*d)["sinks"]["vrcft"]["enabled"] == false);
 #endif
+    // Every profile ships all the output modules, and only VRCFaceTracking is on by default.
+    CHECK_FALSE(d->contains("output"));
+    CHECK((*d)["outputs"] == json{{"vrcft", true}, {"vrc_native", false}, {"babble_osc", false}});
+    CHECK((*d)["pc_address"] == "");
+    std::set<std::string> roles;
+    for (auto &[name, sc] : (*d)["sinks"].items()) {
+        if (!sc.contains("output"))
+            continue;
+        roles.insert(sc["output"].get<std::string>());
+        // Each module names itself, and each of its settings is a key of the module with a value of the right kind.
+        REQUIRE_MESSAGE(sc.contains("module"), name);
+        CHECK_MESSAGE(!sc["module"].value("label", "").empty(), name);
+        for (const auto &o : sc["module"].value("options", json::array())) {
+            const std::string key = o.value("key", "");
+            CAPTURE(name);
+            CAPTURE(key);
+            REQUIRE(sc.contains(key));
+            if (o.value("kind", "") == "choice") {
+                bool found = false;
+                for (const auto &v : o["values"])
+                    found |= v == sc[key];
+                CHECK(found);
+                CHECK(o["labels"].size() == o["values"].size());
+            } else {
+                CHECK(o.value("kind", "") == "text");
+                CHECK((o.value("numeric", false) ? sc[key].is_number_integer() : sc[key].is_string()));
+            }
+        }
+    }
+    CHECK(roles == std::set<std::string>{"vrcft", "vrc_native", "babble_osc"});
     // Every user setting must point at a key in the defaults, because the loader drops a bad profile
     // trim with only a warning.
     for (const auto &row : (*d)["dashboard"]["settings"])
@@ -121,6 +150,8 @@ TEST_CASE("the SteamVR Settings section maps to live runtime settings") {
         {"eyeRateDivisor", {"/sources/eye/rate_divisor", Type::Int}},
         {"opennessSource", {"/pipelines/eye/openness_source", Type::String}},
         {"gazeSource", {"/pipelines/gaze/gaze_source", Type::String}},
+        {"gazeSmoothing", {"/pipelines/gaze/smoothing", Type::Int}},
+        {"mouthMirror", {"/pipelines/face/mirror", Type::Bool}},
         {"debugOverlay", {"/dashboard/enabled", Type::Bool}},
     };
 #if BABBLE_FRUNK_MOUTH
@@ -132,9 +163,9 @@ TEST_CASE("the SteamVR Settings section maps to live runtime settings") {
     // In the release profile, Mouth Tracking switches the USB tracker and there is no source or rate choice.
     want["mouthTracking"] = {"/sources/face/tracking", Type::Bool};
 #endif
-#if BABBLE_DEV_FEATURES
-    want["output"] = {"/output", Type::String};
-#endif
+    want["outputVrcft"] = {"/outputs/vrcft", Type::Bool};
+    want["outputVrcNative"] = {"/outputs/vrc_native", Type::Bool};
+    want["outputBabbleOsc"] = {"/outputs/babble_osc", Type::Bool};
     auto entries = SteamVrSettingsBridge::entries_from_config(*d);
     REQUIRE(entries.size() == want.size());
     for (const auto &e : entries) {
@@ -146,18 +177,41 @@ TEST_CASE("the SteamVR Settings section maps to live runtime settings") {
     // The advanced options default to model openness and independent gaze.
     CHECK((*d)["pipelines"]["eye"]["openness_source"] == "model");
     CHECK((*d)["pipelines"]["gaze"]["gaze_source"] == "independent");
+    CHECK((*d)["pipelines"]["gaze"]["smoothing"] == 0);   // Gaze smoothing is off unless the user turns it on.
+    CHECK((*d)["pipelines"]["face"]["mirror"] == true);   // The USB face tracker image is mirrored by default.
     CHECK((*d)["dashboard"]["enabled"] == false);   // The debug overlay is off by default.
 #if BABBLE_FRUNK_MOUTH
     CHECK((*d)["mouth_source"] == "frunk");         // The default is the Frame cameras unless the user selects USB.
-#endif
-#if BABBLE_DEV_FEATURES
-    CHECK((*d)["output"] == "vrcft");               // VRCFaceTracking is the default output.
 #endif
 
     // The loader drops an id that is not a bool, number or string setting and does not mirror it.
     json cfg = *d;
     cfg["steamvr_settings"]["values"].push_back({{"key", "bogus"}, {"id", "/sources/eye/ctrl_base_candidates"}});
     CHECK(SteamVrSettingsBridge::entries_from_config(cfg).size() == want.size());
+}
+
+TEST_CASE("the old single output choice becomes the output switches") {
+    const json defaults = {{"outputs", {{"vrcft", true}, {"vrc_native", false}, {"babble_osc", false}}}};
+    json cfg = defaults;
+    cfg["output"] = "vrc_native";
+    const json old_settings = {{"output", "vrc_native"}};
+    CHECK(migrate_output_choice(cfg, {&old_settings}) == "vrc_native");
+    CHECK_FALSE(cfg.contains("output"));
+    CHECK(cfg["outputs"] == json{{"vrcft", false}, {"vrc_native", true}, {"babble_osc", false}});
+
+    // A switch that a layer sets stays, and the newest layer with a choice wins.
+    cfg = defaults;
+    cfg["outputs"]["babble_osc"] = true;
+    const json user = {{"output", "vrcft"}};
+    const json settings = {{"output", "vrc_native"}, {"outputs", {{"babble_osc", true}}}};
+    CHECK(migrate_output_choice(cfg, {&user, &settings}) == "vrc_native");
+    CHECK(cfg["outputs"] == json{{"vrcft", false}, {"vrc_native", true}, {"babble_osc", true}});
+
+    // Without an old choice nothing changes.
+    cfg = defaults;
+    const json none = json::object();
+    CHECK(migrate_output_choice(cfg, {&none}).empty());
+    CHECK(cfg == defaults);
 }
 
 TEST_CASE("values of the wrong type are reset to the default and reported") {

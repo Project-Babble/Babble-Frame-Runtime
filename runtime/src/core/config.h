@@ -23,6 +23,8 @@ struct ConfigLoad {
     std::vector<std::string> type_fixes;
     // The leaf keys that settings.json sets over config.json.
     std::vector<std::string> settings_overrides;
+    // The old single "output" choice that the loader changed into the "outputs" switches, or "" if none.
+    std::string legacy_output;
 };
 
 // Merges config.json and then settings.json over the defaults with RFC 7386, and reports and ignores a broken file.
@@ -38,6 +40,11 @@ bool save_setting(const std::filesystem::path &settings_file, const json::json_p
 
 // The merge that load_config uses, which is public for the tests.
 json merge_config(json defaults, const json &user);
+
+// Changes the old single "output" choice of the newest layer that has one into the "outputs" switches, where a switch
+// that any layer sets stays as it is. The layers are oldest first. It removes "output" from config and returns the old
+// choice, or "" if no layer has one.
+std::string migrate_output_choice(json &config, const std::vector<const json *> &layers);
 
 // Resets each key of cfg that has a JSON kind different from defaults, and returns the keys that it reset.
 std::vector<std::string> fix_types(json &cfg, const json &defaults);

@@ -6,7 +6,8 @@
   "stats_interval_s": 5,
   "stats_summary_s": 60,
   "mouth_source": "frunk",
-  "output": "vrcft",
+  "outputs": { "vrcft": true, "vrc_native": false, "babble_osc": false },
+  "pc_address": "",
   "threads": {
     "main": {
       "name": "babble-runtime",
@@ -177,7 +178,13 @@
       "yaw_offset": 0,
       "pitch_offset": 0,
       "roll_offset": 0,
-      "stale_s": 0.5
+      "stale_s": 0.5,
+      "smoothing": 0,
+      "smoothing_presets": [
+        { "min_cutoff": 3.0, "beta": 0.5, "d_cutoff": 1.0 },
+        { "min_cutoff": 1.5, "beta": 0.3, "d_cutoff": 1.0 },
+        { "min_cutoff": 0.8, "beta": 0.1, "d_cutoff": 1.0 }
+      ]
     },
     "face": {
       "type": "babble_mono_face",
@@ -189,6 +196,7 @@
       "gain": 1.0,
       "rotate": 0,
       "flip": "none",
+      "mirror": true,
       "one_euro": { "min_cutoff": 0.5, "beta": 3.0, "d_cutoff": 1.0 },
       "calibration": { "mode": "auto" }
     }
@@ -221,6 +229,12 @@
       "type": "vrcft_link",
       "enabled": true,
       "output": "vrcft",
+      "module": {
+        "label": "VRCFaceTracking",
+        "hint": "The Babble module in VRCFaceTracking on your PC, found on the network by itself.",
+        "order": 0,
+        "uses_pc_address": true
+      },
       "thread": "osc",
       "control_port": 6767,
       "path_order": ["dongle", "usb", "lan"],
@@ -250,12 +264,44 @@
       "type": "vrc_native",
       "enabled": true,
       "output": "vrc_native",
+      "module": {
+        "label": "VRChat Native",
+        "hint": "Straight into VRChat's own face tracking, without VRCFaceTracking.",
+        "order": 1,
+        "uses_pc_address": true,
+        "options": [
+          { "key": "target", "label": "VRChat On", "kind": "choice", "values": ["auto", "pc", "frame"],
+            "labels": ["Auto", "PC", "Frame"] }
+        ]
+      },
       "thread": "osc",
       "target": "auto",
       "host": "",
       "port": 9000,
       "steam_link_log": "",
       "max_rate_hz": 0
+    },
+    "babble_osc": {
+      "type": "babble_osc",
+      "enabled": true,
+      "output": "babble_osc",
+      "module": {
+        "label": "Babble OSC",
+        "hint": "Baballonia-format OSC to the PC address, or the PC you stream from. Allow its UDP port in Windows Firewall.",
+        "order": 2,
+        "uses_pc_address": true,
+        "options": [
+          { "key": "port", "label": "Port", "kind": "text", "numeric": true, "validate": "port" }
+        ]
+      },
+      "thread": "osc",
+      "host": "",
+      "port": 8888,
+      "prefix": "",
+      "bundle": false,
+      "steam_link_log": "",
+      "max_rate_hz": 0,
+      "exclude": []
     }
   },
   "arbiter": {
@@ -312,12 +358,16 @@
     "values": [
       { "key": "mouthTracking", "id": "/sources/mouth/tracking" },
       { "key": "mouthSource", "id": "/mouth_source" },
-      { "key": "output", "id": "/output" },
+      { "key": "outputVrcft", "id": "/outputs/vrcft" },
+      { "key": "outputVrcNative", "id": "/outputs/vrc_native" },
+      { "key": "outputBabbleOsc", "id": "/outputs/babble_osc" },
       { "key": "mouthRate", "id": "/sources/mouth/process_fps" },
+      { "key": "mouthMirror", "id": "/pipelines/face/mirror" },
       { "key": "eyeTracking", "id": "/sources/eye/tracking" },
       { "key": "eyeRateDivisor", "id": "/sources/eye/rate_divisor" },
       { "key": "opennessSource", "id": "/pipelines/eye/openness_source" },
       { "key": "gazeSource", "id": "/pipelines/gaze/gaze_source" },
+      { "key": "gazeSmoothing", "id": "/pipelines/gaze/smoothing" },
       { "key": "debugOverlay", "id": "/dashboard/enabled" }
     ]
   },
@@ -338,6 +388,19 @@
         "hint": "A share of the eye camera rate. Lower rates save battery.",
         "options": [1, 2, 3],
         "labels": ["1:1", "1:2", "1:3"]
+      },
+      {
+        "id": "/pipelines/gaze/smoothing",
+        "label": "Gaze Smoothing",
+        "hint": "Steadies the gaze. Stronger smoothing adds a little lag to fast eye movements.",
+        "options": [0, 1, 2, 3],
+        "labels": ["Off", "Low", "Medium", "High"]
+      },
+      {
+        "id": "/pipelines/face/mirror",
+        "page": "cameras",
+        "label": "Mirror Image",
+        "hint": "Turn off if left and right mouth movements are swapped on your avatar."
       },
       {
         "id": "/sinks/camera_stream/active",

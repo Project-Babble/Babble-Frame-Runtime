@@ -67,6 +67,8 @@ add_library(babble_core STATIC
     src/sink/link_sink.cpp
     src/sink/plugin_sink.cpp
     src/sink/vrc_native_sink.cpp
+    src/sink/babble_osc_sink.cpp
+    src/sink/steam_link.cpp
     src/sink/camera_stream_sink.cpp
     src/sink/record_sink.cpp
     src/core/sha256.cpp
@@ -184,6 +186,7 @@ if(BABBLE_TESTS)
         tests/test_pipeline_base.cpp
         tests/test_log.cpp
         tests/test_vrc_native.cpp
+        tests/test_steam_link.cpp
         tests/test_camera_stream.cpp
         tests/test_eye_pairing.cpp
         tests/test_record_sink.cpp

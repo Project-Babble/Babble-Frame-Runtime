@@ -45,6 +45,9 @@ int main(int argc, char **argv) {
         {"/sources/eye/rate_divisor", "Eye Tracking Rate",
          "A share of the eye camera rate. Lower rates save battery.", "", {1, 2, 3}, 1,
          false, false, {"1:1", "1:2", "1:3"}},
+        {"/pipelines/gaze/smoothing", "Gaze Smoothing",
+         "Steadies the gaze. Stronger smoothing adds a little lag to fast eye movements.", "", {0, 1, 2, 3}, 0,
+         false, false, {"Off", "Low", "Medium", "High"}},
         {"/sinks/camera_stream/active", "Camera Stream",
          "Stream camera frames on TCP 9099 for diagnostics. Turns off after a restart.", "", {0, 1}, 1, true, true},
     };
@@ -64,6 +67,18 @@ int main(int argc, char **argv) {
     // This eye is half closed and the calibration is not complete.
     tracking.eyes[1] = {true, true, -21, 5, 0.35, 0, true, 0.251, false, 0, 0, false, 0};
     tracking.link = {true, true, "lan", "Demo PC", "192.0.2.10", 3.6};
+    // The output modules as main.cpp fills them from the module blocks in defaults.json.
+    const ModuleOption native_target{"/sinks/vrc_native/target", "VRChat On", false, false,
+                                     {"\"auto\"", "\"pc\"", "\"frame\""}, {"Auto", "PC", "Frame"}, "\"auto\""};
+    const ModuleOption osc_port{"/sinks/babble_osc/port", "Port", true, true, {}, {}, "8888"};
+    tracking.outputs = {
+        {"vrcft", "VRCFaceTracking", "The Babble module in VRCFaceTracking on your PC, found on the network by itself.",
+         true, true, "Linked to Demo PC via LAN", {}},
+        {"vrc_native", "VRChat Native", "Straight into VRChat's own face tracking, without VRCFaceTracking.", false,
+         false, "", {native_target}},
+        {"babble_osc", "Babble OSC",
+         "Baballonia-format OSC to the PC address, or the PC you stream from. Allow its UDP port in Windows Firewall.",
+         false, false, "", {osc_port}}};
     Status paused{true, Worn::No, feed(Health::Paused), feed(Health::Paused)};
     Status fault{true, Worn::Yes, feed(Health::Working, 120),
                  feed(Health::Fault, 0, "cannot connect to dsp_service (is the eye tracking service running?)")};
@@ -85,6 +100,16 @@ int main(int argc, char **argv) {
     native_frame.link = {true, false, "frame", "", "127.0.0.1", -1, true};
     view.render(c, native_frame, choices, std::nullopt);
     save(c, "home_native_frame");
+    // Show Babble OSC as the first output that is on, and VRCFaceTracking with another output on.
+    Status osc_home = tracking;
+    osc_home.link = {true, true, "", "", "192.0.2.10:8888", -1};
+    osc_home.link.osc = true;
+    view.render(c, osc_home, choices, std::nullopt);
+    save(c, "home_osc");
+    Status more = tracking;
+    more.link.more = 1;
+    view.render(c, more, choices, std::nullopt);
+    save(c, "home_more");
     view.render(c, tracking, choices, Point{84, DashboardView::kHeight - 84.f});
     save(c, "home_cog_hover");
     view.render(c, paused, choices, std::nullopt);
@@ -129,10 +154,14 @@ int main(int argc, char **argv) {
     // In release builds, the USB tracker is the only mouth source, so there is no Frunk/USB row and no mouth rate.
     Status release = usb;
     release.mouth_source_selectable = false;
-    view.render(c, release, {choices[1]}, std::nullopt);
+    view.render(c, release, {choices[1], choices[2]}, std::nullopt);
     save(c, "settings_release");
     view.set_page(DashboardView::Page::Cameras);
-    view.render(c, usb, choices, Point{600, 340});   // The pointer is on the second camera.
+    Choice mirror{"/pipelines/face/mirror", "Mirror Image",
+                  "Turn off if left and right mouth movements are swapped on your avatar.", "", {0, 1}, 1, true};
+    mirror.cameras = true;
+    choices.push_back(mirror);
+    view.render(c, usb, choices, Point{600, 444});   // The pointer is on the second camera.
     save(c, "cameras");
     Status none = usb;
     none.cameras.clear();
@@ -173,7 +202,7 @@ int main(int argc, char **argv) {
     }
     diag.verbose_minutes_left = 0;
     diag.last_diagnostics.clear();
-    choices[2].value = 0;
+    choices[3].value = 0;
     view.render(c, diag, choices, Point{1100, 222});
     save(c, "diagnostics_off");
     view.set_page(DashboardView::Page::Settings);
@@ -181,6 +210,46 @@ int main(int argc, char **argv) {
     view.click({1100, 666});
     view.render(c, tracking, choices, std::nullopt);
     save(c, "settings_restart_confirmation");
+
+    // Show the Outputs page with the PC address found from Steam Link, typed in, and rejected.
+    view.set_page(DashboardView::Page::Outputs);
+    Status outs = tracking;
+    view.render(c, outs, choices, std::nullopt);
+    save(c, "outputs");
+    outs.pc_address = "192.0.2.10";
+    outs.outputs[1].on = true;
+    outs.outputs[1].ok = true;
+    outs.outputs[1].status = "Sending to VRChat at 192.0.2.10";
+    outs.outputs[2].on = true;
+    outs.outputs[2].ok = true;
+    outs.outputs[2].status = "Sending to 192.0.2.10:8888";
+    view.render(c, outs, choices, std::nullopt);
+    save(c, "outputs_address");
+    outs.output_error = "Port: abc is not a number";
+    view.render(c, outs, choices, std::nullopt);
+    save(c, "outputs_error");
+    // Without an address or a Steam Link session, the outputs that are on wait.
+    Status waiting = tracking;
+    waiting.outputs[0].ok = false;
+    waiting.outputs[0].status = "Searching for VRCFaceTracking\u2026";
+    waiting.outputs[1].on = true;
+    waiting.outputs[1].status = "Waiting for a Steam Link session";
+    waiting.outputs[1].options[0].value = "\"pc\"";
+    waiting.outputs[2].on = true;
+    waiting.outputs[2].status = "Set a PC address, or stream with Steam Link";
+    view.render(c, waiting, choices, std::nullopt);
+    save(c, "outputs_waiting");
+    // VRChat Native on this headset, with the other outputs off.
+    Status frame_only = tracking;
+    frame_only.outputs[0].on = false;
+    frame_only.outputs[0].ok = false;
+    frame_only.outputs[0].status.clear();
+    frame_only.outputs[1].on = true;
+    frame_only.outputs[1].ok = true;
+    frame_only.outputs[1].status = "Sending to VRChat on this headset";
+    frame_only.outputs[1].options[0].value = "\"frame\"";
+    view.render(c, frame_only, choices, std::nullopt);
+    save(c, "outputs_frame");
 
     // Measure the render cost for each redraw on the dashboard thread.
     {

@@ -2,6 +2,7 @@
 
 #include "camera/tracking_source.h"
 #include "core/threading.h"
+#include "model/gaze_sample.h"
 #include "platform/eye_server_client.h"
 #include "sink/sink.h"
 
@@ -35,6 +36,7 @@ public:
         nlohmann::json context = nlohmann::json::object();   // The sink records this context without changes.
         nlohmann::json routine_def;                          // The routine definition of the app, or null if none.
         bool valve_eye = false;                              // If true, record the samples of the Valve eye service.
+        nlohmann::json gaze;   // The settings of the gaze pipeline, or null if the session records no gaze.
     };
     struct StartResult {
         bool ok = false;
@@ -88,6 +90,12 @@ public:
     static constexpr size_t kEyeRecordBytes = 88;
     static void encode_eye_record(const eye_server::Sample &s, uint8_t out[kEyeRecordBytes]);
 
+    // Any thread can call this to queue an update of the gaze pipeline for gaze.bin.
+    void add_gaze_sample(const gaze::Sample &g);
+
+    static constexpr size_t kGazeRecordBytes = 44;
+    static void encode_gaze_record(const gaze::Sample &g, uint8_t out[kGazeRecordBytes]);
+
 private:
     struct Stamp {
         uint64_t capture_ns = 0, seq = 0;
@@ -103,6 +111,7 @@ private:
     void run();
     bool write_items(Channel &ch);
     void write_eye_samples();
+    void write_gaze_samples();
     bool open_encoder(Channel &ch);
     void finish_session(int encoder_wait_ms);
     void write_manifest(const std::string &status, const std::string &error, const std::string &stop_reason);
@@ -145,6 +154,14 @@ private:
     uint64_t eye_dropped_ = 0;   // eye_mutex_ protects this value.
     FILE *eye_file_ = nullptr;   // Only the writer thread uses this.
     uint64_t eye_records_ = 0;   // Only the writer thread uses this.
+
+    // add_gaze_sample() queues the gaze updates in the same way.
+    std::atomic<bool> gaze_accepting_{false};
+    std::mutex gaze_mutex_;
+    std::vector<gaze::Sample> gaze_pending_;
+    uint64_t gaze_dropped_ = 0;   // gaze_mutex_ protects this value.
+    FILE *gaze_file_ = nullptr;   // Only the writer thread uses this.
+    uint64_t gaze_records_ = 0;   // Only the writer thread uses this.
 
     mutable std::mutex channels_mutex_;
     std::map<std::string, std::unique_ptr<Channel>> channels_;

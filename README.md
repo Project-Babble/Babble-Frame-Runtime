@@ -46,9 +46,9 @@ To uninstall, run `~/.local/share/babble-frame-runtime/uninstall.sh`.
 
 ## Build profiles
 
-`-DBABBLE_PROFILE=release` (what releases ship) builds the USB Babble tracker as the only mouth and VRCFaceTracking as
-the only output; it leaves out the Frame's front-port mouth cameras and their camera arbiter, the VRChat-native output,
-the visualizer launcher, the camera-stream switch and the unused models. The default, `dev`, builds everything including unfinished features. 
+`-DBABBLE_PROFILE=release` (what releases ship) builds the USB Babble tracker as the only mouth; it leaves out the
+Frame's front-port mouth cameras and their camera arbiter, the visualizer launcher, the camera-stream switch and the
+unused models. Every profile has all three outputs: VRCFaceTracking, VRChat Native and Babble OSC. The default, `dev`, builds everything including unfinished features. 
 ## License
 
 Licensed under the [GNU General Public License v3.0](LICENSE). Third-party code in `third_party/` keeps its own license.

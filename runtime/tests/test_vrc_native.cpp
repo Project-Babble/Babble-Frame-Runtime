@@ -80,34 +80,6 @@ TEST_CASE("signals map onto VRCFaceTracking's blob as its module maps them") {
     CHECK(b[14 + 36] == 0);     // This is LipFunnelUpperRight, and mouthFunnel is not set.
 }
 
-TEST_CASE("the streaming PC comes from the latest Steam Link session") {
-    const std::string log =
-        "Tue Sep 29 2026 20:34:29.000 [Info] - UDPServerAddresses:\n"
-        "Tue Sep 29 2026 20:34:29.000 [Info] - \t192.168.0.149  \n"
-        "Tue Sep 29 2026 20:34:29.000 [Info] - \t10.35.78.25 *\n"
-        "Tue Sep 29 2026 20:34:29.100 [Info] - Soft AES PERF: 5.07 MByte/s\n"
-        "Tue Sep 29 2026 20:45:05.796 [Info] - UDPServerAddresses:\n"
-        "Tue Sep 29 2026 20:45:05.796 [Info] - \t127.0.0.1  \n"
-        "Tue Sep 29 2026 20:45:05.796 [Info] - \t192.168.0.149 *\n"
-        "Tue Sep 29 2026 20:45:05.796 [Info] - \t10.35.78.25  \n"
-        "Tue Sep 29 2026 20:45:05.815 [Info] - Soft AES PERF: 5.07 MByte/s\n"
-        "Tue Sep 29 2026 20:45:06.180 [Info] - SVLDataLinkTransferUDP::SetPeer 10.35.78.1 -> 10.35.78.25 (Connect: 0)\n";
-    CHECK(vrc_native::streaming_pc(log) == "192.168.0.149");
-
-    // Without a marked address, the result is the latest link peer.
-    CHECK(vrc_native::streaming_pc("x [Info] - UDPServerAddresses:\nx [Info] - \t192.168.0.149  \n"
-                                   "x [Info] - SVLDataLinkTransferUDP::SetPeer 10.35.78.1 -> 10.35.78.25 (Connect: 0)\n") ==
-          "10.35.78.25");
-    CHECK_FALSE(vrc_native::streaming_pc("nothing to see here\n"));
-    CHECK_FALSE(vrc_native::streaming_pc(""));
-}
-
-TEST_CASE("the latest Steam Link session's process id is found") {
-    CHECK(vrc_native::session_pid("x [Info] - vrlink 2.17.10 startup with PID=1711175, config=/x\n"
-                                  "y [Info] - vrlink 2.17.10 startup with PID=3121094, config=/x\n") == 3121094);
-    CHECK_FALSE(vrc_native::session_pid("no sessions\n"));
-}
-
 namespace {
 
 int udp_receiver(sockaddr_in *addr) {
@@ -220,4 +192,51 @@ TEST_CASE("auto targets the Steam Link PC while its session runs, else this head
     CHECK(st.address == "127.0.0.1");
     sink->stop();
     std::filesystem::remove_all(dir);
+}
+
+TEST_CASE("the PC address of the Outputs page comes before Steam Link, and a fixed host before both") {
+    sockaddr_in addr{};
+    const int rx = udp_receiver(&addr);
+    json threads = json::object();
+    ExpressionState state;
+    StatsRegistry stats;
+    const SignalId jaw = state.add_signal("jawOpen");
+    uint64_t t = 7;
+    auto status_after_send = [&](VrcNativeSink *native) {
+        uint8_t buf[256];
+        while (receive(rx, buf, sizeof(buf), 50) > 0) {}   // Drop what the last sink sent.
+        std::pair<SignalId, Signal> u{jaw, Signal{0.5f, 1.0f, ++t}};
+        state.update(std::span(&u, 1));
+        CHECK(receive(rx, buf, sizeof(buf), 2000) == 132);
+        // The sink counts a send after sendto() returns, so the packet can arrive before the status changes.
+        for (int i = 0; i < 100 && native->status().sent < 1; i++)
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        return native->status();
+    };
+
+    auto sink = make_sink(json{{"type", "vrc_native"}, {"port", ntohs(addr.sin_port)}, {"pc_address", "127.0.0.1"},
+                               {"steam_link_log", "/nonexistent/vrlink.txt"}},
+                          SinkDeps{"vrc_native", threads, state, stats});
+    REQUIRE(sink->start());
+    auto st = status_after_send(static_cast<VrcNativeSink *>(sink.get()));
+    CHECK(st.kind == "pc");
+    CHECK(st.address == "127.0.0.1");
+    sink->stop();
+
+    // "frame" means VRChat on this headset, whatever the PC address is.
+    sink = make_sink(json{{"type", "vrc_native"}, {"port", ntohs(addr.sin_port)}, {"pc_address", "10.1.2.3"},
+                          {"target", "frame"}},
+                     SinkDeps{"vrc_native", threads, state, stats});
+    REQUIRE(sink->start());
+    CHECK(status_after_send(static_cast<VrcNativeSink *>(sink.get())).kind == "frame");
+    sink->stop();
+
+    // A bad PC address is ignored.
+    sink = make_sink(json{{"type", "vrc_native"}, {"port", ntohs(addr.sin_port)}, {"host", "127.0.0.1"},
+                          {"pc_address", "not an ip"}},
+                     SinkDeps{"vrc_native", threads, state, stats});
+    REQUIRE(sink->start());
+    CHECK(status_after_send(static_cast<VrcNativeSink *>(sink.get())).kind == "host");
+    sink->stop();
+    close(rx);
 }

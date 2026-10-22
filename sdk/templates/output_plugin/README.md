@@ -44,6 +44,10 @@ ending in `.so` is used as a path. Restart the runtime and its log shows
 `sink json_out: plugin udp_json 1.0 loaded from ...`. Check the output with
 `nc -ul 9500` (or any UDP listener).
 
+To show the plugin on the Outputs page of the Babble tab, with an on/off switch and its own settings, give the entry
+an `"output"` id and a `"module"` block, and turn it on in `"outputs"`
+(see `docs/output-modules.md`, "Output modules and the Outputs page").
+
 ## The contract in short
 
 See `sdk/include/babble/output_plugin.h` and `docs/output-modules.md` for the full reference.

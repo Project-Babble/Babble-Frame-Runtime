@@ -171,12 +171,16 @@ LinkSink::LinkSink(const nlohmann::json &cfg, SinkDeps deps)
 
     path_order_ = cfg.value("path_order", std::vector<std::string>{"dongle", "usb", "lan"});
     interface_kinds_ = cfg.value("interfaces", std::map<std::string, std::string>{{"wlanap", "dongle"}, {"usb0", "usb"}});
-    for (const auto &h : cfg.value("hosts", std::vector<std::string>{})) {
+    // The PC address of the Outputs page is one more host, for networks where the broadcasts do not arrive.
+    auto hosts = cfg.value("hosts", std::vector<std::string>{});
+    if (const std::string pc = cfg.value("pc_address", ""); !pc.empty())
+        hosts.push_back(pc);
+    for (const auto &h : hosts) {
         in_addr a{};
-        if (inet_pton(AF_INET, h.c_str(), &a) == 1)
-            hosts_.push_back(ntohl(a.s_addr));
-        else
+        if (inet_pton(AF_INET, h.c_str(), &a) != 1)
             LOG.warn("%s: ignoring host '%s' (not an IPv4 address)", name_.c_str(), h.c_str());
+        else if (std::find(hosts_.begin(), hosts_.end(), ntohl(a.s_addr)) == hosts_.end())
+            hosts_.push_back(ntohl(a.s_addr));
     }
     const auto beacon_s = cfg.value("beacon_s", std::vector<double>{2, 5});
     if (beacon_s.size() == 2) {

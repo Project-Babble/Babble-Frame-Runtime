@@ -129,9 +129,11 @@ void DashboardView::render(Canvas &c, const Status &status, const std::vector<Ch
         render_home(c, status);
         render_link(c, status.link, render_visualizer_button(c, status.visualizer) - 32);
     } else if (page_ == Page::Cameras) {
-        render_cameras(c, status);
+        render_cameras(c, choices, status);
     } else if (page_ == Page::Diagnostics) {
         render_diagnostics(c, choices, status);
+    } else if (page_ == Page::Outputs) {
+        render_outputs(c, status);
     } else {
         render_settings(c, choices, status);
     }
@@ -272,10 +274,14 @@ void DashboardView::render_link(Canvas &c, const LinkReading &link, float right)
     c.fill_circle(x + dot_r, y, dot_r, link.linked && !link.no_data && !link.restart ? kGreen : kAmber);
     const float label_x = x + 2 * dot_r + 14;
     const float base = y + medium_.cap_height(px) / 2;
-    const char *label = link.native ? "VRChat" : "PC";
+    const char *label = link.native ? "VRChat" : link.osc ? "OSC" : "PC";
     medium_.draw(c, label_x, base, label, px, kText);
     std::string text;
-    if (link.native) {
+    if (link.osc) {
+        text = link.address.empty() ? "Babble OSC, set a PC address" : "Babble OSC to " + link.address;
+        if (!link.address.empty() && !link.linked)
+            text += "  \u00b7  no data";
+    } else if (link.native) {
         const std::string where = link.path == "pc"      ? "native, on the PC  \u00b7  " + link.address
                                   : link.path == "frame" ? std::string("native, on this headset")
                                   : link.path.empty()    ? std::string("native, waiting for Steam Link")
@@ -299,8 +305,11 @@ void DashboardView::render_link(Canvas &c, const LinkReading &link, float right)
     } else {
         text = "Searching for VRCFaceTracking\u2026";
     }
+    if (link.more > 0)
+        text += "  \u00b7  +" + std::to_string(link.more) + " more";
     const float text_x = label_x + medium_.measure(label, px) + 16;
     regular_.draw(c, text_x, base, fit(regular_, text, px, right - text_x), px, link.linked ? kText : kMuted);
+    hits_.push_back({Hit::OpenOutputs, {x - 12, y - 40, right - x + 12, 80}});
 }
 
 void DashboardView::render_switch(Canvas &c, Rect r, bool on, bool hover, std::optional<Color> on_color) {
@@ -354,26 +363,39 @@ void DashboardView::render_settings(Canvas &c, const std::vector<Choice> &choice
     const float W = float(c.width());
     render_back(c, "Settings");
     render_restart_button(c);
-    hits_.push_back({Hit::OpenDiagnostics, render_button(c, W - kMargin, 42, "Diagnostics", false)});
+    const Rect diag = render_button(c, W - kMargin, 42, "Diagnostics", false);
+    hits_.push_back({Hit::OpenDiagnostics, diag});
+    if (!s.outputs.empty())
+        hits_.push_back({Hit::OpenOutputs, render_button(c, diag.x - 16, 42, "Outputs", false)});
+
+    // The rows get shorter when there are many, so that they stay above the restart button.
+    const bool selectable = s.mouth_source_selectable;
+    const bool usb = !selectable || s.mouth_source == "usb";
+    size_t rows = selectable ? 1 : 0;
+    for (const Choice &ch : choices)
+        rows += !ch.diagnostics && !ch.cameras;
+    const float avail = float(c.height()) - 130 - 160 - (usb ? 84 : 0);
+    const float row_h = rows ? std::clamp(std::floor(avail / float(rows)), 92.0f, 124.0f) : 124;
+    const float d = (124 - row_h) / 2;
 
     float y = 160;
     for (size_t i = 0; i < choices.size(); i++) {
         const Choice &ch = choices[i];
-        if (ch.diagnostics)
+        if (ch.diagnostics || ch.cameras)
             continue;
         if (ch.boolean) {
-            render_switch_row(c, y, i, ch);
-            y += 124;
+            render_switch_row(c, y, i, ch, row_h);
+            y += row_h;
             continue;
         }
-        const float tx = render_block(c, y, Icon::Rate);
+        const float tx = render_block(c, y, Icon::Rate, row_h);
         const float seg_w = 128, seg_h = 64, pad = 4;
         const float ctl_w = seg_w * float(ch.options.size()) + 2 * pad;
-        const Rect ctl{W - kMargin - 16 - ctl_w, y + 26, ctl_w, seg_h + 2 * pad};
+        const Rect ctl{W - kMargin - 16 - ctl_w, y + 26 - d, ctl_w, seg_h + 2 * pad};
         const auto live = s.choice_hints.find(ch.id);
         const std::string &hint = live != s.choice_hints.end() ? live->second : ch.hint;
-        medium_.draw(c, tx, y + 48, fit(medium_, ch.label, 26, ctl.x - tx - 24), 26, kText);
-        regular_.draw(c, tx, y + 83, fit(regular_, hint, 21, ctl.x - tx - 24), 21, kMuted);
+        medium_.draw(c, tx, y + 48 - d, fit(medium_, ch.label, 26, ctl.x - tx - 24), 26, kText);
+        regular_.draw(c, tx, y + 83 - d, fit(regular_, hint, 21, ctl.x - tx - 24), 21, kMuted);
         c.fill_rect(ctl, kPanel, 4);
         for (size_t k = 0; k < ch.options.size(); k++) {
             const double v = ch.options[k];
@@ -387,24 +409,22 @@ void DashboardView::render_settings(Canvas &c, const std::vector<Choice> &choice
                          seg.y + (seg.h + medium_.cap_height(px)) / 2, label, px, selected ? kText : kMuted);
             hits_.push_back({Hit::Option, seg, i, v});
         }
-        y += 124;
+        y += row_h;
     }
 
     // Show the mouth source if there is a choice, and for USB a link to the camera page.
-    const bool selectable = s.mouth_source_selectable;
-    const bool usb = !selectable || s.mouth_source == "usb";
     if (selectable) {
-        const float tx = render_block(c, y, Icon::Mouth);
-        const float ctl_x = render_segments(c, W - kMargin - 16, y + 26, {"Headset", "USB"}, usb ? 1 : 0,
+        const float tx = render_block(c, y, Icon::Mouth, row_h);
+        const float ctl_x = render_segments(c, W - kMargin - 16, y + 26 - d, {"Headset", "USB"}, usb ? 1 : 0,
                                            [&](size_t k, const Rect &r) {
                                                Hit h{Hit::MouthSource, r};
                                                h.text = k == 1 ? "usb" : "frunk";
                                                hits_.push_back(h);
                                            });
-        medium_.draw(c, tx, y + 48, "Mouth Tracking Source", 26, kText);
-        regular_.draw(c, tx, y + 83,
+        medium_.draw(c, tx, y + 48 - d, "Mouth Tracking Source", 26, kText);
+        regular_.draw(c, tx, y + 83 - d,
                       fit(regular_, "Use the headset cameras or a USB camera.", 21, ctl_x - tx - 24), 21, kMuted);
-        y += 124;
+        y += row_h;
     }
     if (usb) {
         const Rect row{kMargin, y + 4, W - 2 * kMargin, 80};
@@ -606,12 +626,105 @@ void DashboardView::render_diagnostics(Canvas &c, const std::vector<Choice> &cho
     }
 }
 
+float DashboardView::render_text_field(Canvas &c, float right, float y, const std::string &id, const std::string &shown) {
+    const Rect r = render_button(c, right, y, shown, false, true);
+    Hit h{Hit::EditText, r};
+    h.text = id;
+    hits_.push_back(h);
+    return r.x;
+}
+
+// Draws the PC address and one row for each output module, with its switch, its settings and its status.
+void DashboardView::render_outputs(Canvas &c, const Status &s) {
+    const float W = float(c.width());
+    render_back(c, "Outputs");
+    if (!s.output_error.empty())
+        regular_.draw(c, kMargin, 142, fit(regular_, s.output_error, 21, W - 2 * kMargin), 21, kRed);
+
+    const float bottom = float(c.height()) - 130;   // Keep the corner of the cog clear.
+    const float row_h = std::clamp(std::floor((bottom - 160) / float(s.outputs.size() + 1)), 92.0f, 116.0f);
+    const float d = (124 - row_h) / 2;
+    auto hit_setting = [&](const Rect &r, const std::string &id, const std::string &json) {
+        Hit h{Hit::OutputSetting, r};
+        h.text = id;
+        h.json = json;
+        hits_.push_back(h);
+    };
+
+    float y = 160;
+    {
+        const float tx = render_block(c, y, Icon::Settings, row_h);
+        float left = render_text_field(c, W - kMargin - 16, y + 30 - d, "/pc_address",
+                                       s.pc_address.empty() ? "Steam Link Host" : s.pc_address);
+        if (!s.pc_address.empty()) {
+            const Rect clear = render_button(c, left - 16, y + 30 - d, "Clear", false, true);
+            hit_setting(clear, "/pc_address", "\"\"");
+            left = clear.x;
+        }
+        medium_.draw(c, tx, y + 48 - d, "PC Address", 26, kText);
+        regular_.draw(c, tx, y + 83 - d,
+                      fit(regular_,
+                          s.pc_address.empty() ? "Found from Steam Link. For WiVRn, ALVR or others, enter your PC's IP."
+                                               : "Used instead of the Steam Link host.",
+                          21,
+                          left - tx - 24),
+                      21, kMuted);
+        y += row_h;
+    }
+    for (const OutputModule &m : s.outputs) {
+        if (y + row_h > bottom + 12)
+            break;
+        c.fill_rect({kMargin, y + 4, W - 2 * kMargin, row_h - 12}, kCard, 6);
+        c.fill_circle(kMargin + 42, y + row_h / 2 - 2, 10, !m.on ? kGrey : m.ok ? kGreen : kAmber);
+        const float tx = kMargin + 80;
+        const Rect sw{W - kMargin - 16 - 92, y + 36 - d, 92, 52};
+        const Rect sw_hit{sw.x - 12, y + 4, W - kMargin - (sw.x - 12), row_h - 12};
+        render_switch(c, sw, m.on, hovered(sw_hit));
+        hit_setting(sw_hit, "/outputs/" + m.id, m.on ? "false" : "true");
+        float left = sw_hit.x - 12;
+        for (auto it = m.options.rbegin(); it != m.options.rend(); ++it) {
+            const ModuleOption &o = *it;
+            if (o.text) {
+                left = render_text_field(c, left, y + 30 - d, o.id, o.value) - 16;
+                continue;
+            }
+            const float seg_w = 96, seg_h = 56, pad = 4;
+            const float ctl_w = seg_w * float(o.values.size()) + 2 * pad;
+            const Rect ctl{left - ctl_w, y + 30 - d, ctl_w, seg_h + 2 * pad};
+            c.fill_rect(ctl, kPanel, 4);
+            for (size_t k = 0; k < o.values.size(); k++) {
+                const Rect seg{ctl.x + pad + float(k) * seg_w, ctl.y + pad, seg_w, seg_h};
+                const bool on = o.values[k] == o.value;
+                if (on || hovered(seg))
+                    c.fill_rect(seg, on ? kAccent : kCardHover, 3);
+                const std::string label = k < o.labels.size() ? o.labels[k] : o.values[k];
+                const float px = 22;
+                medium_.draw(c, seg.x + (seg.w - medium_.measure(label, px)) / 2,
+                             seg.y + (seg.h + medium_.cap_height(px)) / 2, label, px, on ? kText : kMuted);
+                hit_setting(seg, o.id, o.values[k]);
+            }
+            left = ctl.x - 16;
+        }
+        medium_.draw(c, tx, y + 48 - d, fit(medium_, m.label, 26, left - tx - 8), 26, kText);
+        const std::string &line = m.on && !m.status.empty() ? m.status : m.hint;
+        regular_.draw(c, tx, y + 83 - d, fit(regular_, line, 21, left - tx - 8), 21, kMuted);
+        y += row_h;
+    }
+}
+
 // Draws the USB camera page with the automatic choice and each camera from the last refresh.
-void DashboardView::render_cameras(Canvas &c, const Status &s) {
+void DashboardView::render_cameras(Canvas &c, const std::vector<Choice> &choices, const Status &s) {
     const float W = float(c.width());
     render_back(c, "USB Camera");
 
     hits_.push_back({Hit::Refresh, render_button(c, W - kMargin, 42, "Refresh", false)});
+
+    float y = 150;
+    for (size_t i = 0; i < choices.size(); i++)   // The camera settings, such as the mirror, come first.
+        if (choices[i].cameras && choices[i].boolean) {
+            render_switch_row(c, y, i, choices[i], 104);
+            y += 104;
+        }
 
     struct Row {
         std::string id, label, detail;
@@ -625,7 +738,6 @@ void DashboardView::render_cameras(Canvas &c, const Status &s) {
     if (selected_missing)
         rows.push_back({s.camera, "Selected camera", s.camera + " \u00b7 not connected"});
 
-    float y = 150;
     const float row_h = 92;
     for (const Row &r : rows) {
         if (y + row_h > float(c.height()) - 150)
@@ -710,8 +822,21 @@ DashboardView::ClickResult DashboardView::click(Point p) {
             break;
         case Hit::Back:
             restart_armed_until_ns_ = 0;
-            page_ = page_ == Page::Cameras || page_ == Page::Diagnostics ? Page::Settings : Page::Home;
+            page_ = page_ == Page::Cameras || page_ == Page::Diagnostics || page_ == Page::Outputs ? Page::Settings
+                                                                                                    : Page::Home;
             out.redraw = true;
+            break;
+        case Hit::OpenOutputs:
+            restart_armed_until_ns_ = 0;
+            page_ = Page::Outputs;
+            out.redraw = true;
+            break;
+        case Hit::OutputSetting:
+            out.output_setting = std::make_pair(h.text, h.json);
+            out.redraw = true;
+            break;
+        case Hit::EditText:
+            out.edit_text = h.text;
             break;
         case Hit::OpenDiagnostics:
             restart_armed_until_ns_ = 0;

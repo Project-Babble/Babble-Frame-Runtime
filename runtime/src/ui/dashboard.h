@@ -110,6 +110,11 @@ private:
     bool visible_ = false;
     std::optional<Point> pointer_;
     int hover_ = -1;   // The value of view_.hit_at(pointer_) at the last draw.
+    // The text setting that the SteamVR keyboard edits, or "" if the keyboard is closed.
+    std::string editing_id_;
+    bool editing_numeric_ = false;
+    void open_keyboard(const std::string &id);
+    void apply_output_setting(const std::string &id, const nlohmann::json &value);   // Call this with mutex_ held.
 };
 
 }

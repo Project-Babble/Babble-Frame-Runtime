@@ -110,3 +110,33 @@ TEST_CASE("per-eye gaze directions convert like frameeyeosc's gaze_angles()") {
     CHECK((*o)[0] == doctest::Approx(10.0 / 45));
     CHECK_FALSE(gaze::from_direction(0, 0, 0, 45, false, none));
 }
+
+TEST_CASE("gaze smoothing is off at level 0, steadies a jump at a level, and starts again on a reset") {
+    gaze::Smoother sm({{1.5, 0.3, 1.0}, {0.8, 0.1, 1.0}});
+    CHECK(sm.levels() == 2);
+    const float rest[4] = {0, 0, 0, 0}, jump[4] = {0.5f, -0.5f, 0.5f, -0.5f};
+    float out[4];
+    sm.apply(jump, out, 0, 0);   // Off passes the values through.
+    CHECK(out[0] == 0.5f);
+
+    const uint64_t step = 11'111'111;   // 90 Hz.
+    sm.apply(rest, out, 1, step);       // The first sample of a level does not change.
+    CHECK(out[0] == 0.0f);
+    sm.apply(jump, out, 1, 2 * step);
+    CHECK(out[0] > 0.0f);
+    CHECK(out[0] < 0.5f);
+    CHECK(out[1] < 0.0f);
+    CHECK(out[1] > -0.5f);
+    const float low = out[0];
+
+    sm.apply(rest, out, 2, 3 * step);   // A new level starts again from the sample.
+    CHECK(out[0] == 0.0f);
+    sm.apply(jump, out, 2, 4 * step);
+    CHECK(out[0] < low);                // The higher level smooths more.
+
+    sm.reset();
+    sm.apply(jump, out, 2, 5 * step);
+    CHECK(out[0] == 0.5f);
+    sm.apply(rest, out, 3, 6 * step);   // A level without a preset is off.
+    CHECK(out[0] == 0.0f);
+}

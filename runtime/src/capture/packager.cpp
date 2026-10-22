@@ -278,7 +278,7 @@ PackageResult make_package(const fs::path &sdir, const PackagerOptions &o) {
     std::vector<std::string> copy;
     for (const Job &j : jobs)
         copy.push_back(j.stamps);
-    for (const char *f : {"labels.jsonl", "routine.json", "valve_eye.bin"})
+    for (const char *f : {"labels.jsonl", "routine.json", "valve_eye.bin", "gaze.bin"})
         copy.push_back(f);
     for (const auto &f : copy)
         if (fs::exists(sdir / f, ec) && !fs::copy_file(sdir / f, pdir / f, fs::copy_options::overwrite_existing, ec))

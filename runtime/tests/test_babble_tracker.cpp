@@ -288,4 +288,19 @@ TEST_CASE("the mono face pipeline crops the ROI and rotates before resizing") {
     flip->prepare(f, in.data());
     CHECK(in[112 * 224 + 10] == 0.0f);
     CHECK(in[112 * 224 + 213] == 1.0f);
+
+    // The mirror switch flips the same way, and on top of a flip it cancels the flip.
+    auto mirror = make({{"mirror", true}});
+    mirror->prepare(f, in.data());
+    CHECK(in[112 * 224 + 10] == 0.0f);
+    CHECK(in[112 * 224 + 213] == 1.0f);
+    REQUIRE(mirror->set_option("mirror", false));
+    mirror->prepare(f, in.data());
+    CHECK(in[112 * 224 + 10] == 1.0f);
+    CHECK(in[112 * 224 + 213] == 0.0f);
+    CHECK_FALSE(mirror->set_option("mirror", "yes"));
+    auto both = make({{"flip", "h"}, {"mirror", true}});
+    both->prepare(f, in.data());
+    CHECK(in[112 * 224 + 10] == 1.0f);
+    CHECK(in[112 * 224 + 213] == 0.0f);
 }
