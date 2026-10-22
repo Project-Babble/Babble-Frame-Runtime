@@ -127,7 +127,7 @@ void Dashboard::open_keyboard(const std::string &id) {
     vr_->with_vr([&] {
         err = vr::VROverlay()->ShowKeyboardForOverlay(main_, vr::k_EGamepadTextInputModeNormal,
                                                        vr::k_EGamepadTextInputLineModeSingleLine,
-                                                       vr::KeyboardFlag_Minimal, label.c_str(), 64, current.c_str(), 0);
+                                                       vr::KeyboardFlag_Modal, label.c_str(), 64, current.c_str(), 0);
     });
     if (err != vr::VROverlayError_None) {
         LOG.warn("dashboard: cannot open the keyboard for %s (%d)", id.c_str(), int(err));
