@@ -254,8 +254,12 @@ std::vector<ui::Choice> dashboard_choices(const json &cfg) {
         c.hint = row.value("hint", "");
         c.unit = row.value("unit", "");
         c.boolean = cfg[ptr].is_boolean();
-        c.diagnostics = row.value("page", "settings") == "diagnostics";
-        c.cameras = row.value("page", "settings") == "cameras";
+        const std::string page = row.value("page", "settings");
+        c.page = page == "eye"           ? ui::ChoicePage::Eye
+                 : page == "mouth"       ? ui::ChoicePage::Mouth
+                 : page == "cameras"     ? ui::ChoicePage::Cameras
+                 : page == "diagnostics" ? ui::ChoicePage::Diagnostics
+                                         : ui::ChoicePage::Settings;
         c.options = c.boolean ? std::vector<double>{0, 1} : row.value("options", std::vector<double>{});
         c.option_labels = row.value("labels", std::vector<std::string>{});
         c.value = c.boolean ? double(cfg[ptr].get<bool>()) : cfg[ptr].get<double>();
@@ -266,7 +270,12 @@ std::vector<ui::Choice> dashboard_choices(const json &cfg) {
 
 // Returns the declared option of an output module for a setting key, or null if the module has no such option.
 const json *module_option(const json &sink_cfg, const std::string &key) {
-    for (const json &o : section(sink_cfg, "module").value("options", json::array()))
+    // Search the config itself, because a pointer into a copy of the options is not valid after the return.
+    const json &mod = section(sink_cfg, "module");
+    const auto options = mod.find("options");
+    if (options == mod.end() || !options->is_array())
+        return nullptr;
+    for (const json &o : *options)
         if (o.is_object() && o.value("key", "") == key)
             return &o;
     return nullptr;

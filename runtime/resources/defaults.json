@@ -377,6 +377,7 @@
     "settings": [
       {
         "id": "/sources/mouth/process_fps",
+        "page": "mouth",
         "label": "Mouth Tracking Rate",
         "hint": "Lower rates save battery.",
         "unit": "Hz",
@@ -384,6 +385,7 @@
       },
       {
         "id": "/sources/eye/rate_divisor",
+        "page": "eye",
         "label": "Eye Tracking Rate",
         "hint": "A share of the eye camera rate. Lower rates save battery.",
         "options": [1, 2, 3],
@@ -391,6 +393,7 @@
       },
       {
         "id": "/pipelines/gaze/smoothing",
+        "page": "eye",
         "label": "Gaze Smoothing",
         "hint": "Steadies the gaze. Stronger smoothing adds a little lag to fast eye movements.",
         "options": [0, 1, 2, 3],

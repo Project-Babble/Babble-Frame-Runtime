@@ -136,14 +136,16 @@ struct Status {
 };
 
 // A user setting that shows as a row of choices or as a switch, where id is its JSON pointer in the config.
+// The page that a setting shows on.
+enum class ChoicePage { Settings, Eye, Mouth, Cameras, Diagnostics };
+
 struct Choice {
     std::string id, label, hint, unit;
     std::vector<double> options;
     double value = 0;
     bool boolean = false;
-    bool diagnostics = false;
+    ChoicePage page = ChoicePage::Settings;
     std::vector<std::string> option_labels{};   // If set, one label for each option replaces the value and unit.
-    bool cameras = false;                       // The setting shows on the USB camera page.
 };
 
 struct Point {
@@ -154,7 +156,7 @@ struct Point {
 class DashboardView {
 public:
     static constexpr int kWidth = 1200, kHeight = 750, kThumb = 128;
-    enum class Page { Home, Settings, Cameras, Diagnostics, Outputs };
+    enum class Page { Home, Settings, Cameras, Diagnostics, Outputs, Eye, Mouth };
 
     bool load_fonts(const std::filesystem::path &dir);   // Loads NotoSans-Regular.ttf and NotoSans-Medium.ttf.
     bool load_icons(const std::filesystem::path &dir);   // Loads the optional logo PNG files.
@@ -201,7 +203,7 @@ private:
         enum Kind {
             Cog, Back, Option, Toggle, Visualizer, Restart, MouthSource, OpenCameras, Camera, Refresh,
             OpenDiagnostics, Verbose, WriteDiagnostics, CapturePrimary, CaptureRemove, Update, OpenOutputs,
-            OutputSetting, EditText
+            OutputSetting, EditText, OpenEye, OpenMouth
         } kind;
         Rect rect;
         size_t choice = 0;   // The choice index for Option, or the feed index for Toggle.
@@ -211,6 +213,8 @@ private:
     };
     void render_home(Canvas &c, const Status &s);
     void render_settings(Canvas &c, const std::vector<Choice> &choices, const Status &s);
+    void render_eye_page(Canvas &c, const std::vector<Choice> &choices, const Status &s);
+    void render_mouth_page(Canvas &c, const std::vector<Choice> &choices, const Status &s);
     void render_cameras(Canvas &c, const std::vector<Choice> &choices, const Status &s);
     void render_diagnostics(Canvas &c, const std::vector<Choice> &choices, const Status &s);
     void render_outputs(Canvas &c, const Status &s);
@@ -223,7 +227,8 @@ private:
                        bool on_card = false);   // Returns the rect of the button.
     void render_back(Canvas &c, const char *title);
     float render_segments(Canvas &c, float right, float y, const std::vector<std::string> &labels, int selected,
-                          const std::function<void(size_t, const Rect &)> &hit);   // Returns the left edge.
+                          const std::function<void(size_t, const Rect &)> &hit,
+                          float seg_h = 64);   // Returns the left edge.
     void render_cog(Canvas &c);
     void render_switch(Canvas &c, Rect r, bool on, bool hover,
                        std::optional<Color> on_color = std::nullopt);   // on_color replaces the accent colour.
@@ -232,6 +237,14 @@ private:
     void render_link(Canvas &c, const LinkReading &link, float right);
     void render_eye(Canvas &c, float x, float y, const char *name, const EyeReading &e);
     enum class Icon { Mouth, Eye, Rate, Camera, Logs, Document, Settings, Home, Capture, Count };
+    struct RowLayout {
+        float top, row_h;
+    };
+    RowLayout row_layout(const Canvas &c, size_t rows, float below) const;
+    void render_link_row(Canvas &c, float y, float row_h, Icon icon, const std::string &label, const std::string &hint,
+                         Hit::Kind kind);
+    float render_choice_rows(Canvas &c, float y, float row_h, const std::vector<Choice> &choices, ChoicePage page,
+                             const Status &s);
     void render_icon(Canvas &c, Icon icon, float x, float y, Color color);
     float render_block(Canvas &c, float y, Icon icon, float row_h = 124);   // Returns the left edge of the text.
     bool hovered(const Rect &r) const;

@@ -41,15 +41,15 @@ int main(int argc, char **argv) {
 
     std::vector<Choice> choices = {
         {"/sources/mouth/process_fps", "Mouth Tracking Rate", "Lower rates save battery.", "Hz",
-         {30, 60, 90, 120}, 120},
+         {30, 60, 90, 120}, 120, false, ChoicePage::Mouth},
         {"/sources/eye/rate_divisor", "Eye Tracking Rate",
          "A share of the eye camera rate. Lower rates save battery.", "", {1, 2, 3}, 1,
-         false, false, {"1:1", "1:2", "1:3"}},
+         false, ChoicePage::Eye, {"1:1", "1:2", "1:3"}},
         {"/pipelines/gaze/smoothing", "Gaze Smoothing",
          "Steadies the gaze. Stronger smoothing adds a little lag to fast eye movements.", "", {0, 1, 2, 3}, 0,
-         false, false, {"Off", "Low", "Medium", "High"}},
+         false, ChoicePage::Eye, {"Off", "Low", "Medium", "High"}},
         {"/sinks/camera_stream/active", "Camera Stream",
-         "Stream camera frames on TCP 9099 for diagnostics. Turns off after a restart.", "", {0, 1}, 1, true, true},
+         "Stream camera frames on TCP 9099 for diagnostics. Turns off after a restart.", "", {0, 1}, 1, true, ChoicePage::Diagnostics},
     };
     auto feed = [](Health h, double hz = 0, std::string detail = "", bool tracking = true) {
         FeedStatus f;
@@ -141,6 +141,12 @@ int main(int argc, char **argv) {
     choices[0].value = 60;
     view.render(c, tracking, choices, Point{1000, 222});
     save(c, "settings");
+    view.set_page(DashboardView::Page::Eye);
+    view.render(c, tracking, choices, std::nullopt);
+    save(c, "eye");
+    view.set_page(DashboardView::Page::Mouth);
+    view.render(c, tracking, choices, std::nullopt);
+    save(c, "mouth");
 
     // Show the camera row for a USB mouth source, and then its page with two cameras and an active tracker.
     Status usb = tracking;
@@ -150,16 +156,19 @@ int main(int argc, char **argv) {
     usb.camera = "303a:8000:DEMO01";
     usb.active_camera = usb.camera;
     view.render(c, usb, choices, std::nullopt);
-    save(c, "settings_usb");
+    save(c, "mouth_usb");
     // In release builds, the USB tracker is the only mouth source, so there is no Frunk/USB row and no mouth rate.
     Status release = usb;
     release.mouth_source_selectable = false;
+    view.render(c, release, {choices[1], choices[2]}, std::nullopt);
+    save(c, "mouth_release");
+    view.set_page(DashboardView::Page::Settings);
     view.render(c, release, {choices[1], choices[2]}, std::nullopt);
     save(c, "settings_release");
     view.set_page(DashboardView::Page::Cameras);
     Choice mirror{"/pipelines/face/mirror", "Mirror Image",
                   "Turn off if left and right mouth movements are swapped on your avatar.", "", {0, 1}, 1, true};
-    mirror.cameras = true;
+    mirror.page = ChoicePage::Cameras;
     choices.push_back(mirror);
     view.render(c, usb, choices, Point{600, 444});   // The pointer is on the second camera.
     save(c, "cameras");

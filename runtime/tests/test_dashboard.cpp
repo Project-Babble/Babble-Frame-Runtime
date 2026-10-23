@@ -15,8 +15,9 @@ namespace {
 const std::filesystem::path kFonts = std::filesystem::path(BABBLE_RESOURCES_DIR) / "fonts";
 
 std::vector<Choice> rates() {
-    return {{"/sources/mouth/process_fps", "Mouth Tracking Rate", "", "Hz", {30, 60, 90, 120}, 120},
-            {"/sources/eye/rate_divisor", "Eye Tracking Rate", "", "", {1, 2, 3}, 1, false, false, {"1:1", "1:2", "1:3"}}};
+    return {{"/sources/mouth/process_fps", "Mouth Tracking Rate", "", "Hz", {30, 60, 90, 120}, 120, false, ChoicePage::Mouth},
+            {"/sources/eye/rate_divisor", "Eye Tracking Rate", "", "", {1, 2, 3}, 1, false, ChoicePage::Eye,
+             {"1:1", "1:2", "1:3"}}};
 }
 
 FeedStatus on(Health h, double hz = 0) {
@@ -58,6 +59,16 @@ TEST_CASE("the cog opens settings, a choice reports its value, the cog goes back
     CHECK(view.click(cog()).redraw);
     CHECK(view.page() == DashboardView::Page::Settings);
 
+    // The second row of Settings opens Mouth Tracking, and Back goes to Settings.
+    view.render(c, s, choices, std::nullopt);
+    view.click({600, 284 + 62});
+    REQUIRE(view.page() == DashboardView::Page::Mouth);
+    view.render(c, s, choices, std::nullopt);
+    view.click({60, 70});
+    CHECK(view.page() == DashboardView::Page::Settings);
+    view.render(c, s, choices, std::nullopt);
+    view.click({600, 284 + 62});
+
     // Scan the first row for a hit to find its "60 Hz" segment.
     view.render(c, s, choices, std::nullopt);
     std::optional<std::pair<size_t, double>> picked;
@@ -80,9 +91,12 @@ TEST_CASE("the eye rate row offers shares of the camera rate") {
     view.render(c, s, rates(), std::nullopt);
     view.click(cog());
     view.render(c, s, rates(), std::nullopt);
+    view.click({600, 222});   // The first row of Settings opens Eye Tracking.
+    REQUIRE(view.page() == DashboardView::Page::Eye);
+    view.render(c, s, rates(), std::nullopt);
     std::set<double> offered;
     for (float x = 500; x < DashboardView::kWidth; x += 8)
-        if (auto r = view.click({x, 222 + 124}); r.setting && r.setting->first == 1)
+        if (auto r = view.click({x, 222}); r.setting && r.setting->first == 1)
             offered.insert(r.setting->second);
     CHECK(offered == std::set<double>{1, 2, 3});
 }
@@ -161,13 +175,13 @@ TEST_CASE("the settings page switches the mouth source and picks a USB camera on
     REQUIRE(view.load_fonts(kFonts));
     Canvas c(DashboardView::kWidth, DashboardView::kHeight);
     Status s{true, Worn::Yes, on(Health::Working, 120), on(Health::Working, 90)};
-    view.set_page(DashboardView::Page::Settings);
+    view.set_page(DashboardView::Page::Mouth);
 
-    const Point usb_segment{DashboardView::kWidth - 56.f - 4 - 80, 408 + 62};
+    const Point usb_segment{DashboardView::kWidth - 56.f - 4 - 80, 284 + 62};
     s.cameras = {{"303a:8000:ABC", "ETVR openiristracker", "303a:8000"}, {"046d:0825:X", "Webcam", "046d:0825"}};
     DashboardView::ClickResult r;
     SUBCASE("the source is a choice (dev builds)") {
-        // The mouth source row (Frunk | USB) is right-aligned under the two rate rows at y 160 + 2 x 124.
+        // The mouth source row (Frunk | USB) is right-aligned under the mouth rate row at y 160 + 124.
         view.render(c, s, rates(), std::nullopt);
         r = view.click(usb_segment);
         REQUIRE(r.mouth_source);
@@ -176,7 +190,7 @@ TEST_CASE("the settings page switches the mouth source and picks a USB camera on
         // With USB, a camera row opens the camera page and asks for a new list.
         s.mouth_source = "usb";
         view.render(c, s, rates(), std::nullopt);
-        r = view.click({600, 532 + 44});
+        r = view.click({600, 408 + 44});
         CHECK(r.refresh_cameras);
         CHECK(view.page() == DashboardView::Page::Cameras);
     }
@@ -200,9 +214,9 @@ TEST_CASE("the settings page switches the mouth source and picks a USB camera on
     CHECK(r.camera->empty());   // An empty value is Automatic.
     CHECK(view.click({DashboardView::kWidth - 56.f - 60, 74}).refresh_cameras);
 
-    // Back goes to Settings and not to the front page.
+    // Back goes to Mouth Tracking and not to the front page.
     view.click({60, 70});
-    CHECK(view.page() == DashboardView::Page::Settings);
+    CHECK(view.page() == DashboardView::Page::Mouth);
 }
 
 TEST_CASE("the diagnostics page switches verbose logging and asks for a file") {
@@ -309,7 +323,7 @@ TEST_CASE("the restart button on the settings page needs a second click") {
     view.render(c, s, rates(), std::nullopt);
     view.click({60, 70});
     s.mouth_source = "usb";
-    for (const Point leave : {cog(), Point{1084, 74}, Point{600, 576}}) {
+    for (const Point leave : {cog(), Point{1084, 74}, Point{600, 284 + 62}}) {
         view.set_page(DashboardView::Page::Settings);
         view.render(c, s, rates(), std::nullopt);
         CHECK_FALSE(view.click(button).restart);
@@ -317,7 +331,7 @@ TEST_CASE("the restart button on the settings page needs a second click") {
         view.render(c, s, rates(), std::nullopt);
         view.click(leave);
         CHECK_FALSE(view.restart_armed(babble::mono_ns()));
-        if (view.page() == DashboardView::Page::Cameras || view.page() == DashboardView::Page::Diagnostics) {
+        if (view.page() == DashboardView::Page::Mouth || view.page() == DashboardView::Page::Diagnostics) {
             view.render(c, s, rates(), std::nullopt);
             CHECK(view.click(cog()).redraw);   // This is the Dashboard button in the footer.
             CHECK(view.page() == DashboardView::Page::Home);
@@ -409,7 +423,7 @@ TEST_CASE("an on/off setting shows as a switch that reports the flipped value") 
     auto choices = rates();
     Choice force{"/sinks/camera_stream/active", "Camera stream", "", "", {0, 1}, 0};
     force.boolean = true;
-    force.diagnostics = true;
+    force.page = ChoicePage::Diagnostics;
     choices.push_back(force);
     Status s{true, Worn::Yes, on(Health::Working, 120), on(Health::Working, 90)};
     view.render(c, s, choices, std::nullopt);
@@ -448,15 +462,11 @@ TEST_CASE("the outputs page switches modules, picks their settings and asks for 
     osc.options.push_back({"/sinks/babble_osc/port", "Port", true, true, {}, {}, "8888"});
     s.outputs = {link, native, osc};
 
-    // Settings has an Outputs button next to Diagnostics, and Back goes to Settings.
-    bool opened = false;
-    for (float x = DashboardView::kWidth - 56.f; x > 600 && !opened; x -= 8) {
-        view.set_page(DashboardView::Page::Settings);
-        view.render(c, s, rates(), std::nullopt);
-        view.click({x, 74});
-        opened = view.page() == DashboardView::Page::Outputs;
-    }
-    REQUIRE(opened);
+    // The first row of Settings opens Outputs, and Back goes to Settings.
+    view.set_page(DashboardView::Page::Settings);
+    view.render(c, s, rates(), std::nullopt);
+    view.click({DashboardView::kWidth / 2.f, 200});
+    REQUIRE(view.page() == DashboardView::Page::Outputs);
     view.render(c, s, rates(), std::nullopt);
 
     // Scan each row from the right for what its controls report.
@@ -499,14 +509,14 @@ TEST_CASE("the outputs page switches modules, picks their settings and asks for 
     CHECK(view.page() == DashboardView::Page::Settings);
 }
 
-TEST_CASE("a camera setting shows as a switch on the USB camera page and not on Settings") {
+TEST_CASE("a camera setting shows as a switch on the USB camera page and not on Mouth Tracking") {
     DashboardView view;
     REQUIRE(view.load_fonts(kFonts));
     Canvas c(DashboardView::kWidth, DashboardView::kHeight);
     auto choices = rates();
     Choice mirror{"/pipelines/face/mirror", "Mirror Image", "", "", {0, 1}, 1};
     mirror.boolean = true;
-    mirror.cameras = true;
+    mirror.page = ChoicePage::Cameras;
     choices.push_back(mirror);
     Status s{true, Worn::Yes, on(Health::Working, 120), on(Health::Working, 90)};
     s.mouth_source = "usb";
@@ -522,7 +532,10 @@ TEST_CASE("a camera setting shows as a switch on the USB camera page and not on 
     REQUIRE(r.camera);
     CHECK(r.camera->empty());
 
-    view.set_page(DashboardView::Page::Settings);
+    view.set_page(DashboardView::Page::Mouth);
     view.render(c, s, choices, std::nullopt);
-    CHECK_FALSE(view.click({DashboardView::kWidth - 56.f - 46, 160 + 2 * 124 + 62}).setting);
+    for (float y = 150; y < DashboardView::kHeight; y += 10) {
+        r = view.click({DashboardView::kWidth - 56.f - 46, y});
+        CHECK_FALSE((r.setting && r.setting->first == 2));
+    }
 }
