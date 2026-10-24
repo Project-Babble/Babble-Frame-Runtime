@@ -293,14 +293,17 @@
       "output": "babble_osc",
       "module": {
         "label": "Babble OSC",
-        "hint": "Baballonia-format OSC to the PC address, or the PC you stream from. Allow its UDP port in Windows Firewall.",
+        "hint": "Baballonia-format OSC to the PC address, the PC you stream from, or this headset. Allow its UDP port in Windows Firewall.",
         "order": 2,
         "uses_pc_address": true,
         "options": [
+          { "key": "target", "label": "Send To", "kind": "choice", "values": ["auto", "pc", "frame"],
+            "labels": ["Auto", "PC", "Frame"] },
           { "key": "port", "label": "Port", "kind": "text", "numeric": true, "validate": "port" }
         ]
       },
       "thread": "osc",
+      "target": "auto",
       "host": "",
       "port": 8888,
       "prefix": "",

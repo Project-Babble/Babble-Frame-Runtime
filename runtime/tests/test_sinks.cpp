@@ -119,6 +119,11 @@ TEST_CASE("babble_osc sends Baballonia OSC to the PC address, and waits without 
     CHECK(BabbleOscSink::choose("", "10.0.0.2", "10.0.0.3") == Pick{{"10.0.0.2", "pc_address"}});
     CHECK(BabbleOscSink::choose("", "", "10.0.0.3") == Pick{{"10.0.0.3", "steam_link"}});
     CHECK(BabbleOscSink::choose("", "", std::nullopt) == std::nullopt);
+    // Target "frame" sends to this headset over a PC address, and "auto" uses the headset when no PC is known.
+    CHECK(BabbleOscSink::choose("", "10.0.0.2", "10.0.0.3", "frame") == Pick{{"127.0.0.1", "frame"}});
+    CHECK(BabbleOscSink::choose("10.0.0.1", "", std::nullopt, "frame") == Pick{{"10.0.0.1", "host"}});
+    CHECK(BabbleOscSink::choose("", "", "10.0.0.3", "auto") == Pick{{"10.0.0.3", "steam_link"}});
+    CHECK(BabbleOscSink::choose("", "", std::nullopt, "auto") == Pick{{"127.0.0.1", "frame"}});
 
     int rx = socket(AF_INET, SOCK_DGRAM, 0);
     sockaddr_in addr{};
@@ -155,8 +160,8 @@ TEST_CASE("babble_osc sends Baballonia OSC to the PC address, and waits without 
     CHECK(memcmp(buf, expect, en) == 0);
     sink->stop();
 
-    // Without an address or a Steam Link session, the module runs but sends nothing.
-    auto idle = make_sink(json{{"type", "babble_osc"}, {"port", ntohs(addr.sin_port)},
+    // With target "pc" and without an address or a Steam Link session, the module runs but sends nothing.
+    auto idle = make_sink(json{{"type", "babble_osc"}, {"port", ntohs(addr.sin_port)}, {"target", "pc"},
                                {"steam_link_log", "/nonexistent/vrlink.txt"}},
                           SinkDeps{"babble_osc", threads, state, stats});
     REQUIRE(idle->start());

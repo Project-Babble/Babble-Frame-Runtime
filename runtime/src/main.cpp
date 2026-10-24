@@ -1378,7 +1378,9 @@ int main(int argc, char **argv) {
                     const auto os = o->status();
                     const std::string to = os.kind.empty() ? "" : os.address + ":" + std::to_string(os.port);
                     m.ok = !os.kind.empty() && sending(os.sent);
-                    m.status = to.empty() ? "Set a PC address, or stream with Steam Link" : "Sending to " + to;
+                    m.status = to.empty()             ? "Set a PC address, or stream with Steam Link"
+                               : os.kind == "frame" ? "Sending to this headset (" + to + ")"
+                                                    : "Sending to " + to;
                     if (!st.link.available) {
                         st.link.available = st.link.osc = true;
                         st.link.linked = m.ok;

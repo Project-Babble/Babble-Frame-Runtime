@@ -74,6 +74,8 @@ int main(int argc, char **argv) {
     // The output modules as main.cpp fills them from the module blocks in defaults.json.
     const ModuleOption native_target{"/sinks/vrc_native/target", "VRChat On", false, false,
                                      {"\"auto\"", "\"pc\"", "\"frame\""}, {"Auto", "PC", "Frame"}, "\"auto\""};
+    const ModuleOption osc_target{"/sinks/babble_osc/target", "Send To", false, false,
+                                  {"\"auto\"", "\"pc\"", "\"frame\""}, {"Auto", "PC", "Frame"}, "\"auto\""};
     const ModuleOption osc_port{"/sinks/babble_osc/port", "Port", true, true, {}, {}, "8888"};
     tracking.outputs = {
         {"vrcft", "VRCFaceTracking", "The Babble module in VRCFaceTracking on your PC, found on the network by itself.",
@@ -81,8 +83,9 @@ int main(int argc, char **argv) {
         {"vrc_native", "VRChat Native", "Straight into VRChat's own face tracking, without VRCFaceTracking.", false,
          false, "", {native_target}},
         {"babble_osc", "Babble OSC",
-         "Baballonia-format OSC to the PC address, or the PC you stream from. Allow its UDP port in Windows Firewall.",
-         false, false, "", {osc_port}}};
+         "Baballonia-format OSC to the PC address, the PC you stream from, or this headset. Allow its UDP port in "
+         "Windows Firewall.",
+         false, false, "", {osc_target, osc_port}}};
     Status paused{true, Worn::No, feed(Health::Paused), feed(Health::Paused)};
     Status fault{true, Worn::Yes, feed(Health::Working, 120),
                  feed(Health::Fault, 0, "cannot connect to dsp_service (is the eye tracking service running?)")};
