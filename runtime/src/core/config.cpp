@@ -41,7 +41,7 @@ const char *kind(const json &j) {
 }
 
 // These options can have more than one type, for example "ipd" can be "auto" or a value in metres.
-bool flexible(const std::string &key) { return key == "ipd" || key == "one_euro" || key == "pupil_one_euro"; }
+bool flexible(const std::string &key) { return key == "ipd" || key == "one_euro" || key == "pupil_one_euro_mm"; }
 
 void fix_types_at(json &cfg, const json &defaults, const std::string &path, std::vector<std::string> &fixed) {
     for (auto it = defaults.begin(); it != defaults.end(); ++it) {

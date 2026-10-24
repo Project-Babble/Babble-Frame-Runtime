@@ -151,6 +151,8 @@ TEST_CASE("the SteamVR Settings section maps to live runtime settings") {
         {"opennessSource", {"/pipelines/eye/openness_source", Type::String}},
         {"gazeSource", {"/pipelines/gaze/gaze_source", Type::String}},
         {"gazeSmoothing", {"/pipelines/gaze/smoothing", Type::Int}},
+        {"combineWiden", {"/pipelines/eye/combine_widen", Type::Bool}},
+        {"combineDilation", {"/pipelines/eye/combine_dilation", Type::Bool}},
         {"mouthMirror", {"/pipelines/face/mirror", Type::Bool}},
         {"debugOverlay", {"/dashboard/enabled", Type::Bool}},
     };
@@ -178,8 +180,10 @@ TEST_CASE("the SteamVR Settings section maps to live runtime settings") {
     CHECK((*d)["pipelines"]["eye"]["openness_source"] == "model");
     CHECK((*d)["pipelines"]["gaze"]["gaze_source"] == "independent");
     CHECK((*d)["pipelines"]["gaze"]["smoothing"] == 0);   // Gaze smoothing is off unless the user turns it on.
+    CHECK((*d)["pipelines"]["eye"]["combine_widen"] == false);   // Each eye sends its own Widen and dilation.
+    CHECK((*d)["pipelines"]["eye"]["combine_dilation"] == false);
     CHECK((*d)["pipelines"]["face"]["mirror"] == true);   // The USB face tracker image is mirrored by default.
-    CHECK((*d)["dashboard"]["enabled"] == false);   // The debug overlay is off by default.
+    CHECK((*d)["dashboard"]["enabled"] == true);    // The Babble tab is on after a new install.
 #if BABBLE_FRUNK_MOUTH
     CHECK((*d)["mouth_source"] == "frunk");         // The default is the Frame cameras unless the user selects USB.
 #endif

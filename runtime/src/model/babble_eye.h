@@ -1,6 +1,6 @@
 #pragma once
 
-#include "model/executorch_runner.h"
+#include "model/eye_kit.h"
 #include "model/pipeline.h"
 #include "model/postprocess/eye_post.h"
 
@@ -12,7 +12,9 @@
 
 namespace babble {
 
-// The "babble_eye" pipeline gets eyelid openness and pupil dilation for each eye from the stereo eye cameras.
+// The "babble_eye" pipeline gets eyelid openness, Widen and pupil dilation for each eye from the stereo eye cameras.
+// It runs the two-stage EyeKit: "model" is stage 1 (lid, pupil centre and Widen) and "pupil_model" is stage 2 (pupil
+// diameter in mm from a crop at that centre).
 class BabbleEye : public PipelineBase {
 public:
     BabbleEye(const nlohmann::json &cfg, PipelineDeps deps) : PipelineBase(cfg, std::move(deps), "infE") {}
@@ -21,23 +23,18 @@ public:
     void set_tracking(bool on) override;
     bool set_option(const std::string &key, const nlohmann::json &value) override;
 
-    // Convert one stereo pair into the [2,1,R,R] float input.
-    void prepare(const StereoFrame &sf, float *x);
-
 private:
     void process(const StereoFrame &frames) override;
     void on_start() override;
     void on_stop() override;
-    // Run the eye model on float data, with fp16 conversion if the model uses fp16.
-    bool run_model(const float *x, float *y);
+    // Get the two views in the canonical orientation, with the "R" pane flipped into flip_.
+    std::array<img::View, 2> canonical(const StereoFrame &sf);
 
-    std::unique_ptr<ExecuTorchRunner> model_;
-    uint32_t res_ = 160;
-    size_t plane_ = 160 * 160;
-    std::vector<float> x_;
-    std::array<float, 4> out_{};   // The model output is [2,2], with the lid and the pupil for each view.
-    std::vector<uint16_t> half_in_, half_out_;
-    std::vector<uint8_t> flip_, small_;
+    std::unique_ptr<EyeKit> kit_;
+    double widen_gain_ = 0.8;   // Widen is the eye kit Widen head / this gain, if the kit has the head and it is > 0.
+    LatencyStat pupil_preprocess_, pupil_inference_;   // These are the stage 2 parts of the eye kit.
+    std::array<SignalId, 2> mm_ids_{};                 // These debug signals are the shown pupil diameter in mm.
+    std::vector<uint8_t> flip_;
 
     // Index 0 is view 2 ("L") and index 1 is view 3 ("R").
     std::vector<eye::LidCalibrator> calib_;           // These are the calibrators for lid_calibration "median".
@@ -60,6 +57,8 @@ private:
     std::atomic<bool> reset_pending_{false};
     std::atomic<bool> native_openness_{false};   // This is true if openness_source is "native".
     std::atomic<bool> tracking_on_{true};
+    // These are "combine_widen" and "combine_dilation": both eyes then get the mean of the two eyes.
+    std::atomic<bool> combine_widen_{false}, combine_dilation_{false};
     void update_eye_server_want();
     Counter native_fallback_;
     bool use_calib_ = true, babble_swap_ = false;
@@ -67,7 +66,7 @@ private:
 
     std::array<SignalId, 3> left_ids_{}, right_ids_{};   // The order is Lid, Widen, Dilation.
     SignalId left_raw_id_ = 0, right_raw_id_ = 0;        // These debug signals are not sent.
-    std::array<SignalId, 4> cal_ids_{};                  // These debug signals show the neutral and wide values of each eye.
+    std::array<SignalId, 6> cal_ids_{};   // These debug signals show the neutral, wide and closed values of each eye.
 };
 
 }

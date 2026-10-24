@@ -13,6 +13,8 @@
 		"opennessSource" : "model",
 		"gazeSource" : "independent",
 		"gazeSmoothing" : 0,
-		"debugOverlay" : false
+		"combineWiden" : false,
+		"combineDilation" : false,
+		"debugOverlay" : true
 	}
 }

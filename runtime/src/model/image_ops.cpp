@@ -122,7 +122,51 @@ void resize_linear(View src, Mut dst) {
     }
 }
 
+namespace {
+
+// This is the OpenCV resizeAreaFast for a downscale by integer factors kx and ky.
+void resize_area_int(View src, Mut dst, uint32_t kx, uint32_t ky) {
+    const float scale = 1.f / float(kx * ky);
+    const bool half_up = kx == 2 && ky == 2;   // The OpenCV SIMD path for 2x2 rounds half up; saturate_cast rounds half to even.
+    std::vector<int> col(size_t(dst.width) * kx);   // These are the column sums of the ky source rows of one output row.
+    for (uint32_t dy = 0; dy < dst.height; dy++) {
+        std::fill(col.begin(), col.end(), 0);
+        for (uint32_t y = 0; y < ky; y++) {   // This plain loop is vectorised by the compiler.
+            const uint8_t *S = src.data + size_t(dy * ky + y) * src.stride;
+            for (size_t x = 0; x < col.size(); x++)
+                col[x] += S[x];
+        }
+        uint8_t *D = dst.data + size_t(dy) * dst.stride;
+        const uint32_t area = kx * ky;
+        if (kx == 4 && ky == 4) {   // The 400 -> 100 eye resize. sum / 16 is exact, so round half to even in integers.
+            for (uint32_t dx = 0; dx < dst.width; dx++) {
+                const int *c = &col[size_t(dx) * 4];
+                const int sum = c[0] + c[1] + c[2] + c[3], q = sum >> 4, r = sum & 15;
+                D[dx] = uint8_t(q + (r > 8 || (r == 8 && (q & 1))));
+            }
+            continue;
+        }
+        if (half_up) {   // The 128 -> 64 crop resize.
+            for (uint32_t dx = 0; dx < dst.width; dx++)
+                D[dx] = uint8_t((col[size_t(dx) * 2] + col[size_t(dx) * 2 + 1] + 2) >> 2);
+            continue;
+        }
+        for (uint32_t dx = 0; dx < dst.width; dx++) {
+            int sum = 0;
+            for (uint32_t x = 0; x < kx; x++)
+                sum += col[size_t(dx) * kx + x];
+            D[dx] = area == 1 ? uint8_t(sum) : sat_u8(round_even(float(sum) * scale));
+        }
+    }
+}
+
+}
+
 void resize_area(View src, Mut dst) {
+    if (src.width % dst.width == 0 && src.height % dst.height == 0) {
+        resize_area_int(src, dst, src.width / dst.width, src.height / dst.height);
+        return;
+    }
     const double sx = double(src.width) / dst.width, sy = double(src.height) / dst.height;
     const auto xtab = area_tab(int(src.width), int(dst.width), sx);
     const auto ytab = area_tab(int(src.height), int(dst.height), sy);
@@ -216,6 +260,85 @@ void rotate(View src, Mut dst, int q) {
             }
             D[x] = src.data[size_t(sy) * src.stride + sx];
         }
+    }
+}
+
+void resize_area_linear(View src, Mut dst, std::vector<uint8_t> &mid) {
+    // Use the largest factor k that divides both sides and keeps the middle image at least as big as dst.
+    uint32_t k = 1;
+    for (uint32_t c = 2; src.width / c >= dst.width && src.height / c >= dst.height; c++)
+        if (src.width % c == 0 && src.height % c == 0)
+            k = c;
+    const uint32_t mw = src.width / k, mh = src.height / k;
+    if (k == 1 || (mw == dst.width && mh == dst.height)) {   // No integer step helps, or it is the whole resize.
+        resize_area(src, dst);
+        return;
+    }
+    mid.resize(size_t(mw) * mh);
+    resize_area(src, {mid.data(), mw, mh, mw});
+    resize_linear({mid.data(), mw, mh, mw}, dst);
+}
+
+// This is the OpenCV getRectSubPix_Cn_ for uchar with 16-bit fixed-point weights (scale_fixpt, cast_8u) and adjustRect.
+void get_rect_sub_pix(View src, Mut dst, float cx, float cy) {
+    const int W = int(src.width), H = int(src.height), ww = int(dst.width), wh = int(dst.height);
+    const ptrdiff_t step = ptrdiff_t(src.stride);
+    cx -= float(ww - 1) * 0.5f;
+    cy -= float(wh - 1) * 0.5f;
+    const int ix = int(std::floor(cx)), iy = int(std::floor(cy));
+    const float a = cx - float(ix), b = cy - float(iy);
+    auto fix = [](float w) { return round_even(double(w * float(1 << 16))); };
+    const int a11 = fix((1.f - a) * (1.f - b)), a12 = fix(a * (1.f - b)), a21 = fix((1.f - a) * b), a22 = fix(a * b);
+    const int b1 = fix(1.f - b), b2 = fix(b);
+    auto cast = [](int v) { return uint8_t((v + (1 << 15)) >> 16); };
+    const uint8_t *S = src.data;
+
+    if (0 <= ix && ix < W - ww && 0 <= iy && iy < H - wh) {   // The window is inside the image.
+        for (int i = 0; i < wh; i++) {
+            const uint8_t *r0 = S + (iy + i) * step + ix, *r1 = r0 + step;
+            uint8_t *D = dst.data + size_t(i) * dst.stride;
+            for (int j = 0; j < ww; j++)
+                D[j] = cast(r0[j] * a11 + r0[j + 1] * a12 + r1[j] * a21 + r1[j + 1] * a22);
+        }
+        return;
+    }
+    // The window is partly outside, so clamp it as adjustRect does. off is an offset from S, and every read is in the image.
+    ptrdiff_t off = 0;
+    int rx = 0, rw = ww, ry = 0, rh = wh;
+    if (ix >= 0)
+        off += ix;
+    else
+        rx = std::min(-ix, ww);
+    if (ix >= W - ww) {
+        rw = W - ix - 1;
+        if (rw < 0) {
+            off += rw;
+            rw = 0;
+        }
+    }
+    if (iy >= 0)
+        off += iy * step;
+    else
+        ry = -iy;
+    if (iy >= H - wh) {
+        rh = H - iy - 1;
+        if (rh < 0) {
+            off += rh * step;
+            rh = 0;
+        }
+    }
+    off -= rx;
+    for (int i = 0; i < wh; i++) {
+        ptrdiff_t off2 = off + step;
+        if (i < ry || i >= rh)   // Rows above and below the image repeat the edge row.
+            off2 -= step;
+        uint8_t *D = dst.data + size_t(i) * dst.stride;
+        std::fill(D, D + rx, cast(S[off + rx] * b1 + S[off2 + rx] * b2));
+        std::fill(D + rw, D + ww, cast(S[off + rw] * b1 + S[off2 + rw] * b2));
+        for (int j = rx; j < rw; j++)
+            D[j] = cast(S[off + j] * a11 + S[off + j + 1] * a12 + S[off2 + j] * a21 + S[off2 + j + 1] * a22);
+        if (i < rh)
+            off = off2;
     }
 }
 

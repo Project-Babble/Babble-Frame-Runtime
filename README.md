@@ -34,7 +34,7 @@ On the Steam Frame, switch to Desktop Mode, open Konsole and paste:
 curl -fsSL https://raw.githubusercontent.com/Project-Babble/Babble-Frame-Runtime/main/tools/get.sh | bash
 ```
 
-It downloads the newest release, checks it against the release's SHA-256 checksum, installs it in your home folder and restarts SteamVR. Its settings are in SteamVR Settings, under Expression Tracking; turn on Show App Window there for the Babble tab in the SteamVR dashboard, where updates appear next to the version.
+It downloads the newest release, checks it against the release's SHA-256 checksum, installs it in your home folder and restarts SteamVR. Its settings are in SteamVR Settings, under Expression Tracking. The Babble tab in the SteamVR dashboard is on after you install, and updates appear there next to the version. To hide the tab, turn off Show App Window.
 To uninstall, run `~/.local/share/babble-frame-runtime/uninstall.sh`.
 
 ## Building from source

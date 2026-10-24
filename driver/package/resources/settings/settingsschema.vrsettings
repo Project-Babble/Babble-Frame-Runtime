@@ -98,6 +98,24 @@
 				"requires" : { "/settings/driver_babble/eyeTracking" : true }
 			},
 			{
+				"name" : "/settings/driver_babble/combineWiden",
+				"control" : "toggle",
+				"label" : "Combine Eye Widen",
+				"text" : "Both eyes get the average Widen of the two eyes.",
+				"on_label" : "On",
+				"off_label" : "Off",
+				"requires" : { "/settings/driver_babble/eyeTracking" : true }
+			},
+			{
+				"name" : "/settings/driver_babble/combineDilation",
+				"control" : "toggle",
+				"label" : "Combine Pupil Dilation",
+				"text" : "Both eyes get the average pupil dilation of the two eyes.",
+				"on_label" : "On",
+				"off_label" : "Off",
+				"requires" : { "/settings/driver_babble/eyeTracking" : true }
+			},
+			{
 				"name" : "/settings/driver_babble/outputVrcft",
 				"control" : "toggle",
 				"label" : "VRCFaceTracking Output",

@@ -26,4 +26,9 @@ for name, img in inputs.items():
     cv2.imwrite(str(out / f"{name}_linear224_eq.pgm"), cv2.equalizeHist(lin))
     cv2.imwrite(str(out / f"{name}_area160.pgm"), cv2.resize(img, (160, 160), interpolation=cv2.INTER_AREA))
     cv2.imwrite(str(out / f"{name}_area96.pgm"), cv2.resize(img, (96, 96), interpolation=cv2.INTER_AREA))
-print(f"opencv {cv2.__version__}: wrote {len(inputs) * 5} files to {out}")
+    # Integer INTER_AREA factors take the OpenCV fast path: 4x rounds half to even and 2x (the SIMD path) half up.
+    a100 = cv2.resize(img, (100, 100), interpolation=cv2.INTER_AREA)
+    cv2.imwrite(str(out / f"{name}_area100.pgm"), a100)
+    cv2.imwrite(str(out / f"{name}_arealin96.pgm"), cv2.resize(a100, (96, 96), interpolation=cv2.INTER_LINEAR))
+    cv2.imwrite(str(out / f"{name}_area64.pgm"), cv2.resize(img[100:228, 100:228], (64, 64), interpolation=cv2.INTER_AREA))
+print(f"opencv {cv2.__version__}: wrote {len(inputs) * 8} files to {out}")

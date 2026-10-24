@@ -14,7 +14,9 @@ namespace babble::eye {
 
 // These eye filter defaults were tuned on a recorded session to give less jitter than the old EMAs.
 inline constexpr OneEuroParams kLidOneEuro{1.0, 5.0, 3.0};
-inline constexpr OneEuroParams kPupilOneEuro{0.5, 0.01, 1.0};
+// The pupil filter is for a diameter in mm. A pixel of the 400 px pane is about 0.1 mm at the pupil, so beta is 10 times
+// the old pixel filter (0.01) to adapt at the same speed.
+inline constexpr OneEuroParams kPupilOneEuroMm{0.5, 0.1, 1.0};
 
 // Get the median of a sample set, as numpy.median does.
 double median(std::vector<double> v);
@@ -76,9 +78,14 @@ public:
         double gain = 0.001, decay = 20.5, acc0 = 0.5;   // The SRanipal smoother uses these values.
         double widen_seed = 0.15, ceiling_max = 1.6;
         double saturation = 1.0;               // This is the practical maximum of the raw output.
+        // The closed level starts at closed_seed and goes down to the lowest openness held for trough_window updates,
+        // as the ceiling goes up to the highest. 0 turns it off, so that Lid is the openness.
+        double closed_seed = 0.0;
+        size_t trough_window = 5;
     };
     struct Out {
         double openness = 0;   // The filtered ratio to the neutral is 0 or more.
+        double lid = 0;        // The openness from the closed level (0) to the neutral (1), in the range 0..1.
         double widen = 0;      // The range is 0..1.
         bool ready = false;
     };
@@ -88,18 +95,19 @@ public:
     explicit OpennessCalibrator(Params p, std::optional<OneEuroParams> filter = std::nullopt);
     // The dt_s value is the time in seconds since the previous update, and 0 or less for the first update.
     Out update(double x, double dt_s);
-    void set_timing(size_t skip, size_t warmup, size_t every, size_t peak_window);
+    void set_timing(size_t skip, size_t warmup, size_t every, size_t peak_window, size_t trough_window = 5);
     bool ready() const { return ready_; }
     double baseline() const { return b_; }
     double ceiling() const { return c_; }   // The ceiling is a ratio to the baseline.
+    double closed() const { return f_; }    // The closed level is a ratio to the baseline.
 
 private:
     double cap() const;   // This is the upper limit of the ceiling for the current baseline.
     Params p_;
     size_t n_ = 0;
     bool ready_ = false;
-    double b_ = 1.0, acc_ = 0, c_ = 1.0;
-    std::deque<double> seed_, chunk_, recent_;
+    double b_ = 1.0, acc_ = 0, c_ = 1.0, f_ = 0;
+    std::deque<double> seed_, chunk_, recent_, lows_;
     std::optional<OneEuro> filter_;
 };
 
@@ -110,15 +118,13 @@ public:
         std::optional<double> px, ratio;
         bool live = false;
     };
-    // The rate value is the maximum change of the shown diameter in px for each reference update.
+    // The rate value is the maximum change of the shown diameter (in mm for the eye kit) for each reference update.
     PupilTracker(double gate, double hys, int hold, std::optional<OneEuroParams> filter, double rate,
                  size_t base_window, size_t base_min);
 
-    static constexpr double kPupilScale = 3000.0;   // The output is the pupil area / 3000 on a 400 px crop.
-    static double px_of(double y);
-
-    // Set y to nullopt if no new pupil output arrived after the last update.
-    Result update(double openness, std::optional<double> y, double k = 1.0, double dt_s = 0.0);
+    // Set d (the pupil diameter, in mm from the eye kit) to nullopt if no new pupil output arrived after the last
+    // update. Result::px and the rate are in the units of d.
+    Result update(double openness, std::optional<double> d, double k = 1.0, double dt_s = 0.0);
     void set_hold(int hold) { hold_ = hold; }   // The blink hold is in updates.
     // Set the baseline window and the minimum samples for the first baseline, and keep the samples.
     void set_base_window(size_t window, size_t min);

@@ -580,7 +580,7 @@ Rect DashboardView::render_button(Canvas &c, float right, float y, const std::st
 // Draws an on/off setting row with a switch that a click near the switch changes.
 void DashboardView::render_switch_row(Canvas &c, float y, size_t index, const Choice &ch, float row_h) {
     const float W = float(c.width());
-    const float tx = render_block(c, y, Icon::Camera, row_h);
+    const float tx = render_block(c, y, ch.page == ChoicePage::Eye ? Icon::Eye : Icon::Camera, row_h);
     const bool on = ch.value != 0;
     const float d = (124 - row_h) / 2;   // This offset keeps the content of short rows in the centre.
     const Rect sw{W - kMargin - 92, y + 36 - d, 92, 52};
@@ -757,11 +757,11 @@ void DashboardView::render_outputs(Canvas &c, const Status &s) {
         if (y + row_h > bottom + 12)
             break;
         c.fill_rect({kMargin, y + 4, W - 2 * kMargin, row_h - 12}, kCard, 6);
-        c.fill_circle(kMargin + 42, y + row_h / 2 - 2, 10, !m.on ? kGrey : m.ok ? kGreen : kAmber);
-        const float tx = kMargin + 80;
+        const float tx = kMargin + 28;
         const Rect sw{W - kMargin - 16 - 92, y + 36 - d, 92, 52};
         const Rect sw_hit{sw.x - 12, y + 4, W - kMargin - (sw.x - 12), row_h - 12};
-        render_switch(c, sw, m.on, hovered(sw_hit));
+        // When the switch is on, its colour shows if the output works, as for the eye and mouth feeds.
+        render_switch(c, sw, m.on, hovered(sw_hit), m.ok ? kGreen : kAmber);
         hit_setting(sw_hit, "/outputs/" + m.id, m.on ? "false" : "true");
         float left = sw_hit.x - 12;
         for (auto it = m.options.rbegin(); it != m.options.rend(); ++it) {

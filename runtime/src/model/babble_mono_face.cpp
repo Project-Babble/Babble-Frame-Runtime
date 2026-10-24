@@ -103,7 +103,9 @@ void BabbleMonoFace::prepare(const Frame &f, float *input) {
     const uint32_t w = std::min<uint32_t>(cur.width, kMaxSide), h = std::min<uint32_t>(cur.height, kMaxSide);
     cur.width = w;
     cur.height = h;
-    if ((gain_ != 1.0f || flip_h_ || flip_v_ || quarter_turns_) && tmp_a_.size() < size_t(w) * h) {
+    // The mirror fixes the left and right swap that users see with the Babble face tracker.
+    const bool flip_h = flip_h_ != mirror_.load(std::memory_order_relaxed);
+    if ((gain_ != 1.0f || flip_h || flip_v_ || quarter_turns_) && tmp_a_.size() < size_t(w) * h) {
         tmp_a_.resize(size_t(w) * h);
         tmp_b_.resize(size_t(w) * h);
     }
@@ -115,8 +117,6 @@ void BabbleMonoFace::prepare(const Frame &f, float *input) {
                     uint8_t(std::clamp(std::lround(cur.data[size_t(y) * cur.stride + x] * gain_), 0L, 255L));
         cur = {tmp_a_.data(), w, h, w};
     }
-    // The mirror fixes the left and right swap that users see with the Babble face tracker.
-    const bool flip_h = flip_h_ != mirror_.load(std::memory_order_relaxed);
     if (flip_h || flip_v_) {
         uint8_t *dst = cur.data == tmp_a_.data() ? tmp_b_.data() : tmp_a_.data();
         if (flip_h) {

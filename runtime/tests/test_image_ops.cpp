@@ -2,6 +2,9 @@
 
 #include "model/image_ops.h"
 
+#include <nlohmann/json.hpp>
+
+#include <array>
 #include <cstdio>
 #include <fstream>
 #include <sstream>
@@ -94,6 +97,55 @@ TEST_CASE("image ops match OpenCV 5.0.0 bit for bit") {
         img::resize_area(in.view(), {area96.data(), 96, 96, 96});
         auto [n4, w4] = diff(area96, want_area96.px);
         CHECK_MESSAGE(n4 == 0, "INTER_AREA 96: " << n4 << " px differ, max " << w4);
+    }
+}
+
+TEST_CASE("integer INTER_AREA and the area + linear resize match OpenCV 5.0.0 bit for bit") {
+    for (const char *name : {"noise", "mouth", "eye"}) {
+        CAPTURE(name);
+        Pgm in = read_pgm(std::string(name) + "_in.pgm");
+
+        // 400 -> 100 is a 4x block mean, which OpenCV rounds half to even.
+        Pgm want100 = read_pgm(std::string(name) + "_area100.pgm");
+        std::vector<uint8_t> a100(100 * 100);
+        img::resize_area(in.view(), {a100.data(), 100, 100, 100});
+        auto [n1, w1] = diff(a100, want100.px);
+        CHECK_MESSAGE(n1 == 0, "INTER_AREA 4x: " << n1 << " px differ, max " << w1);
+
+        // The eye kit stage 1 input is the 4x area resize and then INTER_LINEAR to 96.
+        Pgm want96 = read_pgm(std::string(name) + "_arealin96.pgm");
+        std::vector<uint8_t> a96(96 * 96), mid;
+        img::resize_area_linear(in.view(), {a96.data(), 96, 96, 96}, mid);
+        auto [n2, w2] = diff(a96, want96.px);
+        CHECK_MESSAGE(n2 == 0, "area 100 + linear 96: " << n2 << " px differ, max " << w2);
+
+        // 128 -> 64 is a 2x2 mean, which the OpenCV SIMD path rounds half up.
+        Pgm want64 = read_pgm(std::string(name) + "_area64.pgm");
+        std::vector<uint8_t> a64(64 * 64);
+        img::resize_area({in.px.data() + 100 * 400 + 100, 128, 128, 400}, {a64.data(), 64, 64, 64});
+        auto [n3, w3] = diff(a64, want64.px);
+        CHECK_MESSAGE(n3 == 0, "INTER_AREA 2x: " << n3 << " px differ, max " << w3);
+    }
+}
+
+TEST_CASE("get_rect_sub_pix matches the headset OpenCV 5.0.0 bit for bit") {
+    std::ifstream f(std::string(BABBLE_TEST_DATA_DIR) + "/subpix_golden.json");
+    REQUIRE(f.good());
+    auto g = nlohmann::json::parse(f);
+    const uint32_t size = g["size"];
+    const auto centres = g["centres"].get<std::vector<std::array<float, 2>>>();
+    REQUIRE(!centres.empty());
+    for (const char *name : {"noise", "eye"}) {
+        Pgm in = read_pgm(std::string(name) + "_in.pgm");
+        for (size_t k = 0; k < centres.size(); k++) {
+            CAPTURE(name);
+            CAPTURE(k);
+            Pgm want = read_pgm(std::string(name) + "_sub" + std::to_string(k) + ".pgm");
+            std::vector<uint8_t> got(size_t(size) * size);
+            img::get_rect_sub_pix(in.view(), {got.data(), size, size, size}, centres[k][0], centres[k][1]);
+            auto [n, w] = diff(got, want.px);
+            CHECK_MESSAGE(n == 0, "centre (" << centres[k][0] << ", " << centres[k][1] << "): " << n << " px differ, max " << w);
+        }
     }
 }
 

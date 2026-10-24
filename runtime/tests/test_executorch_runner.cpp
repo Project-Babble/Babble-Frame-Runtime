@@ -53,34 +53,52 @@ TEST_CASE("ExecuTorchRunner runs FusionNet and matches the Python ExecuTorch run
 }
 #endif
 
-TEST_CASE("ExecuTorchRunner runs the fp16 combined eye model and matches the Python ExecuTorch runtime") {
+namespace {
+
+// Run a .pte on the synthetic input of tools/golden/make_runner_golden.py and compare with its golden file.
+void check_runner_golden(const char *model, const char *golden_file, const std::vector<std::vector<int64_t>> &in_shapes,
+                         const std::vector<int64_t> &out_shape) {
     ExecuTorchRunner::set_threads(1);
     ExecuTorchRunner r;
-    REQUIRE(r.load(std::string(BABBLE_MODELS_DIR) + "/eye_split96_uncapped_fp16.pte"));
-
-    // The README contract is fp16 [2,1,96,96] in and fp16 [2,2] (lid and pupil for each eye) out, with no cap on lid.
-    REQUIRE(r.inputs().size() == 1);
-    CHECK(r.inputs()[0].dtype == DType::F16);
-    CHECK(r.inputs()[0].shape == std::vector<int64_t>{2, 1, 96, 96});
+    REQUIRE(r.load(std::string(BABBLE_MODELS_DIR) + "/" + model));
+    REQUIRE(r.inputs().size() == in_shapes.size());
+    std::vector<std::vector<uint16_t>> xh(in_shapes.size());
+    std::vector<TensorView> iv;
+    for (size_t i = 0; i < in_shapes.size(); i++) {
+        CHECK(r.inputs()[i].dtype == DType::F16);
+        CHECK(r.inputs()[i].shape == in_shapes[i]);
+        const size_t n = r.inputs()[i].elements();
+        std::vector<float> x(n);
+        for (size_t k = 0; k < n; k++)
+            x[k] = float((k * 37 + i * 91 + 13) % 256) / 255.0f;
+        xh[i].resize(n);
+        to_half(x.data(), xh[i].data(), n);
+        iv.push_back({xh[i].data(), &r.inputs()[i]});
+    }
     REQUIRE(r.outputs().size() == 1);
     CHECK(r.outputs()[0].dtype == DType::F16);
-    CHECK(r.outputs()[0].shape == std::vector<int64_t>{2, 2});
-
-    const size_t n = 2 * 96 * 96;
-    std::vector<float> x(n);
-    for (size_t k = 0; k < n; k++)
-        x[k] = float((k * 37 + 13) % 256) / 255.0f;
-    std::vector<uint16_t> xh(n), yh(4);
-    to_half(x.data(), xh.data(), n);
-    std::vector<TensorView> iv{{xh.data(), &r.inputs()[0]}};
+    CHECK(r.outputs()[0].shape == out_shape);
+    const size_t m = r.outputs()[0].elements();
+    std::vector<uint16_t> yh(m);
     std::vector<TensorView> ov{{yh.data(), &r.outputs()[0]}};
     REQUIRE(r.run(iv, ov));
-    std::vector<float> y(4);
-    from_half(yh.data(), y.data(), 4);
+    std::vector<float> y(m);
+    from_half(yh.data(), y.data(), m);
 
-    std::ifstream f(std::string(BABBLE_TEST_DATA_DIR) + "/eye_split96_golden.json");
+    std::ifstream f(std::string(BABBLE_TEST_DATA_DIR) + "/" + golden_file);
+    REQUIRE(f.good());
     auto golden = nlohmann::json::parse(f)["outputs"][0].get<std::vector<float>>();
-    REQUIRE(golden.size() == 4);
-    for (size_t k = 0; k < 4; k++)
+    REQUIRE(golden.size() == m);
+    for (size_t k = 0; k < m; k++)
         CHECK_MESSAGE(std::fabs(y[k] - golden[k]) <= 0.002f, "output " << k << ": " << y[k] << " vs " << golden[k]);
+}
+
+}
+
+TEST_CASE("ExecuTorchRunner runs the eye kit stage 1 (lid, pupil centre, Widen) and matches the Python ExecuTorch runtime") {
+    check_runner_golden("eye_kit_stage1_fp16.pte", "eye_kit_stage1_golden.json", {{2, 1, 96, 96}}, {2, 4});
+}
+
+TEST_CASE("ExecuTorchRunner runs the eye kit stage 2 (pupil mm from a crop) and matches the Python ExecuTorch runtime") {
+    check_runner_golden("eye_kit_stage2_fp16.pte", "eye_kit_stage2_golden.json", {{2, 1, 64, 64}, {2, 2}}, {2, 1});
 }

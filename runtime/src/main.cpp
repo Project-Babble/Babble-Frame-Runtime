@@ -664,7 +664,7 @@ int main(int argc, char **argv) {
         }
         LOG.info("dashboard: debug overlay %s", on ? "on" : "off");
     };
-    set_dashboard(dcfg.value("enabled", false));
+    set_dashboard(dcfg.value("enabled", true));
     // The debug overlay can start this tracking visualizer.
     AppLauncher visualizer(cfg.value("visualizer", json::object()),
                            (paths::state_dir() / "visualizer.log").string());

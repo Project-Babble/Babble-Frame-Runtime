@@ -48,6 +48,10 @@ int main(int argc, char **argv) {
         {"/pipelines/gaze/smoothing", "Gaze Smoothing",
          "Steadies the gaze. Stronger smoothing adds a little lag to fast eye movements.", "", {0, 1, 2, 3}, 0,
          false, ChoicePage::Eye, {"Off", "Low", "Medium", "High"}},
+        {"/pipelines/eye/combine_widen", "Combine Eye Widen", "Both eyes get the average Widen of the two eyes.", "",
+         {0, 1}, 1, true, ChoicePage::Eye},
+        {"/pipelines/eye/combine_dilation", "Combine Pupil Dilation",
+         "Both eyes get the average pupil dilation of the two eyes.", "", {0, 1}, 0, true, ChoicePage::Eye},
         {"/sinks/camera_stream/active", "Camera Stream",
          "Stream camera frames on TCP 9099 for diagnostics. Turns off after a restart.", "", {0, 1}, 1, true, ChoicePage::Diagnostics},
     };

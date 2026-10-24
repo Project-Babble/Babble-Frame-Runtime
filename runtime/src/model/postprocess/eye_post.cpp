@@ -61,7 +61,8 @@ void LidCalibrator::set_timing(size_t window, size_t warmup, size_t every) {
         buf_.pop_front();
 }
 
-OpennessCalibrator::OpennessCalibrator(Params p, std::optional<OneEuroParams> filter) : p_(p), c_(1.0 + p.widen_seed) {
+OpennessCalibrator::OpennessCalibrator(Params p, std::optional<OneEuroParams> filter)
+    : p_(p), c_(1.0 + p.widen_seed), f_(std::clamp(p.closed_seed, 0.0, 0.9)) {
     if (filter)
         filter_.emplace(1, *filter);
 }
@@ -71,7 +72,7 @@ double OpennessCalibrator::cap() const {
     return std::min(p_.ceiling_max, std::max(1.02, p_.saturation / b_));
 }
 
-void OpennessCalibrator::set_timing(size_t skip, size_t warmup, size_t every, size_t peak_window) {
+void OpennessCalibrator::set_timing(size_t skip, size_t warmup, size_t every, size_t peak_window, size_t trough_window) {
     p_.skip = skip;
     p_.warmup = std::max<size_t>(1, warmup);
     p_.every = std::max<size_t>(1, every);
@@ -80,6 +81,9 @@ void OpennessCalibrator::set_timing(size_t skip, size_t warmup, size_t every, si
         seed_.pop_front();
     while (recent_.size() > p_.peak_window)
         recent_.pop_front();
+    p_.trough_window = std::max<size_t>(1, trough_window);
+    while (lows_.size() > p_.trough_window)
+        lows_.pop_front();
 }
 
 OpennessCalibrator::Out OpennessCalibrator::update(double x, double dt_s) {
@@ -121,6 +125,7 @@ OpennessCalibrator::Out OpennessCalibrator::update(double x, double dt_s) {
         value = filter_->apply(value, dt_s);
     Out out;
     out.openness = std::max(value, 0.0);
+    out.lid = std::min(out.openness, 1.0);
     out.ready = ready_;
     if (ready_) {
         // The ceiling is the largest sustained ratio.
@@ -131,6 +136,13 @@ OpennessCalibrator::Out OpennessCalibrator::update(double x, double dt_s) {
             c_ = std::max(c_, median(std::vector<double>(recent_.begin(), recent_.end())));
         c_ = std::min(c_, cap());   // Apply the cap again because the baseline drifts.
         out.widen = std::clamp((out.openness - 1.0) / (c_ - 1.0), 0.0, 1.0);
+        // The closed level is the lowest openness held for a short time, such as the bottom of a blink.
+        lows_.push_back(out.openness);
+        if (lows_.size() > p_.trough_window)
+            lows_.pop_front();
+        if (lows_.size() == p_.trough_window)
+            f_ = std::min(f_, median(std::vector<double>(lows_.begin(), lows_.end())));
+        out.lid = std::clamp((out.openness - f_) / (1.0 - f_), 0.0, 1.0);
     }
     return out;
 }
@@ -149,9 +161,7 @@ void PupilTracker::set_base_window(size_t window, size_t min) {
         base_buf_.pop_front();
 }
 
-double PupilTracker::px_of(double y) { return 2.0 * std::sqrt(std::max(y, 0.0) * kPupilScale / M_PI); }
-
-PupilTracker::Result PupilTracker::update(double openness, std::optional<double> y, double k, double dt_s) {
+PupilTracker::Result PupilTracker::update(double openness, std::optional<double> d, double k, double dt_s) {
     if (open_ && openness < gate_)
         open_ = false;
     else if (!open_ && openness >= gate_ + hys_)
@@ -160,8 +170,8 @@ PupilTracker::Result PupilTracker::update(double openness, std::optional<double>
     const bool live = open_ && since_ > hold_;
     if (live) {
         held_n_ = 0;
-        if (y) {
-            double px = px_of(*y);
+        if (d) {
+            const double px = *d;
             recent_.push_back(px);
             if (recent_.size() > 8)
                 recent_.pop_front();

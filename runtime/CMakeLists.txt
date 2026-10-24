@@ -54,6 +54,7 @@ add_library(babble_core STATIC
     src/model/pipeline.cpp
     src/model/null_pipeline.cpp
     src/model/babble_eye.cpp
+    src/model/eye_kit.cpp
     src/model/babble_mono_face.cpp
     src/model/postprocess/face_post.cpp
     src/model/postprocess/one_euro.cpp
@@ -148,11 +149,6 @@ add_executable(model_bench tools/model_bench.cpp)
 target_link_libraries(model_bench PRIVATE babble_core)
 set_target_properties(model_bench PROPERTIES BUILD_RPATH "${THIRD_PARTY}/openvr/lib/linuxarm64")
 
-# This tool runs an eye model on recorded frames from stdin.
-add_executable(eye_replay tools/eye_replay.cpp)
-target_link_libraries(eye_replay PRIVATE babble_core)
-set_target_properties(eye_replay PROPERTIES BUILD_RPATH "${THIRD_PARTY}/openvr/lib/linuxarm64")
-
 # This tool packages a recorded dataset session by hand.
 add_executable(dataset_package tools/dataset_package.cpp)
 target_link_libraries(dataset_package PRIVATE babble_core)
@@ -175,6 +171,7 @@ if(BABBLE_TESTS)
         tests/test_sinks.cpp
         tests/test_image_ops.cpp
         tests/test_executorch_runner.cpp
+        tests/test_eye_kit.cpp
         tests/test_postprocess.cpp
         tests/test_gaze.cpp
         tests/test_dashboard.cpp

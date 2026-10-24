@@ -143,14 +143,18 @@
       "enabled": true,
       "from": "eye",
       "thread": "infE",
-      "model": "eye_split96_uncapped_fp16.pte",
+      "model": "eye_kit_stage1_fp16.pte",
+      "pupil_model": "eye_kit_stage2_fp16.pte",
+      "pupil_crop_px": 128,
+      "kit_widen_gain": 0.8,
       "openness_source": "model",
       "update_hz": 90,
       "pupil_gain": 2.0,
       "lid_calibration": "baseline",
       "widen_seed": 0.15,
       "widen_ceiling_max": 1.6,
-      "lid_saturation": 1.0,
+      "lid_saturation": 1.6,
+      "closed_seed": 0.3,
       "calib_tol": 0.15,
       "calib": true,
       "calib_window_s": 20,
@@ -158,11 +162,13 @@
       "pupil_gate": 0.4,
       "pupil_gate_hys": 0.1,
       "pupil_hold_s": 0.1,
-      "pupil_rate": 0.6,
+      "pupil_rate_mm": 0.06,
       "pupil_base_s": 60,
       "one_euro": { "min_cutoff": 1.0, "beta": 5.0, "d_cutoff": 3.0 },
-      "pupil_one_euro": { "min_cutoff": 0.5, "beta": 0.01, "d_cutoff": 1.0 },
-      "babble_swap": false
+      "pupil_one_euro_mm": { "min_cutoff": 0.5, "beta": 0.1, "d_cutoff": 1.0 },
+      "babble_swap": false,
+      "combine_widen": false,
+      "combine_dilation": false
     },
     "gaze": {
       "type": "steamvr_gaze",
@@ -368,11 +374,13 @@
       { "key": "opennessSource", "id": "/pipelines/eye/openness_source" },
       { "key": "gazeSource", "id": "/pipelines/gaze/gaze_source" },
       { "key": "gazeSmoothing", "id": "/pipelines/gaze/smoothing" },
+      { "key": "combineWiden", "id": "/pipelines/eye/combine_widen" },
+      { "key": "combineDilation", "id": "/pipelines/eye/combine_dilation" },
       { "key": "debugOverlay", "id": "/dashboard/enabled" }
     ]
   },
   "dashboard": {
-    "enabled": false,
+    "enabled": true,
     "width_m": 1.6,
     "settings": [
       {
@@ -398,6 +406,18 @@
         "hint": "Steadies the gaze. Stronger smoothing adds a little lag to fast eye movements.",
         "options": [0, 1, 2, 3],
         "labels": ["Off", "Low", "Medium", "High"]
+      },
+      {
+        "id": "/pipelines/eye/combine_widen",
+        "page": "eye",
+        "label": "Combine Eye Widen",
+        "hint": "Both eyes get the average Widen of the two eyes."
+      },
+      {
+        "id": "/pipelines/eye/combine_dilation",
+        "page": "eye",
+        "label": "Combine Pupil Dilation",
+        "hint": "Both eyes get the average pupil dilation of the two eyes."
       },
       {
         "id": "/pipelines/face/mirror",
