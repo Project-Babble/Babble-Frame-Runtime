@@ -3,6 +3,7 @@
 #include "babble_version.h"
 #include "camera/tracking_source.h"
 #include "camera/usb/babble_usb_source.h"
+#include "camera/usb/uvc.h"
 #include "capture/app_installer.h"
 #include "update/runtime_updater.h"
 #include "capture/capture_server.h"
@@ -42,6 +43,7 @@
 #include <ctime>
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <map>
 #include <set>
 #include <memory>
@@ -631,17 +633,62 @@ int main(int argc, char **argv) {
     for (auto &s : sources)
         if (!usb_source)
             usb_source = dynamic_cast<BabbleUsbSource *>(s.src.get());
+    // The cameras from the last refresh, with their formats from the descriptor in sysfs.
+    struct FoundCamera {
+        usb::Found dev;
+        std::optional<uvc::Info> info;
+    };
+    std::vector<FoundCamera> found_cameras;
     std::vector<ui::UsbCamera> usb_cameras;
+    // Fills the settings of each camera, with the mode that the camera streams for them.
+    auto update_camera_settings = [&] {
+        for (size_t i = 0; i < usb_cameras.size() && i < found_cameras.size(); i++) {
+            const FoundCamera &fc = found_cameras[i];
+            if (!usb_source || !fc.info)
+                continue;
+            const auto s = usb_source->settings_for(fc.dev);
+            ui::UsbCamera::Settings &out = usb_cameras[i].settings;
+            out.rotate = s.rotate;
+            out.flip_h = s.flip_h;
+            out.flip_v = s.flip_v;
+            if (const auto p = uvc::pick_mode(*fc.info, s.mode)) {
+                out.format = uvc::format_key(p->format->kind);
+                out.width = p->frame->width;
+                out.height = p->frame->height;
+                out.fps = p->interval ? int(std::lround(1e7 / p->interval)) : 0;
+            }
+        }
+    };
     auto refresh_usb_cameras = [&] {
         usb_cameras.clear();
+        found_cameras.clear();
         for (const auto &f : usb::list_uvc()) {
             char vp[16];
             snprintf(vp, sizeof(vp), "%04x:%04x", f.vendor, f.product);
             std::string detail = vp;
             if (!f.serial.empty())
                 detail += " \u00b7 serial " + f.serial;
-            usb_cameras.push_back({usb::device_id(f), usb::device_label(f), detail});
+            const auto desc = usb::config_descriptor(f);
+            ui::UsbCamera cam{usb::device_id(f), usb::device_label(f), detail};
+            auto info = uvc::parse_config(desc.data(), desc.size());
+            if (info) {
+                cam.iso = !info->bulk;
+                for (const auto &fm : info->formats) {
+                    if (fm.kind == uvc::FormatKind::Unknown || fm.frames.empty())
+                        continue;
+                    ui::UsbCamera::Format uf{uvc::format_key(fm.kind), uvc::format_label(fm.kind), {}};
+                    for (const auto &fs : fm.frames)   // Some cameras list a size twice.
+                        if (std::none_of(uf.sizes.begin(), uf.sizes.end(), [&](const ui::UsbCamera::Size &z) {
+                                return z.width == fs.width && z.height == fs.height;
+                            }))
+                            uf.sizes.push_back({fs.width, fs.height, uvc::frame_rates(fs)});
+                    cam.formats.push_back(uf);
+                }
+            }
+            usb_cameras.push_back(cam);
+            found_cameras.push_back({f, std::move(info)});
         }
+        update_camera_settings();
     };
     refresh_usb_cameras();
 
@@ -658,6 +705,17 @@ int main(int argc, char **argv) {
             o.width_m = dcfg.value("width_m", o.width_m);
             o.state = &state;
             o.mouth_tracking_id = mouth_tracking_id;
+            if (usb_source)
+                o.preview = [usb_source, cache = std::make_shared<BabbleUsbSource::Preview>()](ui::CameraPreview &out) {
+                    if (!usb_source->take_preview(*cache))
+                        return false;
+                    out.camera = cache->camera;
+                    out.width = cache->width;
+                    out.height = cache->height;
+                    out.gray = cache->gray;
+                    out.seq = cache->seq;
+                    return true;
+                };
             dashboard->start(steamvr, thread_spec(threads, "ui", "bbl-ui"), o, dashboard_choices(cfg));
         } else {
             dashboard->stop();
@@ -1114,7 +1172,7 @@ int main(int argc, char **argv) {
                                 }
                             for (const char *id :
                                  {"/pipelines/eye/openness_source", "/pipelines/gaze/gaze_source",
-                                  "/pipelines/gaze/smoothing", "/pipelines/face/mirror", "/dashboard/enabled",
+                                  "/pipelines/gaze/smoothing", "/dashboard/enabled",
                                   "/mouth_source", "/pc_address"}) {
                                 const json::json_pointer ptr(id);
                                 if (fresh.contains(ptr))
@@ -1302,6 +1360,7 @@ int main(int argc, char **argv) {
             st.last_diagnostics = last_diagnostics;
             st.log_file = log::file_path().string();
             st.stats_file = stats_file.path().string();
+            update_camera_settings();
             st.cameras = usb_cameras;
             if (usb_source) {
                 st.camera = usb_source->camera();

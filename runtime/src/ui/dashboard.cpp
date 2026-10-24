@@ -76,10 +76,7 @@ void Dashboard::set_status(const Status &s) {
         s.log_file != status_.log_file || s.choice_hints != status_.choice_hints || s.capture != status_.capture ||
         s.update != status_.update || s.link.native != status_.link.native || s.link.osc != status_.link.osc ||
         s.link.more != status_.link.more || s.outputs != status_.outputs || s.pc_address != status_.pc_address ||
-        s.output_error != status_.output_error ||
-        s.cameras.size() != status_.cameras.size() ||
-        !std::equal(s.cameras.begin(), s.cameras.end(), status_.cameras.begin(),
-                    [](const UsbCamera &a, const UsbCamera &b) { return a.id == b.id && a.label == b.label; }))
+        s.output_error != status_.output_error || s.cameras != status_.cameras)
         dirty_ = true;
     status_ = s;
 }
@@ -93,7 +90,8 @@ void Dashboard::set_choice(const std::string &id, double value) {
         }
 }
 
-// Shows a choice on the Outputs page immediately, and sends it to the main thread, which confirms it.
+// Shows a choice on the Outputs page or the camera options page immediately, and sends it to the main thread, which
+// confirms it.
 void Dashboard::apply_output_setting(const std::string &id, const nlohmann::json &value) {
     for (OutputModule &m : status_.outputs) {
         if (id == "/outputs/" + m.id && value.is_boolean())
@@ -104,6 +102,18 @@ void Dashboard::apply_output_setting(const std::string &id, const nlohmann::json
     }
     if (id == "/pc_address" && value.is_string())
         status_.pc_address = value.get<std::string>();
+    for (UsbCamera &cam : status_.cameras) {
+        if (id != camera_setting_id(cam.id) || !value.is_object())
+            continue;
+        UsbCamera::Settings &s = cam.settings;
+        s.format = value.value("format", s.format);
+        s.width = value.value("width", s.width);
+        s.height = value.value("height", s.height);
+        s.fps = value.value("fps", s.fps);
+        s.rotate = value.value("rotate", s.rotate);
+        s.flip_h = value.value("flip_h", s.flip_h);
+        s.flip_v = value.value("flip_v", s.flip_v);
+    }
     changes_.emplace_back(id, value);
     dirty_ = true;
 }
@@ -242,6 +252,8 @@ void Dashboard::present() {
         dirty_ = false;
     }
     status.eyes = drawn_eyes_ = read_eyes();
+    if (view_.page() == DashboardView::Page::CameraOptions && !preview_.gray.empty())
+        status.preview = &preview_;
     last_present_ns_ = mono_ns();
     view_.render(canvas_, status, choices, pointer_);
 
@@ -424,6 +436,12 @@ void Dashboard::run() {
                               std::fabs(a.neutral - b.neutral) > 0.002 || std::fabs(a.wide_raw - b.wide_raw) > 0.002 ||
                               a.dilation_ok != b.dilation_ok || std::fabs(a.dilation - b.dilation) > 0.005;
                 }
+            }
+            // Show a new camera preview, at most about 15 times a second.
+            if (view_.page() == DashboardView::Page::CameraOptions && options_.preview &&
+                mono_ns() - last_preview_ns_ >= 66000000ull) {
+                last_preview_ns_ = mono_ns();
+                redraw |= options_.preview(preview_);
             }
             {
                 std::lock_guard<std::mutex> lock(mutex_);

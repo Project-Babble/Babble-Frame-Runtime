@@ -9,6 +9,7 @@
 
 #include <atomic>
 #include <filesystem>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -33,6 +34,9 @@ public:
         float width_m = 1.6f;
         ExpressionState *state = nullptr;   // The source of the eye panel data, or null for no data.
         std::string mouth_tracking_id = "/sources/mouth/tracking";   // The setting that the mouth card switch changes.
+        // Fills a newer camera preview and returns true, or returns false if there is none. The dashboard thread
+        // calls it only while the camera options page shows.
+        std::function<bool(CameraPreview &)> preview;
     };
     ~Dashboard();
 
@@ -78,6 +82,8 @@ private:
     std::array<SignalId, 2 * kPerEye> eye_ids_{};
     std::array<EyeReading, 2> drawn_eyes_{};
     uint64_t last_present_ns_ = 0;
+    CameraPreview preview_;          // Only the dashboard thread uses this.
+    uint64_t last_preview_ns_ = 0;
 
     SteamVrClient *vr_ = nullptr;
     ThreadSpec thread_spec_;

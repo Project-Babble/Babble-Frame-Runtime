@@ -5,6 +5,8 @@
 #include "ui/canvas.h"
 #include "ui/dashboard_view.h"
 
+#include <nlohmann/json.hpp>
+
 #include <set>
 
 using namespace babble;
@@ -538,4 +540,93 @@ TEST_CASE("a camera setting shows as a switch on the USB camera page and not on 
         r = view.click({DashboardView::kWidth - 56.f - 46, y});
         CHECK_FALSE((r.setting && r.setting->first == 2));
     }
+}
+
+TEST_CASE("each USB camera opens an options page that sends all of its settings as one object") {
+    DashboardView view;
+    REQUIRE(view.load_fonts(kFonts));
+    Canvas c(DashboardView::kWidth, DashboardView::kHeight);
+    Status s{true, Worn::Yes, on(Health::Working, 120), on(Health::Working, 90)};
+    s.mouth_source = "usb";
+    UsbCamera cam{"1e45:0209@1-1", "Generic HD Camera", "1e45:0209", true};
+    cam.formats = {{"mjpeg", "MJPEG", {{640, 480, {120, 60, 30}}, {320, 240, {120, 60, 30}}}},
+                   {"yuy2", "YUY2", {{640, 480, {30}}, {320, 240, {30}}}}};
+    cam.settings = {"mjpeg", 640, 480, 60, 0, false, false};
+    s.cameras = {cam};
+    CHECK(camera_setting_id("a/b~c") == "/sources/face/cameras/a~1b~0c");
+
+    // The button at the right of the camera row opens its options, and the rest of the row still selects it.
+    view.set_page(DashboardView::Page::Cameras);
+    view.render(c, s, {}, std::nullopt);
+    auto r = view.click({600, 282});
+    REQUIRE(r.camera);
+    CHECK(*r.camera == cam.id);
+    view.render(c, s, {}, std::nullopt);
+    view.click({1090, 282});
+    CHECK(view.page() == DashboardView::Page::CameraOptions);
+    CHECK(view.options_camera() == cam.id);
+
+    // The rows are 82 px from y 124, at the right of the preview: Rotation, Horizontal Flip, Vertical Flip, Format,
+    // Resolution, Frame Rate.
+    view.render(c, s, {}, std::nullopt);
+    auto setting = [&](Point p) {
+        auto res = view.click(p);
+        REQUIRE(res.output_setting);
+        CHECK(res.output_setting->first == "/sources/face/cameras/1e45:0209@1-1");
+        return nlohmann::json::parse(res.output_setting->second);
+    };
+    auto v = setting({744 + 96 + 48, 160});   // The 90 degree segment.
+    CHECK(v["rotate"] == 90);
+    CHECK(v["format"] == "mjpeg");
+    CHECK(v["width"] == 640);
+    v = setting({1100, 206 + 41});
+    CHECK(v["flip_h"] == true);
+    CHECK(v["rotate"] == 0);
+    // YUY2 has only 30 fps, so the format change also moves the rate to 30.
+    bool yuy2 = false;
+    for (float x = 600; x < 1140 && !yuy2; x += 20) {
+        auto res = view.click({x, 370 + 41});
+        if (res.output_setting) {
+            auto j = nlohmann::json::parse(res.output_setting->second);
+            if (j["format"] == "yuy2") {
+                yuy2 = true;
+                CHECK(j["fps"] == 30);
+                CHECK(j["width"] == 640);
+            }
+        }
+    }
+    CHECK(yuy2);
+
+    // The Resolution row opens the list of sizes, and a size keeps the nearest rate that it has.
+    view.click({800, 452 + 41});
+    CHECK(view.page() == DashboardView::Page::CameraResolution);
+    view.render(c, s, {}, std::nullopt);
+    v = setting({300, 140 + 80 + 35});
+    CHECK(v["width"] == 320);
+    CHECK(v["height"] == 240);
+    CHECK(v["fps"] == 60);
+    view.click({60, 70});
+    CHECK(view.page() == DashboardView::Page::CameraOptions);
+    view.render(c, s, {}, std::nullopt);
+    view.click({60, 70});
+    CHECK(view.page() == DashboardView::Page::Cameras);
+
+    // The preview of the camera draws in the box at the left, and a preview of another camera does not.
+    CameraPreview pv{cam.id, 40, 30, std::vector<uint8_t>(40 * 30, 200), 1};
+    s.preview = &pv;
+    view.set_page(DashboardView::Page::CameraOptions);
+    view.render(c, s, {}, std::nullopt);
+    const auto at = [&](int x, int y) { return c.data()[(size_t(y) * DashboardView::kWidth + x) * 4]; };
+    CHECK(at(56 + 200, 124 + 150) == 200);
+    pv.camera = "other";
+    view.render(c, s, {}, std::nullopt);
+    CHECK(at(56 + 200, 124 + 150) != 200);
+    s.preview = nullptr;
+
+    // A camera that is not connected shows a note and no settings.
+    view.set_options_camera("gone");
+    view.set_page(DashboardView::Page::CameraOptions);
+    view.render(c, s, {}, std::nullopt);
+    for (float y = 130; y < 600; y += 20)
+        CHECK_FALSE(view.click({600, y}).output_setting);
 }

@@ -4,7 +4,6 @@
 		"mouthTracking" : true,
 		"mouthSource" : "frunk",
 		"mouthRate" : 120,
-		"mouthMirror" : true,
 		"outputVrcft" : true,
 		"outputVrcNative" : false,
 		"outputBabbleOsc" : false,

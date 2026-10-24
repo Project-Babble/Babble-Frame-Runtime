@@ -45,6 +45,9 @@ json merge_config(json defaults, const json &user);
 // that any layer sets stays as it is. The layers are oldest first. It removes "output" from config and returns the old
 // choice, or "" if no layer has one.
 std::string migrate_output_choice(json &config, const std::vector<const json *> &layers);
+// Moves a saved "pipelines.face.mirror" (the old global Mirror Image switch) to "sources.face.tracker_flip_h", the
+// default horizontal flip of the Babble tracker, unless a layer already sets that. Returns true if it moved a value.
+bool migrate_face_mirror(json &config, const std::vector<const json *> &layers);
 
 // Resets each key of cfg that has a JSON kind different from defaults, and returns the keys that it reset.
 std::vector<std::string> fix_types(json &cfg, const json &defaults);

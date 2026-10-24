@@ -153,7 +153,6 @@ TEST_CASE("the SteamVR Settings section maps to live runtime settings") {
         {"gazeSmoothing", {"/pipelines/gaze/smoothing", Type::Int}},
         {"combineWiden", {"/pipelines/eye/combine_widen", Type::Bool}},
         {"combineDilation", {"/pipelines/eye/combine_dilation", Type::Bool}},
-        {"mouthMirror", {"/pipelines/face/mirror", Type::Bool}},
         {"debugOverlay", {"/dashboard/enabled", Type::Bool}},
     };
 #if BABBLE_FRUNK_MOUTH
@@ -182,7 +181,8 @@ TEST_CASE("the SteamVR Settings section maps to live runtime settings") {
     CHECK((*d)["pipelines"]["gaze"]["smoothing"] == 0);   // Gaze smoothing is off unless the user turns it on.
     CHECK((*d)["pipelines"]["eye"]["combine_widen"] == false);   // Each eye sends its own Widen and dilation.
     CHECK((*d)["pipelines"]["eye"]["combine_dilation"] == false);
-    CHECK((*d)["pipelines"]["face"]["mirror"] == true);   // The USB face tracker image is mirrored by default.
+    CHECK((*d)["sources"]["face"]["tracker_flip_h"] == true);   // The Babble tracker image is flipped by default.
+    CHECK_FALSE((*d)["pipelines"]["face"].contains("mirror"));
     CHECK((*d)["dashboard"]["enabled"] == true);    // The Babble tab is on after a new install.
 #if BABBLE_FRUNK_MOUTH
     CHECK((*d)["mouth_source"] == "frunk");         // The default is the Frame cameras unless the user selects USB.
@@ -192,6 +192,23 @@ TEST_CASE("the SteamVR Settings section maps to live runtime settings") {
     json cfg = *d;
     cfg["steamvr_settings"]["values"].push_back({{"key", "bogus"}, {"id", "/sources/eye/ctrl_base_candidates"}});
     CHECK(SteamVrSettingsBridge::entries_from_config(cfg).size() == want.size());
+}
+
+TEST_CASE("the old Mirror Image switch becomes the default flip of the Babble tracker") {
+    const json old_settings = {{"pipelines", {{"face", {{"mirror", false}}}}}};
+    json cfg = {{"pipelines", {{"face", {{"mirror", false}, {"rotate", 0}}}}}, {"sources", {{"face", {{"tracker_flip_h", true}}}}}};
+    CHECK(migrate_face_mirror(cfg, {&old_settings}));
+    CHECK(cfg["sources"]["face"]["tracker_flip_h"] == false);
+    CHECK_FALSE(cfg["pipelines"]["face"].contains("mirror"));
+    CHECK(cfg["pipelines"]["face"]["rotate"] == 0);
+
+    // A layer that already sets the new key wins, and without the old key nothing changes.
+    const json both = {{"pipelines", {{"face", {{"mirror", false}}}}}, {"sources", {{"face", {{"tracker_flip_h", true}}}}}};
+    cfg["sources"]["face"]["tracker_flip_h"] = true;
+    CHECK_FALSE(migrate_face_mirror(cfg, {&both}));
+    CHECK(cfg["sources"]["face"]["tracker_flip_h"] == true);
+    const json none = json::object();
+    CHECK_FALSE(migrate_face_mirror(cfg, {&none}));
 }
 
 TEST_CASE("the old single output choice becomes the output switches") {

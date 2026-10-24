@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <fstream>
+#include <optional>
 #include <sstream>
 
 namespace {
@@ -127,6 +128,23 @@ std::string migrate_output_choice(json &config, const std::vector<const json *> 
     return old;
 }
 
+bool migrate_face_mirror(json &config, const std::vector<const json *> &layers) {
+    std::optional<bool> mirror;
+    bool flip_set = false;
+    for (const json *layer : layers) {
+        const json &face = section(section(*layer, "pipelines"), "face");
+        if (face.contains("mirror") && face["mirror"].is_boolean())
+            mirror = face["mirror"].get<bool>();
+        flip_set |= section(section(*layer, "sources"), "face").contains("tracker_flip_h");
+    }
+    if (config.contains("pipelines") && config["pipelines"].contains("face") && config["pipelines"]["face"].is_object())
+        config["pipelines"]["face"].erase("mirror");
+    if (!mirror || flip_set)
+        return false;
+    config["sources"]["face"]["tracker_flip_h"] = *mirror;
+    return true;
+}
+
 std::filesystem::path default_settings_file() { return paths::config_dir() / "settings.json"; }
 
 bool save_setting(const std::filesystem::path &settings_file, const json::json_pointer &where, const json &value,
@@ -194,6 +212,7 @@ ConfigLoad load_config(const std::optional<std::filesystem::path> &user_file_ove
     if (out.settings_loaded)
         leaves(settings_layer, "", out.settings_overrides);
     out.legacy_output = migrate_output_choice(out.config, {&user_layer, &settings_layer});
+    migrate_face_mirror(out.config, {&user_layer, &settings_layer});
     if (defaults)
         out.type_fixes = fix_types(out.config, *defaults);
     return out;

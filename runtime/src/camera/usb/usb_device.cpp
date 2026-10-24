@@ -129,8 +129,14 @@ void Device::close() {
 }
 
 std::vector<uint8_t> Device::config_descriptor() const {
+    Found f;
+    f.sysfs = sysfs_;
+    return usb::config_descriptor(f);
+}
+
+std::vector<uint8_t> config_descriptor(const Found &f) {
     // The sysfs "descriptors" file has the 18-byte device descriptor and then the configurations.
-    std::ifstream in(sysfs_ + "/descriptors", std::ios::binary);
+    std::ifstream in(f.sysfs + "/descriptors", std::ios::binary);
     std::vector<uint8_t> all((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     if (all.size() <= 18)
         return {};
@@ -260,6 +266,119 @@ bool BulkReader::wait(int timeout_ms, const std::function<void(const uint8_t *, 
 }
 
 void BulkReader::stop() {
+    if (!dev_.is_open()) {
+        in_flight_ = 0;
+        return;
+    }
+    for (auto &u : urbs_)
+        ioctl(dev_.fd(), USBDEVFS_DISCARDURB, u.get());
+    // Reap all submitted transfers, so that the kernel does not write into the buffers.
+    for (int tries = 0; in_flight_ > 0 && tries < 50; tries++) {
+        usbdevfs_urb *urb = nullptr;
+        if (ioctl(dev_.fd(), USBDEVFS_REAPURBNDELAY, &urb) == 0) {
+            in_flight_--;
+            continue;
+        }
+        if (errno != EAGAIN)
+            break;
+        usleep(2000);
+    }
+    in_flight_ = 0;
+}
+
+void IsoReader::UrbFree::operator()(usbdevfs_urb *u) const { ::operator delete(u); }
+
+IsoReader::IsoReader(Device &dev, uint8_t endpoint, size_t packet_bytes, int packets, int count)
+    : dev_(dev), endpoint_(endpoint), packet_bytes_(packet_bytes), packets_(packets) {
+    // The URB ends with an array of one packet descriptor for each packet.
+    const size_t urb_bytes = sizeof(usbdevfs_urb) + size_t(packets) * sizeof(usbdevfs_iso_packet_desc);
+    for (int i = 0; i < count; i++) {
+        urbs_.emplace_back(static_cast<usbdevfs_urb *>(::operator new(urb_bytes)));
+        memset(urbs_.back().get(), 0, urb_bytes);
+        buffers_.emplace_back(packet_bytes * size_t(packets));
+    }
+}
+
+IsoReader::~IsoReader() { stop(); }
+
+bool IsoReader::submit(usbdevfs_urb *urb) {
+    const size_t i = size_t(reinterpret_cast<uintptr_t>(urb->usercontext));
+    memset(urb, 0, sizeof(usbdevfs_urb) + size_t(packets_) * sizeof(usbdevfs_iso_packet_desc));
+    urb->type = USBDEVFS_URB_TYPE_ISO;
+    urb->endpoint = endpoint_;
+    urb->flags = USBDEVFS_URB_ISO_ASAP;
+    urb->buffer = buffers_[i].data();
+    urb->buffer_length = int(buffers_[i].size());
+    urb->number_of_packets = packets_;
+    urb->usercontext = reinterpret_cast<void *>(i);
+    for (int k = 0; k < packets_; k++)
+        urb->iso_frame_desc[k].length = unsigned(packet_bytes_);
+    if (ioctl(dev_.fd(), USBDEVFS_SUBMITURB, urb) != 0)
+        return false;
+    in_flight_++;
+    return true;
+}
+
+bool IsoReader::start(std::string *error) {
+    for (size_t i = 0; i < urbs_.size(); i++) {
+        urbs_[i]->usercontext = reinterpret_cast<void *>(i);
+        if (!submit(urbs_[i].get())) {
+            if (error)
+                *error = std::string("submit isochronous transfer: ") + strerror(errno);
+            stop();
+            return false;
+        }
+    }
+    return true;
+}
+
+bool IsoReader::wait(int timeout_ms, const std::function<void(const uint8_t *, size_t)> &on_data,
+                     std::string *error) {
+    pollfd p{dev_.fd(), POLLOUT, 0};
+    const int r = poll(&p, 1, timeout_ms);
+    if (r < 0 && errno != EINTR) {
+        if (error)
+            *error = std::string("poll: ") + strerror(errno);
+        return false;
+    }
+    if (p.revents & (POLLERR | POLLHUP)) {
+        if (error)
+            *error = "device disconnected";
+        return false;
+    }
+    for (;;) {
+        usbdevfs_urb *urb = nullptr;
+        if (ioctl(dev_.fd(), USBDEVFS_REAPURBNDELAY, &urb) != 0) {
+            if (errno == EAGAIN)
+                return true;
+            if (error)
+                *error = errno == ENODEV ? std::string("device disconnected") : std::string("reap: ") + strerror(errno);
+            return false;
+        }
+        in_flight_--;
+        if (urb->status == -ENODEV || urb->status == -ESHUTDOWN) {
+            if (error)
+                *error = "device disconnected";
+            return false;
+        }
+        // The data of packet k starts at k times the packet size, whatever the length of the packets before it.
+        // Empty packets are normal, and a packet with an error is skipped.
+        const auto *base = static_cast<const uint8_t *>(urb->buffer);
+        for (int k = 0; k < urb->number_of_packets; k++) {
+            const auto &d = urb->iso_frame_desc[k];
+            if (d.status == 0 && d.actual_length > 0)
+                on_data(base + size_t(k) * packet_bytes_, d.actual_length);
+        }
+        if (!submit(urb)) {
+            if (error)
+                *error = errno == ENODEV ? std::string("device disconnected")
+                                         : std::string("resubmit isochronous transfer: ") + strerror(errno);
+            return false;
+        }
+    }
+}
+
+void IsoReader::stop() {
     if (!dev_.is_open()) {
         in_flight_ = 0;
         return;

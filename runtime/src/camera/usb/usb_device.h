@@ -33,6 +33,9 @@ std::string device_id(const Found &f);
 // Returns a human-readable name as "Manufacturer Product".
 std::string device_label(const Found &f);
 
+// Returns the full active configuration descriptor from sysfs. This reads a file, so it does not open the device.
+std::vector<uint8_t> config_descriptor(const Found &f);
+
 class Device {
 public:
     ~Device();
@@ -58,15 +61,26 @@ private:
     std::vector<uint8_t> claimed_;
 };
 
-// Keeps several bulk IN transfers in the queue of one endpoint, so that the device can always send.
-class BulkReader {
+// Reads one IN endpoint with several transfers in its queue, so that the device can always send.
+class StreamReader {
+public:
+    virtual ~StreamReader() = default;
+    virtual bool start(std::string *error) = 0;
+    // Sends the data of completed transfers to on_data, and returns false if the device is gone or failed.
+    virtual bool wait(int timeout_ms, const std::function<void(const uint8_t *, size_t)> &on_data,
+                      std::string *error) = 0;
+    virtual void stop() = 0;
+};
+
+// Keeps several bulk IN transfers in the queue of one endpoint.
+class BulkReader : public StreamReader {
 public:
     BulkReader(Device &dev, uint8_t endpoint, size_t transfer_bytes, int count = 4);
-    ~BulkReader();
-    bool start(std::string *error);
-    // Sends the data of completed transfers to on_data, and returns false if the device is gone or failed.
-    bool wait(int timeout_ms, const std::function<void(const uint8_t *, size_t)> &on_data, std::string *error);
-    void stop();
+    ~BulkReader() override;
+    bool start(std::string *error) override;
+    bool wait(int timeout_ms, const std::function<void(const uint8_t *, size_t)> &on_data,
+              std::string *error) override;
+    void stop() override;
 
 private:
     bool submit(usbdevfs_urb *urb);
@@ -74,6 +88,31 @@ private:
     uint8_t endpoint_;
     size_t bytes_;
     std::vector<std::unique_ptr<usbdevfs_urb>> urbs_;
+    std::vector<std::vector<uint8_t>> buffers_;
+    int in_flight_ = 0;
+};
+
+// Keeps several isochronous IN transfers in the queue of one endpoint. Each packet of a transfer goes to on_data
+// on its own, because a UVC device puts one payload with its own header in each packet.
+class IsoReader : public StreamReader {
+public:
+    IsoReader(Device &dev, uint8_t endpoint, size_t packet_bytes, int packets = 32, int count = 4);
+    ~IsoReader() override;
+    bool start(std::string *error) override;
+    bool wait(int timeout_ms, const std::function<void(const uint8_t *, size_t)> &on_data,
+              std::string *error) override;
+    void stop() override;
+
+private:
+    struct UrbFree {
+        void operator()(usbdevfs_urb *u) const;
+    };
+    bool submit(usbdevfs_urb *urb);
+    Device &dev_;
+    uint8_t endpoint_;
+    size_t packet_bytes_;
+    int packets_;
+    std::vector<std::unique_ptr<usbdevfs_urb, UrbFree>> urbs_;
     std::vector<std::vector<uint8_t>> buffers_;
     int in_flight_ = 0;
 };

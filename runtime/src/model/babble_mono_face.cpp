@@ -40,7 +40,6 @@ bool BabbleMonoFace::init() {
     const std::string flip = cfg_.value("flip", "none");
     flip_h_ = flip.find('h') != std::string::npos;
     flip_v_ = flip.find('v') != std::string::npos;
-    mirror_ = cfg_.value("mirror", false);
 
     runner_ = std::make_unique<ExecuTorchRunner>();
     if (!runner_->load(model_path("model")))
@@ -78,20 +77,12 @@ bool BabbleMonoFace::init() {
     input_.resize(kSize * kSize);
     out_.resize(face::kShapes.size());
     values_.resize(face::kShapes.size());
-    LOG.info("pipeline %s: mono face model on %s (%s, roi %s, rotate %d, flip %s, mirror %s, gain %.2f, calibration %s)",
+    LOG.info("pipeline %s: mono face model on %s (%s, roi %s, rotate %d, flip %s, gain %.2f, calibration %s)",
              name_.c_str(), source_.c_str(), in[0].dtype == DType::F16 ? "fp16" : "fp32",
              roi_.w ? (std::to_string(roi_.x) + "," + std::to_string(roi_.y) + " " + std::to_string(roi_.w) + "x" +
                        std::to_string(roi_.h)).c_str()
                     : "full",
-             rot, flip.c_str(), mirror_ ? "on" : "off", gain_, cal.value("mode", "auto").c_str());
-    return true;
-}
-
-bool BabbleMonoFace::set_option(const std::string &key, const nlohmann::json &value) {
-    if (key != "mirror" || !value.is_boolean())
-        return false;
-    if (value.get<bool>() != mirror_.exchange(value.get<bool>()))
-        LOG.info("pipeline %s: mirror %s", name_.c_str(), value.get<bool>() ? "on" : "off");
+             rot, flip.c_str(), gain_, cal.value("mode", "auto").c_str());
     return true;
 }
 
@@ -103,9 +94,8 @@ void BabbleMonoFace::prepare(const Frame &f, float *input) {
     const uint32_t w = std::min<uint32_t>(cur.width, kMaxSide), h = std::min<uint32_t>(cur.height, kMaxSide);
     cur.width = w;
     cur.height = h;
-    // The mirror fixes the left and right swap that users see with the Babble face tracker.
-    const bool flip_h = flip_h_ != mirror_.load(std::memory_order_relaxed);
-    if ((gain_ != 1.0f || flip_h || flip_v_ || quarter_turns_) && tmp_a_.size() < size_t(w) * h) {
+    // The USB source already applies the rotation and flips of each camera, so these are for special setups.
+    if ((gain_ != 1.0f || flip_h_ || flip_v_ || quarter_turns_) && tmp_a_.size() < size_t(w) * h) {
         tmp_a_.resize(size_t(w) * h);
         tmp_b_.resize(size_t(w) * h);
     }
@@ -117,9 +107,9 @@ void BabbleMonoFace::prepare(const Frame &f, float *input) {
                     uint8_t(std::clamp(std::lround(cur.data[size_t(y) * cur.stride + x] * gain_), 0L, 255L));
         cur = {tmp_a_.data(), w, h, w};
     }
-    if (flip_h || flip_v_) {
+    if (flip_h_ || flip_v_) {
         uint8_t *dst = cur.data == tmp_a_.data() ? tmp_b_.data() : tmp_a_.data();
-        if (flip_h) {
+        if (flip_h_) {
             img::flip_horizontal(cur, {dst, w, h, w});
             cur = {dst, w, h, w};
         }

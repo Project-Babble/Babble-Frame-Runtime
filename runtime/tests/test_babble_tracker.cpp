@@ -1,6 +1,7 @@
 // These tests use data from a real Babble face tracker (OpenIris, USB 303a:8000).
 #include <doctest/doctest.h>
 
+#include "camera/usb/babble_usb_source.h"
 #include "camera/usb/jpeg.h"
 #include "camera/usb/uvc.h"
 #include "core/metrics.h"
@@ -20,6 +21,7 @@
 #include <vector>
 
 using namespace babble;
+using json = nlohmann::json;
 
 namespace {
 
@@ -63,20 +65,179 @@ TEST_CASE("UVC descriptors of the Babble tracker parse to its bulk MJPEG stream"
     CHECK(info->endpoint == 0x83);
     CHECK(info->bulk);
     CHECK(info->endpoint_max_packet == 64);
-    CHECK(info->mjpeg_format == 1);
-    REQUIRE(info->mjpeg_frames.size() == 4);
-    for (const auto &f : info->mjpeg_frames) {
+    CHECK(info->alts.empty());
+    REQUIRE(info->formats.size() == 1);
+    CHECK(info->formats[0].kind == uvc::FormatKind::Mjpeg);
+    CHECK(info->formats[0].index == 1);
+    REQUIRE(info->formats[0].frames.size() == 4);
+    for (const auto &f : info->formats[0].frames) {
         CHECK(f.width == 240);
         CHECK(f.height == 240);
         CHECK(f.default_interval == 166666);   // The interval of 166666 is 60 fps.
     }
-    const auto *pick = uvc::pick_frame(*info, 240, 240);
+    const auto pick = uvc::pick_mode(*info, {uvc::FormatKind::Mjpeg, 240, 240, 0});
     REQUIRE(pick);
-    CHECK(pick->index == 1);
+    CHECK(pick->frame->index == 1);
+    CHECK(pick->interval == 166666);
+    // The default mode of the source (240x240 at 30 fps) still streams the tracker at its own rate.
+    CHECK(uvc::pick_mode(*info, {uvc::FormatKind::Yuy2, 240, 240, 30})->format->kind == uvc::FormatKind::Mjpeg);
 
     // This is not a video device because it has only the CDC serial part.
     const uint8_t cdc_only[] = {9, 2, 18, 0, 1, 1, 0, 0x80, 50, 9, 4, 0, 0, 1, 2, 2, 0, 0};
     CHECK_FALSE(uvc::parse_config(cdc_only, sizeof(cdc_only), &err));
+}
+
+TEST_CASE("UVC descriptors of an isochronous camera parse to its MJPEG and YUY2 modes and its alts") {
+    // This is the "Generic HD Camera" 1e45:0209, read from sysfs on the headset.
+    const auto all = read_file("hd_camera_1e45_0209_descriptors.bin");
+    REQUIRE(all.size() > 18);
+    std::string err;
+    auto info = uvc::parse_config(all.data() + 18, all.size() - 18, &err);
+    REQUIRE_MESSAGE(info, err);
+    CHECK(info->bcd_uvc == 0x0100);
+    CHECK_FALSE(info->bulk);
+    CHECK(info->endpoint == 0x81);
+    REQUIRE(info->alts.size() == 7);
+    CHECK(info->alts.front().bytes == 128);
+    CHECK(info->alts[4].bytes == 2048);    // 2 x 1024, with the high-bandwidth multiplier.
+    CHECK(info->alts.back().bytes == 3072);
+    CHECK(info->alts.back().alt == 7);
+    REQUIRE(info->formats.size() == 2);
+    const auto &mjpeg = info->formats[0], &yuy2 = info->formats[1];
+    CHECK(mjpeg.kind == uvc::FormatKind::Mjpeg);
+    CHECK(yuy2.kind == uvc::FormatKind::Yuy2);
+    CHECK(yuy2.index == 2);
+    CHECK(yuy2.bits_per_pixel == 16);
+    REQUIRE(mjpeg.frames.size() == 5);
+    CHECK(mjpeg.frames[0].width == 640);
+    CHECK(mjpeg.frames[0].intervals == std::vector<uint32_t>{83333, 166666, 333333, 400000, 500000});
+    CHECK(uvc::frame_rates(mjpeg.frames[0]) == std::vector<int>{120, 60, 30, 25, 20});
+    REQUIRE(yuy2.frames.size() == 5);
+    CHECK(uvc::frame_rates(yuy2.frames[0]) == std::vector<int>{30});
+
+    // Exact mode, nearest size, nearest rate, and a format that the camera does not have.
+    auto p = uvc::pick_mode(*info, {uvc::FormatKind::Yuy2, 320, 240, 30});
+    REQUIRE(p);
+    CHECK(p->format->index == 2);
+    CHECK(p->frame->index == 3);
+    CHECK(p->interval == 333333);
+    p = uvc::pick_mode(*info, {uvc::FormatKind::Mjpeg, 240, 240, 55});
+    CHECK(p->frame->width == 320);   // 320x240 is the nearest to 240x240.
+    CHECK(p->interval == 166666);    // 60 fps is the nearest to 55 fps.
+    p = uvc::pick_mode(*info, {uvc::FormatKind::Nv12, 640, 480, 0});
+    CHECK(p->format->kind == uvc::FormatKind::Mjpeg);
+    CHECK(p->interval == 83333);     // Without a rate, the camera default is used.
+    CHECK(uvc::format_from_key("yuy2") == uvc::FormatKind::Yuy2);
+    CHECK(uvc::format_from_key("h264") == uvc::FormatKind::Unknown);
+}
+
+TEST_CASE("uncompressed UVC frames convert to grayscale and wrong sizes are rejected") {
+    std::vector<uint8_t> out(16);
+    int w = 0, h = 0;
+    const std::vector<uint8_t> yuy2{10, 1, 20, 2, 30, 3, 40, 4};   // Two rows of two pixels: Y0 U Y1 V.
+    REQUIRE(uvc::to_gray(uvc::FormatKind::Yuy2, yuy2.data(), yuy2.size(), 2, 2, out.data(), out.size(), &w, &h));
+    CHECK(w == 2);
+    CHECK(h == 2);
+    CHECK(std::vector<uint8_t>(out.begin(), out.begin() + 4) == std::vector<uint8_t>{10, 20, 30, 40});
+    REQUIRE(uvc::to_gray(uvc::FormatKind::Uyvy, yuy2.data(), yuy2.size(), 2, 2, out.data(), out.size(), &w, &h));
+    CHECK(std::vector<uint8_t>(out.begin(), out.begin() + 4) == std::vector<uint8_t>{1, 2, 3, 4});
+    const std::vector<uint8_t> nv12{5, 6, 7, 8, 99, 99};   // The Y plane, and then one UV pair.
+    REQUIRE(uvc::to_gray(uvc::FormatKind::Nv12, nv12.data(), nv12.size(), 2, 2, out.data(), out.size(), &w, &h));
+    CHECK(std::vector<uint8_t>(out.begin(), out.begin() + 4) == std::vector<uint8_t>{5, 6, 7, 8});
+    REQUIRE(uvc::to_gray(uvc::FormatKind::Grey, nv12.data(), 4, 2, 2, out.data(), out.size(), &w, &h));
+    CHECK(out[3] == 8);
+    // A frame with missing bytes, or one that does not fit, fails.
+    CHECK_FALSE(uvc::to_gray(uvc::FormatKind::Yuy2, yuy2.data(), 6, 2, 2, out.data(), out.size(), &w, &h));
+    CHECK_FALSE(uvc::to_gray(uvc::FormatKind::Grey, nv12.data(), 4, 2, 2, out.data(), 3, &w, &h));
+    CHECK_FALSE(uvc::to_gray(uvc::FormatKind::Mjpeg, yuy2.data(), yuy2.size(), 2, 2, out.data(), out.size(), &w, &h));
+}
+
+TEST_CASE("isochronous packets rebuild a frame: one payload per packet, FID toggles without EOF") {
+    uvc::FrameAssembler a(64);
+    // Each packet has its own header, and a packet with only a header carries no data.
+    CHECK_FALSE(push(a, payload(0, false, {1, 2})));
+    CHECK_FALSE(push(a, payload(0, false, {})));
+    CHECK_FALSE(push(a, payload(0, false, {3})));
+    CHECK(push(a, payload(1, false, {4})));
+    CHECK(a.frame() == std::vector<uint8_t>{1, 2, 3});
+    CHECK(push(a, payload(1, true, {5})));
+    CHECK(a.frame() == std::vector<uint8_t>{4, 5});
+}
+
+TEST_CASE("each USB camera has its own settings, with a flip for the Babble tracker by default") {
+    json threads = json::object();
+    LatestSlot<StereoFrame> slot;
+    StatsRegistry stats;
+    BabbleUsbSource src(json{{"type", "babble_usb"}, {"enabled", false},
+                             {"cameras", {{"1e45:0209@1-1", {{"format", "yuy2"}, {"rotate", 90}}}}}},
+                        SourceDeps{"face", threads, slot, stats});
+    usb::Found tracker, webcam;
+    tracker.vendor = 0x303a;
+    tracker.product = 0x8000;
+    tracker.serial = "ABC";
+    webcam.vendor = 0x1e45;
+    webcam.product = 0x0209;
+    webcam.sysfs = "/sys/bus/usb/devices/1-1";
+    REQUIRE(usb::device_id(webcam) == "1e45:0209@1-1");
+
+    auto t = src.settings_for(tracker);
+    CHECK(t.flip_h);
+    CHECK_FALSE(t.flip_v);
+    CHECK(t.mode == uvc::Mode{uvc::FormatKind::Mjpeg, 240, 240, 30});
+    auto w = src.settings_for(webcam);
+    CHECK_FALSE(w.flip_h);
+    CHECK(w.rotate == 90);
+    CHECK(w.mode.format == uvc::FormatKind::Yuy2);
+
+    // One key, or the whole object as the dashboard sends it.
+    REQUIRE(src.set_option("cameras/303a:8000:ABC/flip_h", false));
+    CHECK_FALSE(src.settings_for(tracker).flip_h);
+    REQUIRE(src.set_option("cameras/1e45:0209@1-1",
+                           json{{"format", "mjpeg"}, {"width", 640}, {"height", 480}, {"fps", 60}, {"rotate", 0},
+                                {"flip_h", true}, {"flip_v", true}}));
+    w = src.settings_for(webcam);
+    CHECK(w.mode == uvc::Mode{uvc::FormatKind::Mjpeg, 640, 480, 60});
+    CHECK(w.flip_h);
+    CHECK(w.flip_v);
+    CHECK(w.rotate == 0);
+    CHECK(BabbleUsbSource::to_json(w)["format"] == "mjpeg");
+    // Bad values are refused and change nothing.
+    CHECK_FALSE(src.set_option("cameras/1e45:0209@1-1/rotate", 45));
+    CHECK_FALSE(src.set_option("cameras/1e45:0209@1-1/format", "h264"));
+    CHECK_FALSE(src.set_option("cameras/1e45:0209@1-1", json{{"flip_h", "yes"}}));
+    CHECK_FALSE(src.set_option("cameras/1e45:0209@1-1/colour", true));
+    CHECK(src.settings_for(webcam).rotate == 0);
+
+    // Without the old mirror, the tracker default can be no flip.
+    BabbleUsbSource plain(json{{"type", "babble_usb"}, {"enabled", false}, {"tracker_flip_h", false}},
+                          SourceDeps{"face2", threads, slot, stats});
+    CHECK_FALSE(plain.settings_for(tracker).flip_h);
+}
+
+TEST_CASE("the USB camera transform flips and then turns the image clockwise") {
+    // The 3x2 image is   1 2 3
+    //                    4 5 6
+    auto run = [](int rotate, bool fh, bool fv, int *w, int *h) {
+        std::vector<uint8_t> scratch[2];
+        scratch[0] = {1, 2, 3, 4, 5, 6};
+        std::vector<uint8_t> out(6);
+        BabbleUsbSource::transform(scratch, 3, 2, rotate, fh, fv, out.data(), w, h);
+        return out;
+    };
+    int w = 0, h = 0;
+    CHECK(run(0, false, false, &w, &h) == std::vector<uint8_t>{1, 2, 3, 4, 5, 6});
+    CHECK(run(0, true, false, &w, &h) == std::vector<uint8_t>{3, 2, 1, 6, 5, 4});
+    CHECK(run(0, false, true, &w, &h) == std::vector<uint8_t>{4, 5, 6, 1, 2, 3});
+    CHECK(run(0, true, true, &w, &h) == std::vector<uint8_t>{6, 5, 4, 3, 2, 1});
+    // A clockwise quarter turn makes a 2x3 image:  4 1 / 5 2 / 6 3
+    CHECK(run(90, false, false, &w, &h) == std::vector<uint8_t>{4, 1, 5, 2, 6, 3});
+    CHECK(w == 2);
+    CHECK(h == 3);
+    CHECK(run(180, false, false, &w, &h) == std::vector<uint8_t>{6, 5, 4, 3, 2, 1});
+    CHECK(w == 3);
+    CHECK(run(270, false, false, &w, &h) == std::vector<uint8_t>{3, 6, 2, 5, 1, 4});
+    // The flip comes first: a mirror and then a clockwise turn.
+    CHECK(run(90, true, false, &w, &h) == std::vector<uint8_t>{6, 3, 5, 2, 4, 1});
 }
 
 TEST_CASE("UVC probe blocks have the version's length and round-trip") {
@@ -289,18 +450,9 @@ TEST_CASE("the mono face pipeline crops the ROI and rotates before resizing") {
     CHECK(in[112 * 224 + 10] == 0.0f);
     CHECK(in[112 * 224 + 213] == 1.0f);
 
-    // The mirror switch flips the same way, and on top of a flip it cancels the flip.
-    auto mirror = make({{"mirror", true}});
-    mirror->prepare(f, in.data());
-    CHECK(in[112 * 224 + 10] == 0.0f);
-    CHECK(in[112 * 224 + 213] == 1.0f);
-    REQUIRE(mirror->set_option("mirror", false));
-    mirror->prepare(f, in.data());
+    // The mirror option is gone, because each USB camera has its own flips in the source.
+    auto old = make({{"mirror", true}});
+    old->prepare(f, in.data());
     CHECK(in[112 * 224 + 10] == 1.0f);
-    CHECK(in[112 * 224 + 213] == 0.0f);
-    CHECK_FALSE(mirror->set_option("mirror", "yes"));
-    auto both = make({{"flip", "h"}, {"mirror", true}});
-    both->prepare(f, in.data());
-    CHECK(in[112 * 224 + 10] == 1.0f);
-    CHECK(in[112 * 224 + 213] == 0.0f);
+    CHECK_FALSE(old->set_option("mirror", false));
 }

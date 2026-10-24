@@ -158,8 +158,17 @@ int main(int argc, char **argv) {
     // Show the camera row for a USB mouth source, and then its page with two cameras and an active tracker.
     Status usb = tracking;
     usb.mouth_source = "usb";
-    usb.cameras = {{"303a:8000:DEMO01", "Babble USB Tracker", "303a:8000 \u00b7 demo tracker"},
-                   {"046d:0825:DEMO02", "USB Webcam", "046d:0825 \u00b7 demo camera"}};
+    // A bulk MJPEG tracker, and an isochronous camera with MJPEG and YUY2, as the 1e45:0209 camera has them.
+    UsbCamera tracker{"303a:8000:DEMO01", "Babble USB Tracker", "303a:8000 \u00b7 demo tracker"};
+    tracker.formats = {{"mjpeg", "MJPEG", {{240, 240, {60}}}}};
+    tracker.settings = {"mjpeg", 240, 240, 60, 0, true, false};
+    UsbCamera webcam{"1e45:0209@1-1", "Generic HD Camera", "1e45:0209", true};
+    const std::vector<int> mjpeg_fps{120, 60, 30, 25, 20};
+    webcam.formats = {{"mjpeg", "MJPEG",
+                       {{640, 480, mjpeg_fps}, {352, 288, mjpeg_fps}, {320, 240, mjpeg_fps}, {160, 120, mjpeg_fps}}},
+                      {"yuy2", "YUY2", {{640, 480, {30}}, {352, 288, {30}}, {320, 240, {30}}, {160, 120, {30}}}}};
+    webcam.settings = {"mjpeg", 640, 480, 60, 90, false, false};
+    usb.cameras = {tracker, webcam};
     usb.camera = "303a:8000:DEMO01";
     usb.active_camera = usb.camera;
     view.render(c, usb, choices, std::nullopt);
@@ -173,12 +182,30 @@ int main(int argc, char **argv) {
     view.render(c, release, {choices[1], choices[2]}, std::nullopt);
     save(c, "settings_release");
     view.set_page(DashboardView::Page::Cameras);
-    Choice mirror{"/pipelines/face/mirror", "Mirror Image",
-                  "Turn off if left and right mouth movements are swapped on your avatar.", "", {0, 1}, 1, true};
-    mirror.page = ChoicePage::Cameras;
-    choices.push_back(mirror);
-    view.render(c, usb, choices, Point{600, 444});   // The pointer is on the second camera.
+    view.render(c, usb, choices, Point{600, 340});   // The pointer is on the second camera.
     save(c, "cameras");
+    view.set_options_camera(webcam.id);
+    view.set_page(DashboardView::Page::CameraOptions);
+    // A 90 degree turn makes the 640x480 image 225x300 in the preview box. The demo image is a soft gradient.
+    CameraPreview pv{webcam.id, 225, 300, std::vector<uint8_t>(225 * 300), 1};
+    for (int y = 0; y < 300; y++)
+        for (int x = 0; x < 225; x++)
+            pv.gray[size_t(y) * 225 + x] = uint8_t(40 + (x + y) * 160 / 525);
+    Status live = usb;
+    live.active_camera = webcam.id;
+    live.preview = &pv;
+    view.render(c, live, choices, std::nullopt);
+    save(c, "camera_options");
+    view.render(c, usb, choices, std::nullopt);
+    save(c, "camera_options_inactive");
+    view.set_page(DashboardView::Page::CameraResolution);
+    view.render(c, usb, choices, std::nullopt);
+    save(c, "camera_resolution");
+    view.set_options_camera(tracker.id);
+    view.set_page(DashboardView::Page::CameraOptions);
+    view.render(c, usb, choices, std::nullopt);
+    save(c, "camera_options_tracker");
+    view.set_page(DashboardView::Page::Cameras);
     Status none = usb;
     none.cameras.clear();
     none.camera.clear();

@@ -118,6 +118,8 @@
       "width": 240,
       "height": 240,
       "fps": 30,
+      "tracker_flip_h": true,
+      "cameras": {},
       "process_fps": 30,
       "tracking": true,
       "pause_when_absent": true,
@@ -202,7 +204,6 @@
       "gain": 1.0,
       "rotate": 0,
       "flip": "none",
-      "mirror": true,
       "one_euro": { "min_cutoff": 0.5, "beta": 3.0, "d_cutoff": 1.0 },
       "calibration": { "mode": "auto" }
     }
@@ -371,7 +372,6 @@
       { "key": "outputVrcNative", "id": "/outputs/vrc_native" },
       { "key": "outputBabbleOsc", "id": "/outputs/babble_osc" },
       { "key": "mouthRate", "id": "/sources/mouth/process_fps" },
-      { "key": "mouthMirror", "id": "/pipelines/face/mirror" },
       { "key": "eyeTracking", "id": "/sources/eye/tracking" },
       { "key": "eyeRateDivisor", "id": "/sources/eye/rate_divisor" },
       { "key": "opennessSource", "id": "/pipelines/eye/openness_source" },
@@ -421,12 +421,6 @@
         "page": "eye",
         "label": "Combine Pupil Dilation",
         "hint": "Both eyes get the average pupil dilation of the two eyes."
-      },
-      {
-        "id": "/pipelines/face/mirror",
-        "page": "cameras",
-        "label": "Mirror Image",
-        "hint": "Turn off if left and right mouth movements are swapped on your avatar."
       },
       {
         "id": "/sinks/camera_stream/active",

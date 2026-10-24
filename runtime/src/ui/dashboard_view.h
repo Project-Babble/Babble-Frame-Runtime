@@ -84,10 +84,49 @@ struct OutputModule {
 
 // A USB camera that the mouth can use.
 struct UsbCamera {
+    UsbCamera() = default;
+    UsbCamera(std::string id_, std::string label_, std::string detail_, bool iso_ = false)
+        : id(std::move(id_)), label(std::move(label_)), detail(std::move(detail_)), iso(iso_) {}
+
     std::string id;       // The value of usb::device_id(), which is also the setting value.
     std::string label;
     std::string detail;   // The USB ID and serial number.
+    bool iso = false;     // True if the camera streams over isochronous transfers.
+
+    struct Size {
+        int width = 0, height = 0;
+        std::vector<int> fps;   // The frame rates, highest first.
+        bool operator==(const Size &) const = default;
+    };
+    struct Format {
+        std::string key, label;   // For example "mjpeg" and "MJPEG".
+        std::vector<Size> sizes;
+        bool operator==(const Format &) const = default;
+    };
+    std::vector<Format> formats;   // The formats that the runtime can decode, which can be empty.
+
+    // The settings of the camera, with the mode that the camera streams for them.
+    struct Settings {
+        std::string format;
+        int width = 0, height = 0, fps = 0;
+        int rotate = 0;   // Clockwise, in degrees.
+        bool flip_h = false, flip_v = false;
+        bool operator==(const Settings &) const = default;
+    };
+    Settings settings;
+    bool operator==(const UsbCamera &) const = default;
 };
+
+// A small grayscale image of the latest frame of the camera that streams, for the camera options page.
+struct CameraPreview {
+    std::string camera;   // The UsbCamera id, or empty when no camera streams.
+    int width = 0, height = 0;
+    std::vector<uint8_t> gray;
+    uint64_t seq = 0;
+};
+
+// Returns the setting id of the settings of a USB camera, with the id escaped as a JSON pointer token.
+std::string camera_setting_id(const std::string &camera_id);
 
 // The row on the Diagnostics page for the optional dataset capture app.
 struct CaptureRow {
@@ -130,6 +169,7 @@ struct Status {
     std::map<std::string, std::string> choice_hints{};
     CaptureRow capture{};
     UpdateNotice update{};
+    const CameraPreview *preview = nullptr;   // The camera preview while the camera options page shows.
     // The data for the Outputs page, where pc_address "" means automatic.
     std::vector<OutputModule> outputs{};
     std::string pc_address{}, output_error{};
@@ -156,7 +196,7 @@ struct Point {
 class DashboardView {
 public:
     static constexpr int kWidth = 1200, kHeight = 750, kThumb = 128;
-    enum class Page { Home, Settings, Cameras, Diagnostics, Outputs, Eye, Mouth };
+    enum class Page { Home, Settings, Cameras, Diagnostics, Outputs, Eye, Mouth, CameraOptions, CameraResolution };
 
     bool load_fonts(const std::filesystem::path &dir);   // Loads NotoSans-Regular.ttf and NotoSans-Medium.ttf.
     bool load_icons(const std::filesystem::path &dir);   // Loads the optional logo PNG files.
@@ -197,13 +237,16 @@ public:
 
     Page page() const { return page_; }
     void set_page(Page p) { page_ = p; }
+    // The camera that the camera options pages show.
+    const std::string &options_camera() const { return options_camera_; }
+    void set_options_camera(const std::string &id) { options_camera_ = id; }
 
 private:
     struct Hit {
         enum Kind {
             Cog, Back, Option, Toggle, Visualizer, Restart, MouthSource, OpenCameras, Camera, Refresh,
             OpenDiagnostics, Verbose, WriteDiagnostics, CapturePrimary, CaptureRemove, Update, OpenOutputs,
-            OutputSetting, EditText, OpenEye, OpenMouth
+            OutputSetting, EditText, OpenEye, OpenMouth, OpenCameraOptions, OpenResolution
         } kind;
         Rect rect;
         size_t choice = 0;   // The choice index for Option, or the feed index for Toggle.
@@ -216,6 +259,8 @@ private:
     void render_eye_page(Canvas &c, const std::vector<Choice> &choices, const Status &s);
     void render_mouth_page(Canvas &c, const std::vector<Choice> &choices, const Status &s);
     void render_cameras(Canvas &c, const std::vector<Choice> &choices, const Status &s);
+    void render_camera_options(Canvas &c, const Status &s);
+    void render_camera_resolution(Canvas &c, const Status &s);
     void render_diagnostics(Canvas &c, const std::vector<Choice> &choices, const Status &s);
     void render_outputs(Canvas &c, const Status &s);
     // Draws a text setting as a button with its value, and returns its left edge.
@@ -227,8 +272,8 @@ private:
                        bool on_card = false);   // Returns the rect of the button.
     void render_back(Canvas &c, const char *title);
     float render_segments(Canvas &c, float right, float y, const std::vector<std::string> &labels, int selected,
-                          const std::function<void(size_t, const Rect &)> &hit,
-                          float seg_h = 64);   // Returns the left edge.
+                          const std::function<void(size_t, const Rect &)> &hit, float seg_h = 64,
+                          float seg_w = 160);   // Returns the left edge.
     void render_cog(Canvas &c);
     void render_switch(Canvas &c, Rect r, bool on, bool hover,
                        std::optional<Color> on_color = std::nullopt);   // on_color replaces the accent colour.
@@ -252,6 +297,7 @@ private:
     std::string fit(const Font &f, const std::string &text, float px, float max_w) const;
 
     Page page_ = Page::Home;
+    std::string options_camera_;   // The id of the camera on the camera options pages.
     uint64_t restart_armed_until_ns_ = 0;   // The end of the confirmation time for the restart button.
     uint64_t update_armed_until_ns_ = 0;    // The end of the confirmation time for the update pill.
     Font regular_, medium_;

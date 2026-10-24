@@ -35,15 +35,6 @@
 				"requires" : { "/settings/driver_babble/mouthTracking" : true }
 			},
 			{
-				"name" : "/settings/driver_babble/mouthMirror",
-				"control" : "toggle",
-				"label" : "Mirror USB Camera",
-				"text" : "Mirrors the image of a USB Babble face tracker. Turn off if left and right mouth movements are swapped on your avatar.",
-				"on_label" : "On",
-				"off_label" : "Off",
-				"requires" : { "/settings/driver_babble/mouthTracking" : true }
-			},
-			{
 				"name" : "/settings/driver_babble/eyeTracking",
 				"control" : "toggle",
 				"label" : "Eye Tracking",
