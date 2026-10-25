@@ -37,6 +37,10 @@ curl -fsSL https://raw.githubusercontent.com/Project-Babble/Babble-Frame-Runtime
 It downloads the newest release, checks it against the release's SHA-256 checksum, installs it in your home folder and restarts SteamVR. Its settings are in SteamVR Settings, under Expression Tracking. The Babble tab in the SteamVR dashboard is on after you install, and updates appear there next to the version. To hide the tab, turn off Show App Window.
 To uninstall, run `~/.local/share/babble-frame-runtime/uninstall.sh`.
 
+## VRCFT Module
+
+Until further notice, this [VRCFT Module](https://cdn.discordapp.com/attachments/1279163592440283240/1561139947597992016/VRCFaceTracking.Baballonia.zip?ex=6ade7ee0&is=6add2d60&hm=92b516967feec073c70adf231a947d09ca4caf820d78a6a73157607361b80b13&) is required 
+
 ## Building from source
 
 1. Get the source on a PC and copy it to the headset.
