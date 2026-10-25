@@ -69,6 +69,26 @@ std::string format_hz(double hz) {
     return buf;
 }
 
+// Returns the shown value of a choice, such as "On", "60 Hz" or the label of its option.
+std::string choice_value(const Choice &ch) {
+    std::string value = ch.boolean ? (ch.value != 0 ? "On" : "Off") : format_value(ch.value, ch.unit);
+    for (size_t k = 0; k < ch.options.size() && k < ch.option_labels.size(); k++)
+        if (std::fabs(ch.options[k] - ch.value) < 1e-6)
+            value = ch.option_labels[k];
+    return value;
+}
+
+bool eye_page(ChoicePage p) { return p == ChoicePage::Eye || p == ChoicePage::EyeSources || p == ChoicePage::EyeModifiers; }
+
+// Returns "Label value  ·  Label value" for the choices of one page.
+std::string page_summary(const std::vector<Choice> &choices, ChoicePage page) {
+    std::string out;
+    for (const Choice &ch : choices)
+        if (ch.page == page)
+            out += (out.empty() ? "" : "  \u00b7  ") + ch.label + " " + choice_value(ch);
+    return out;
+}
+
 std::string size_label(int w, int h) { return std::to_string(w) + " \u00d7 " + std::to_string(h); }
 
 // Returns the camera settings as the JSON object of the setting.
@@ -189,6 +209,10 @@ void DashboardView::render(Canvas &c, const Status &status, const std::vector<Ch
         render_diagnostics(c, choices, status);
     } else if (page_ == Page::Eye) {
         render_eye_page(c, choices, status);
+    } else if (page_ == Page::EyeSources) {
+        render_choice_page(c, "Data Sources", choices, ChoicePage::EyeSources, status);
+    } else if (page_ == Page::EyeModifiers) {
+        render_choice_page(c, "Modifiers", choices, ChoicePage::EyeModifiers, status);
     } else if (page_ == Page::Mouth) {
         render_mouth_page(c, choices, status);
     } else if (page_ == Page::Outputs) {
@@ -462,7 +486,12 @@ float DashboardView::render_choice_rows(Canvas &c, float y, float row_h, const s
             continue;
         }
         const float tx = render_block(c, y, Icon::Rate, row_h);
-        const float seg_w = 128, pad = 4;
+        float seg_w = 128;   // The segments of a row grow to fit their widest label.
+        for (size_t k = 0; k < ch.options.size(); k++)
+            seg_w = std::max(seg_w, medium_.measure(k < ch.option_labels.size() ? ch.option_labels[k]
+                                                                                 : format_value(ch.options[k], ch.unit),
+                                                    24) + 32);
+        const float pad = 4;
         const float ctl_w = seg_w * float(ch.options.size()) + 2 * pad;
         const Rect ctl{W - kMargin - 16 - ctl_w, y + seg_y, ctl_w, seg_h + 2 * pad};
         const auto live = s.choice_hints.find(ch.id);
@@ -496,14 +525,10 @@ void DashboardView::render_settings(Canvas &c, const std::vector<Choice> &choice
     // The Eye Tracking and Mouth Tracking rows show the current value of each setting on their page.
     std::string eye, mouth;
     for (const Choice &ch : choices) {
-        std::string *summary = ch.page == ChoicePage::Eye ? &eye : ch.page == ChoicePage::Mouth ? &mouth : nullptr;
+        std::string *summary = eye_page(ch.page) ? &eye : ch.page == ChoicePage::Mouth ? &mouth : nullptr;
         if (!summary)
             continue;
-        std::string value = ch.boolean ? (ch.value != 0 ? "On" : "Off") : format_value(ch.value, ch.unit);
-        for (size_t k = 0; k < ch.options.size() && k < ch.option_labels.size(); k++)
-            if (std::fabs(ch.options[k] - ch.value) < 1e-6)
-                value = ch.option_labels[k];
-        *summary += (summary->empty() ? "" : "  ·  ") + ch.label + " " + value;
+        *summary += (summary->empty() ? "" : "  ·  ") + ch.label + " " + choice_value(ch);
     }
     if (s.mouth_source_selectable)
         mouth += std::string(mouth.empty() ? "" : "  ·  ") + (s.mouth_source == "usb" ? "USB camera" : "Headset");
@@ -532,12 +557,31 @@ void DashboardView::render_settings(Canvas &c, const std::vector<Choice> &choice
     render_choice_rows(c, y, l.row_h, choices, ChoicePage::Settings, s);
 }
 
+// Draws the eye choices, and a row for each eye subpage that has choices: Data Sources and Modifiers.
 void DashboardView::render_eye_page(Canvas &c, const std::vector<Choice> &choices, const Status &s) {
     render_back(c, "Eye Tracking");
+    const std::string sources = page_summary(choices, ChoicePage::EyeSources);
+    const std::string modifiers = page_summary(choices, ChoicePage::EyeModifiers);
     const size_t rows = size_t(std::count_if(choices.begin(), choices.end(),
-                                             [](const Choice &ch) { return ch.page == ChoicePage::Eye; }));
+                                             [](const Choice &ch) { return ch.page == ChoicePage::Eye; })) +
+                        !sources.empty() + !modifiers.empty();
     const RowLayout l = row_layout(c, rows, 130);
-    render_choice_rows(c, l.top, l.row_h, choices, ChoicePage::Eye, s);
+    float y = render_choice_rows(c, l.top, l.row_h, choices, ChoicePage::Eye, s);
+    if (!sources.empty()) {
+        render_link_row(c, y, l.row_h, Icon::Eye, "Data Sources", sources, Hit::OpenEyeSources);
+        y += l.row_h;
+    }
+    if (!modifiers.empty())
+        render_link_row(c, y, l.row_h, Icon::Eye, "Modifiers", modifiers, Hit::OpenEyeModifiers);
+}
+
+void DashboardView::render_choice_page(Canvas &c, const char *title, const std::vector<Choice> &choices,
+                                       ChoicePage page, const Status &s) {
+    render_back(c, title);
+    const size_t rows =
+        size_t(std::count_if(choices.begin(), choices.end(), [&](const Choice &ch) { return ch.page == page; }));
+    const RowLayout l = row_layout(c, rows, 130);
+    render_choice_rows(c, l.top, l.row_h, choices, page, s);
 }
 
 void DashboardView::render_mouth_page(Canvas &c, const std::vector<Choice> &choices, const Status &s) {
@@ -640,7 +684,7 @@ Rect DashboardView::render_button(Canvas &c, float right, float y, const std::st
 // Draws an on/off setting row with a switch that a click near the switch changes.
 void DashboardView::render_switch_row(Canvas &c, float y, size_t index, const Choice &ch, float row_h) {
     const float W = float(c.width());
-    const float tx = render_block(c, y, ch.page == ChoicePage::Eye ? Icon::Eye : Icon::Camera, row_h);
+    const float tx = render_block(c, y, eye_page(ch.page) ? Icon::Eye : Icon::Camera, row_h);
     const bool on = ch.value != 0;
     const float d = (124 - row_h) / 2;   // This offset keeps the content of short rows in the centre.
     const Rect sw{W - kMargin - 92, y + 36 - d, 92, 52};
@@ -1181,7 +1225,8 @@ DashboardView::ClickResult DashboardView::click(Point p) {
             break;
         case Hit::Back:
             restart_armed_until_ns_ = 0;
-            page_ = page_ == Page::CameraResolution ? Page::CameraOptions
+            page_ = page_ == Page::EyeSources || page_ == Page::EyeModifiers ? Page::Eye
+                    : page_ == Page::CameraResolution ? Page::CameraOptions
                     : page_ == Page::CameraOptions  ? Page::Cameras
                     : page_ == Page::Cameras        ? Page::Mouth
                     : page_ == Page::Settings       ? Page::Home
@@ -1257,6 +1302,11 @@ DashboardView::ClickResult DashboardView::click(Point p) {
             break;
         case Hit::OpenResolution:
             page_ = Page::CameraResolution;
+            out.redraw = true;
+            break;
+        case Hit::OpenEyeSources:
+        case Hit::OpenEyeModifiers:
+            page_ = h.kind == Hit::OpenEyeSources ? Page::EyeSources : Page::EyeModifiers;
             out.redraw = true;
             break;
         case Hit::Refresh:

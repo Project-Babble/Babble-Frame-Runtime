@@ -148,11 +148,6 @@ TEST_CASE("the SteamVR Settings section maps to live runtime settings") {
     std::map<std::string, std::pair<std::string, Type>> want = {
         {"eyeTracking", {"/sources/eye/tracking", Type::Bool}},
         {"eyeRateDivisor", {"/sources/eye/rate_divisor", Type::Int}},
-        {"opennessSource", {"/pipelines/eye/openness_source", Type::String}},
-        {"gazeSource", {"/pipelines/gaze/gaze_source", Type::String}},
-        {"gazeSmoothing", {"/pipelines/gaze/smoothing", Type::Int}},
-        {"combineWiden", {"/pipelines/eye/combine_widen", Type::Bool}},
-        {"combineDilation", {"/pipelines/eye/combine_dilation", Type::Bool}},
         {"debugOverlay", {"/dashboard/enabled", Type::Bool}},
     };
 #if BABBLE_FRUNK_MOUTH
@@ -164,9 +159,6 @@ TEST_CASE("the SteamVR Settings section maps to live runtime settings") {
     // In the release profile, Mouth Tracking switches the USB tracker and there is no source or rate choice.
     want["mouthTracking"] = {"/sources/face/tracking", Type::Bool};
 #endif
-    want["outputVrcft"] = {"/outputs/vrcft", Type::Bool};
-    want["outputVrcNative"] = {"/outputs/vrc_native", Type::Bool};
-    want["outputBabbleOsc"] = {"/outputs/babble_osc", Type::Bool};
     auto entries = SteamVrSettingsBridge::entries_from_config(*d);
     REQUIRE(entries.size() == want.size());
     for (const auto &e : entries) {
@@ -179,8 +171,8 @@ TEST_CASE("the SteamVR Settings section maps to live runtime settings") {
     CHECK((*d)["pipelines"]["eye"]["openness_source"] == "model");
     CHECK((*d)["pipelines"]["gaze"]["gaze_source"] == "independent");
     CHECK((*d)["pipelines"]["gaze"]["smoothing"] == 0);   // Gaze smoothing is off unless the user turns it on.
-    CHECK((*d)["pipelines"]["eye"]["combine_widen"] == false);   // Each eye sends its own Widen and dilation.
-    CHECK((*d)["pipelines"]["eye"]["combine_dilation"] == false);
+    CHECK((*d)["pipelines"]["eye"]["combine_widen"] == true);   // Both eyes send the mean Widen and dilation.
+    CHECK((*d)["pipelines"]["eye"]["combine_dilation"] == true);
     CHECK((*d)["sources"]["face"]["tracker_flip_h"] == true);   // The Babble tracker image is flipped by default.
     CHECK_FALSE((*d)["pipelines"]["face"].contains("mirror"));
     CHECK((*d)["dashboard"]["enabled"] == true);    // The Babble tab is on after a new install.

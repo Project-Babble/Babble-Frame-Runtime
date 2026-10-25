@@ -169,8 +169,8 @@
       "one_euro": { "min_cutoff": 1.0, "beta": 5.0, "d_cutoff": 3.0 },
       "pupil_one_euro_mm": { "min_cutoff": 0.5, "beta": 0.1, "d_cutoff": 1.0 },
       "babble_swap": false,
-      "combine_widen": false,
-      "combine_dilation": false
+      "combine_widen": true,
+      "combine_dilation": true
     },
     "gaze": {
       "type": "steamvr_gaze",
@@ -368,17 +368,9 @@
     "values": [
       { "key": "mouthTracking", "id": "/sources/mouth/tracking" },
       { "key": "mouthSource", "id": "/mouth_source" },
-      { "key": "outputVrcft", "id": "/outputs/vrcft" },
-      { "key": "outputVrcNative", "id": "/outputs/vrc_native" },
-      { "key": "outputBabbleOsc", "id": "/outputs/babble_osc" },
       { "key": "mouthRate", "id": "/sources/mouth/process_fps" },
       { "key": "eyeTracking", "id": "/sources/eye/tracking" },
       { "key": "eyeRateDivisor", "id": "/sources/eye/rate_divisor" },
-      { "key": "opennessSource", "id": "/pipelines/eye/openness_source" },
-      { "key": "gazeSource", "id": "/pipelines/gaze/gaze_source" },
-      { "key": "gazeSmoothing", "id": "/pipelines/gaze/smoothing" },
-      { "key": "combineWiden", "id": "/pipelines/eye/combine_widen" },
-      { "key": "combineDilation", "id": "/pipelines/eye/combine_dilation" },
       { "key": "debugOverlay", "id": "/dashboard/enabled" }
     ]
   },
@@ -411,14 +403,30 @@
         "labels": ["Off", "Low", "Medium", "High"]
       },
       {
+        "id": "/pipelines/eye/openness_source",
+        "page": "eye_sources",
+        "label": "Openness Source",
+        "hint": "Babble uses the runtime's eye model. Native uses the headset's own eye openness.",
+        "options": ["model", "native"],
+        "labels": ["Babble", "Native"]
+      },
+      {
+        "id": "/pipelines/gaze/gaze_source",
+        "page": "eye_sources",
+        "label": "Gaze Source",
+        "hint": "Independent lets each eye move on its own. Combined uses the single gaze of SteamVR.",
+        "options": ["independent", "combined"],
+        "labels": ["Independent", "Combined"]
+      },
+      {
         "id": "/pipelines/eye/combine_widen",
-        "page": "eye",
+        "page": "eye_modifiers",
         "label": "Combine Eye Widen",
         "hint": "Both eyes get the average Widen of the two eyes."
       },
       {
         "id": "/pipelines/eye/combine_dilation",
-        "page": "eye",
+        "page": "eye_modifiers",
         "label": "Combine Pupil Dilation",
         "hint": "Both eyes get the average pupil dilation of the two eyes."
       },

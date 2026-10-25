@@ -58,7 +58,7 @@ private:
     std::atomic<bool> native_openness_{false};   // This is true if openness_source is "native".
     std::atomic<bool> tracking_on_{true};
     // These are "combine_widen" and "combine_dilation": both eyes then get the mean of the two eyes.
-    std::atomic<bool> combine_widen_{false}, combine_dilation_{false};
+    std::atomic<bool> combine_widen_{true}, combine_dilation_{true};
     void update_eye_server_want();
     Counter native_fallback_;
     bool use_calib_ = true, babble_swap_ = false;

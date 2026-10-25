@@ -46,8 +46,8 @@ bool BabbleEye::init() {
         deps_.stats.add("pipe." + name_ + ".native_fallback", &native_fallback_);
     }
     babble_swap_ = cfg_.value("babble_swap", false);
-    combine_widen_ = cfg_.value("combine_widen", false);
-    combine_dilation_ = cfg_.value("combine_dilation", false);
+    combine_widen_ = cfg_.value("combine_widen", true);
+    combine_dilation_ = cfg_.value("combine_dilation", true);
     // The eyes use their own One Euro filters, which are tuned apart from the mouth filters.
     lid_filter_ = one_euro_params(cfg_.value("one_euro", nlohmann::json::object()), eye::kLidOneEuro);
     // The eye kit gives the pupil in mm, so its filter and rate limit are in mm.

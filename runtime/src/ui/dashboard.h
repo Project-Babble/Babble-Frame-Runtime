@@ -50,6 +50,8 @@ public:
     // Call these functions from the main thread only.
     void set_status(const Status &s);
     void set_choice(const std::string &id, double value);
+    // Selects the option of a text setting that has this value.
+    void set_choice_text(const std::string &id, const std::string &value);
     // Returns the settings that changed on the panel since the last call, as pairs of JSON pointer and new value.
     std::vector<std::pair<std::string, nlohmann::json>> take_changes();
     // Returns true one time for each click on the visualizer button.

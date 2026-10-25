@@ -4,16 +4,8 @@
 		"mouthTracking" : true,
 		"mouthSource" : "frunk",
 		"mouthRate" : 120,
-		"outputVrcft" : true,
-		"outputVrcNative" : false,
-		"outputBabbleOsc" : false,
 		"eyeTracking" : true,
 		"eyeRateDivisor" : 1,
-		"opennessSource" : "model",
-		"gazeSource" : "independent",
-		"gazeSmoothing" : 0,
-		"combineWiden" : false,
-		"combineDilation" : false,
 		"debugOverlay" : true
 	}
 }

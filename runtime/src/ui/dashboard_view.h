@@ -177,7 +177,7 @@ struct Status {
 
 // A user setting that shows as a row of choices or as a switch, where id is its JSON pointer in the config.
 // The page that a setting shows on.
-enum class ChoicePage { Settings, Eye, Mouth, Cameras, Diagnostics };
+enum class ChoicePage { Settings, Eye, EyeSources, EyeModifiers, Mouth, Cameras, Diagnostics };
 
 struct Choice {
     std::string id, label, hint, unit;
@@ -186,6 +186,8 @@ struct Choice {
     bool boolean = false;
     ChoicePage page = ChoicePage::Settings;
     std::vector<std::string> option_labels{};   // If set, one label for each option replaces the value and unit.
+    // For a text setting, the setting value of each option. The options are then their indexes.
+    std::vector<std::string> text_values{};
 };
 
 struct Point {
@@ -196,7 +198,10 @@ struct Point {
 class DashboardView {
 public:
     static constexpr int kWidth = 1200, kHeight = 750, kThumb = 128;
-    enum class Page { Home, Settings, Cameras, Diagnostics, Outputs, Eye, Mouth, CameraOptions, CameraResolution };
+    enum class Page {
+        Home, Settings, Cameras, Diagnostics, Outputs, Eye, EyeSources, EyeModifiers, Mouth, CameraOptions,
+        CameraResolution
+    };
 
     bool load_fonts(const std::filesystem::path &dir);   // Loads NotoSans-Regular.ttf and NotoSans-Medium.ttf.
     bool load_icons(const std::filesystem::path &dir);   // Loads the optional logo PNG files.
@@ -246,7 +251,8 @@ private:
         enum Kind {
             Cog, Back, Option, Toggle, Visualizer, Restart, MouthSource, OpenCameras, Camera, Refresh,
             OpenDiagnostics, Verbose, WriteDiagnostics, CapturePrimary, CaptureRemove, Update, OpenOutputs,
-            OutputSetting, EditText, OpenEye, OpenMouth, OpenCameraOptions, OpenResolution
+            OutputSetting, EditText, OpenEye, OpenMouth, OpenCameraOptions, OpenResolution, OpenEyeSources,
+            OpenEyeModifiers
         } kind;
         Rect rect;
         size_t choice = 0;   // The choice index for Option, or the feed index for Toggle.
@@ -257,6 +263,9 @@ private:
     void render_home(Canvas &c, const Status &s);
     void render_settings(Canvas &c, const std::vector<Choice> &choices, const Status &s);
     void render_eye_page(Canvas &c, const std::vector<Choice> &choices, const Status &s);
+    // Draws a page that has only the choices of one ChoicePage.
+    void render_choice_page(Canvas &c, const char *title, const std::vector<Choice> &choices, ChoicePage page,
+                            const Status &s);
     void render_mouth_page(Canvas &c, const std::vector<Choice> &choices, const Status &s);
     void render_cameras(Canvas &c, const std::vector<Choice> &choices, const Status &s);
     void render_camera_options(Canvas &c, const Status &s);

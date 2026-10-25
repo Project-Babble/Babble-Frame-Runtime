@@ -90,6 +90,20 @@ void Dashboard::set_choice(const std::string &id, double value) {
         }
 }
 
+void Dashboard::set_choice_text(const std::string &id, const std::string &value) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (auto &c : choices_) {
+        if (c.id != id)
+            continue;
+        const auto it = std::find(c.text_values.begin(), c.text_values.end(), value);
+        const double index = it == c.text_values.end() ? -1 : double(it - c.text_values.begin());
+        if (c.value != index) {
+            c.value = index;
+            dirty_ = true;
+        }
+    }
+}
+
 // Shows a choice on the Outputs page or the camera options page immediately, and sends it to the main thread, which
 // confirms it.
 void Dashboard::apply_output_setting(const std::string &id, const nlohmann::json &value) {
@@ -399,7 +413,10 @@ void Dashboard::run() {
                 Choice &c = choices_[r.setting->first];
                 if (c.value != r.setting->second) {
                     c.value = r.setting->second;
-                    changes_.emplace_back(c.id, c.boolean ? nlohmann::json(c.value != 0) : nlohmann::json(c.value));
+                    const size_t k = size_t(c.value);
+                    changes_.emplace_back(c.id, c.boolean                ? nlohmann::json(c.value != 0)
+                                                : !c.text_values.empty() ? nlohmann::json(c.text_values.at(k))
+                                                                         : nlohmann::json(c.value));
                 }
             }
             if (r.toggle) {

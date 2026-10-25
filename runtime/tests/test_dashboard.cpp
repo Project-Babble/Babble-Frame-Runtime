@@ -630,3 +630,54 @@ TEST_CASE("each USB camera opens an options page that sends all of its settings 
     for (float y = 130; y < 600; y += 20)
         CHECK_FALSE(view.click({600, y}).output_setting);
 }
+
+TEST_CASE("the eye page opens the Data Sources and Modifiers pages, and back returns to it") {
+    DashboardView view;
+    REQUIRE(view.load_fonts(kFonts));
+    Canvas c(DashboardView::kWidth, DashboardView::kHeight);
+    Status s{true, Worn::Yes, on(Health::Working, 120), on(Health::Working, 90)};
+    std::vector<Choice> choices = rates();
+    Choice source{"/pipelines/gaze/gaze_source", "Gaze Source", "", "", {0, 1}, 0, false, ChoicePage::EyeSources,
+                  {"Independent", "Combined"}, {"independent", "combined"}};
+    Choice widen{"/pipelines/eye/combine_widen", "Combine Eye Widen", "", "", {0, 1}, 1, true, ChoicePage::EyeModifiers};
+    choices.push_back(source);
+    choices.push_back(widen);
+    const size_t source_index = choices.size() - 2, widen_index = choices.size() - 1;
+
+    // The eye page has its own rows and then one row for each subpage, and no row of a subpage.
+    view.set_page(DashboardView::Page::Eye);
+    view.render(c, s, choices, std::nullopt);
+    auto open = [&](DashboardView::Page want) {
+        for (float y = 130; y < 620; y += 10) {
+            view.set_page(DashboardView::Page::Eye);
+            view.render(c, s, choices, std::nullopt);
+            auto r = view.click({300, y});
+            CHECK_FALSE((r.setting && (r.setting->first == source_index || r.setting->first == widen_index)));
+            if (view.page() == want)
+                return true;
+        }
+        return false;
+    };
+    REQUIRE(open(DashboardView::Page::EyeSources));
+    view.render(c, s, choices, std::nullopt);
+    bool combined = false;
+    for (float x = 600; x < 1140 && !combined; x += 20)
+        for (float y = 130; y < 300 && !combined; y += 10) {
+            auto r = view.click({x, y});
+            combined = r.setting && r.setting->first == source_index && r.setting->second == 1;
+        }
+    CHECK(combined);
+    view.click({60, 70});
+    CHECK(view.page() == DashboardView::Page::Eye);
+
+    REQUIRE(open(DashboardView::Page::EyeModifiers));
+    view.render(c, s, choices, std::nullopt);
+    bool off = false;
+    for (float y = 130; y < 300 && !off; y += 10) {
+        auto r = view.click({DashboardView::kWidth - 56.f - 46, y});
+        off = r.setting && r.setting->first == widen_index && r.setting->second == 0;
+    }
+    CHECK(off);
+    view.click({60, 70});
+    CHECK(view.page() == DashboardView::Page::Eye);
+}

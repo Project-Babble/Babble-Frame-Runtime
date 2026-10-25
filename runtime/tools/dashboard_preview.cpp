@@ -48,10 +48,16 @@ int main(int argc, char **argv) {
         {"/pipelines/gaze/smoothing", "Gaze Smoothing",
          "Steadies the gaze. Stronger smoothing adds a little lag to fast eye movements.", "", {0, 1, 2, 3}, 0,
          false, ChoicePage::Eye, {"Off", "Low", "Medium", "High"}},
+        {"/pipelines/eye/openness_source", "Openness Source",
+         "Babble uses the runtime's eye model. Native uses the headset's own eye openness.", "", {0, 1}, 0, false,
+         ChoicePage::EyeSources, {"Babble", "Native"}, {"model", "native"}},
+        {"/pipelines/gaze/gaze_source", "Gaze Source",
+         "Independent lets each eye move on its own. Combined uses the single gaze of SteamVR.", "", {0, 1}, 0, false,
+         ChoicePage::EyeSources, {"Independent", "Combined"}, {"independent", "combined"}},
         {"/pipelines/eye/combine_widen", "Combine Eye Widen", "Both eyes get the average Widen of the two eyes.", "",
-         {0, 1}, 1, true, ChoicePage::Eye},
+         {0, 1}, 1, true, ChoicePage::EyeModifiers},
         {"/pipelines/eye/combine_dilation", "Combine Pupil Dilation",
-         "Both eyes get the average pupil dilation of the two eyes.", "", {0, 1}, 0, true, ChoicePage::Eye},
+         "Both eyes get the average pupil dilation of the two eyes.", "", {0, 1}, 0, true, ChoicePage::EyeModifiers},
         {"/sinks/camera_stream/active", "Camera Stream",
          "Stream camera frames on TCP 9099 for diagnostics. Turns off after a restart.", "", {0, 1}, 1, true, ChoicePage::Diagnostics},
     };
@@ -151,6 +157,12 @@ int main(int argc, char **argv) {
     view.set_page(DashboardView::Page::Eye);
     view.render(c, tracking, choices, std::nullopt);
     save(c, "eye");
+    view.set_page(DashboardView::Page::EyeSources);
+    view.render(c, tracking, choices, std::nullopt);
+    save(c, "eye_sources");
+    view.set_page(DashboardView::Page::EyeModifiers);
+    view.render(c, tracking, choices, std::nullopt);
+    save(c, "eye_modifiers");
     view.set_page(DashboardView::Page::Mouth);
     view.render(c, tracking, choices, std::nullopt);
     save(c, "mouth");
@@ -245,7 +257,9 @@ int main(int argc, char **argv) {
     }
     diag.verbose_minutes_left = 0;
     diag.last_diagnostics.clear();
-    choices[3].value = 0;
+    for (Choice &ch : choices)   // Turn the camera stream off.
+        if (ch.id == "/sinks/camera_stream/active")
+            ch.value = 0;
     view.render(c, diag, choices, Point{1100, 222});
     save(c, "diagnostics_off");
     view.set_page(DashboardView::Page::Settings);

@@ -250,21 +250,36 @@ std::vector<ui::Choice> dashboard_choices(const json &cfg) {
             LOG.warn("dashboard: ignoring setting with a bad id '%s'", c.id.c_str());
             continue;
         }
-        if (!cfg.contains(ptr) || !(cfg[ptr].is_number() || cfg[ptr].is_boolean()))
+        if (!cfg.contains(ptr) || !(cfg[ptr].is_number() || cfg[ptr].is_boolean() || cfg[ptr].is_string()))
             continue;
         c.label = row.value("label", c.id);
         c.hint = row.value("hint", "");
         c.unit = row.value("unit", "");
         c.boolean = cfg[ptr].is_boolean();
         const std::string page = row.value("page", "settings");
-        c.page = page == "eye"           ? ui::ChoicePage::Eye
+        c.page = page == "eye"             ? ui::ChoicePage::Eye
+                 : page == "eye_sources"   ? ui::ChoicePage::EyeSources
+                 : page == "eye_modifiers" ? ui::ChoicePage::EyeModifiers
                  : page == "mouth"       ? ui::ChoicePage::Mouth
                  : page == "cameras"     ? ui::ChoicePage::Cameras
                  : page == "diagnostics" ? ui::ChoicePage::Diagnostics
                                          : ui::ChoicePage::Settings;
-        c.options = c.boolean ? std::vector<double>{0, 1} : row.value("options", std::vector<double>{});
         c.option_labels = row.value("labels", std::vector<std::string>{});
-        c.value = c.boolean ? double(cfg[ptr].get<bool>()) : cfg[ptr].get<double>();
+        try {
+            if (cfg[ptr].is_string()) {   // The options of a text setting are its values, and the choice uses indexes.
+                c.text_values = row.value("options", std::vector<std::string>{});
+                for (size_t k = 0; k < c.text_values.size(); k++)
+                    c.options.push_back(double(k));
+                const auto it = std::find(c.text_values.begin(), c.text_values.end(), cfg[ptr].get<std::string>());
+                c.value = it == c.text_values.end() ? -1 : double(it - c.text_values.begin());
+            } else {
+                c.options = c.boolean ? std::vector<double>{0, 1} : row.value("options", std::vector<double>{});
+                c.value = c.boolean ? double(cfg[ptr].get<bool>()) : cfg[ptr].get<double>();
+            }
+        } catch (const json::exception &) {
+            LOG.warn("dashboard: ignoring setting %s: its options do not match its value", c.id.c_str());
+            continue;
+        }
         out.push_back(std::move(c));
     }
     return out;
@@ -838,6 +853,8 @@ int main(int argc, char **argv) {
         }
         if (dashboard->started() && (value.is_number() || value.is_boolean()))
             dashboard->set_choice(id, value.is_boolean() ? double(value.get<bool>()) : value.get<double>());
+        else if (dashboard->started() && value.is_string())
+            dashboard->set_choice_text(id, value.get<std::string>());
         if (origin != Origin::SteamVr)
             steamvr_settings.push(id, value);
     };
