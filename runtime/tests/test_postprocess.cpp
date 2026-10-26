@@ -322,13 +322,63 @@ TEST_CASE("openness closed level: seed first, then the bottom of the person's ow
     CHECK(c.closed() == doctest::Approx(0.1).epsilon(0.01));
     CHECK(hold(c, 0.07, 0.15).lid == doctest::Approx(0.0));
     CHECK(hold(c, 0.7 * 0.55, 0.2).lid == doctest::Approx(0.5).epsilon(0.01));
-    // A single-frame dip does not move the closed level, and the level never goes back up.
+    // A single-frame dip does not move the closed level.
     hold(c, 0.7, 1);
     c.update(0.0, 1.0 / 90);
     hold(c, 0.7, 1);
     CHECK(c.closed() == doctest::Approx(0.1).epsilon(0.01));
     // Widen is not changed by the closed level.
     CHECK(hold(c, 0.7 * 1.075, 1).widen == doctest::Approx(0.5).epsilon(0.05));
+}
+
+TEST_CASE("openness closed level: one deep squeeze does not stop normal closes from reading closed") {
+    eye::OpennessCalibrator::Params p;
+    p.closed_seed = 0.3;
+    eye::OpennessCalibrator c(p);
+    hold(c, 0.7, 4);
+    for (int k = 0; k < 5; k++) {
+        hold(c, 0.7, 0.85);
+        hold(c, 0.14, 0.3);   // Normal closes reach 0.2x neutral.
+    }
+    hold(c, 0.7, 0.85);
+    hold(c, 0.0, 0.5);        // One hard squeeze reaches 0.
+    hold(c, 0.7, 0.85);
+    CHECK(c.closed() == doctest::Approx(0.2).epsilon(0.01));
+    CHECK(hold(c, 0.14, 0.3).lid == doctest::Approx(0.0));
+}
+
+TEST_CASE("openness closed level: goes up for a person whose closed eye reads above the seed") {
+    eye::OpennessCalibrator::Params p;
+    p.closed_seed = 0.3;
+    eye::OpennessCalibrator c(p);
+    hold(c, 0.7, 4);
+    CHECK(hold(c, 0.7 * 0.4, 0.3).lid > 0.1);   // At the seed, 0.4x neutral is not closed.
+    for (int k = 0; k < 5; k++) {
+        hold(c, 0.7, 0.85);
+        hold(c, 0.7 * 0.4, 0.3);
+    }
+    CHECK(c.closed() == doctest::Approx(0.4).epsilon(0.01));
+    CHECK(hold(c, 0.7 * 0.4, 0.3).lid == doctest::Approx(0.0));
+}
+
+TEST_CASE("openness closed level: a single-frame dip does not move it at 24 updates/s") {
+    eye::RateScale r{90, 24};
+    eye::OpennessCalibrator::Params p;
+    p.closed_seed = 0.3;
+    p.skip = r.count(90);
+    p.warmup = r.count(180);
+    p.every = r.count(12);
+    p.peak_window = r.count(9);
+    p.trough_window = r.count(5);
+    eye::OpennessCalibrator c(p);
+    hold(c, 0.7, 4, 24);
+    REQUIRE(c.ready());
+    for (int k = 0; k < 5; k++) {
+        hold(c, 0.7, 1, 24);
+        c.update(0.0, 1.0 / 24);
+    }
+    hold(c, 0.7, 1, 24);
+    CHECK(c.closed() == doctest::Approx(0.3));
 }
 
 TEST_CASE("openness closed level: a seed of 0 keeps Lid equal to the openness") {

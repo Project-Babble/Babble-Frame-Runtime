@@ -81,7 +81,7 @@ void OpennessCalibrator::set_timing(size_t skip, size_t warmup, size_t every, si
         seed_.pop_front();
     while (recent_.size() > p_.peak_window)
         recent_.pop_front();
-    p_.trough_window = std::max<size_t>(1, trough_window);
+    p_.trough_window = std::max<size_t>(2, trough_window);
     while (lows_.size() > p_.trough_window)
         lows_.pop_front();
 }
@@ -136,12 +136,29 @@ OpennessCalibrator::Out OpennessCalibrator::update(double x, double dt_s) {
             c_ = std::max(c_, median(std::vector<double>(recent_.begin(), recent_.end())));
         c_ = std::min(c_, cap());   // Apply the cap again because the baseline drifts.
         out.widen = std::clamp((out.openness - 1.0) / (c_ - 1.0), 0.0, 1.0);
-        // The closed level is the lowest openness held for a short time, such as the bottom of a blink.
+        // The bottom of a close is the lowest openness that every update in the window stays at or below, and the
+        // closed level is the median of the last bottoms.
+        const size_t window = std::max<size_t>(2, p_.trough_window);
         lows_.push_back(out.openness);
-        if (lows_.size() > p_.trough_window)
+        while (lows_.size() > window)
             lows_.pop_front();
-        if (lows_.size() == p_.trough_window)
-            f_ = std::min(f_, median(std::vector<double>(lows_.begin(), lows_.end())));
+        if (p_.closed_seed > 0) {
+            if (!closing_ && out.openness < p_.closed_enter) {
+                closing_ = true;
+                close_min_ = p_.closed_enter;
+            }
+            if (closing_ && lows_.size() == window)
+                close_min_ = std::min(close_min_, *std::max_element(lows_.begin(), lows_.end()));
+            if (closing_ && out.openness > p_.closed_exit) {
+                closing_ = false;
+                if (close_min_ < p_.closed_enter) {
+                    troughs_.push_back(close_min_);
+                    while (troughs_.size() > std::max<size_t>(1, p_.closed_events))
+                        troughs_.pop_front();
+                    f_ = std::clamp(median(std::vector<double>(troughs_.begin(), troughs_.end())), 0.0, 0.9);
+                }
+            }
+        }
         out.lid = std::clamp((out.openness - f_) / (1.0 - f_), 0.0, 1.0);
     }
     return out;

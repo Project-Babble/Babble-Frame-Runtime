@@ -78,10 +78,14 @@ public:
         double gain = 0.001, decay = 20.5, acc0 = 0.5;   // The SRanipal smoother uses these values.
         double widen_seed = 0.15, ceiling_max = 1.6;
         double saturation = 1.0;               // This is the practical maximum of the raw output.
-        // The closed level starts at closed_seed and goes down to the lowest openness held for trough_window updates,
-        // as the ceiling goes up to the highest. 0 turns it off, so that Lid is the openness.
+        // The closed level starts at closed_seed. Then it is the median of the bottoms of the last closed_events
+        // closes, so that it moves up and down and one deep squeeze does not set it. A close starts below
+        // closed_enter and ends above closed_exit, and its bottom is the lowest openness held for trough_window
+        // updates (at least 2). A seed of 0 turns it off, so that Lid is the openness.
         double closed_seed = 0.0;
         size_t trough_window = 5;
+        double closed_enter = 0.5, closed_exit = 0.7;
+        size_t closed_events = 7;
     };
     struct Out {
         double openness = 0;   // The filtered ratio to the neutral is 0 or more.
@@ -107,7 +111,9 @@ private:
     size_t n_ = 0;
     bool ready_ = false;
     double b_ = 1.0, acc_ = 0, c_ = 1.0, f_ = 0;
-    std::deque<double> seed_, chunk_, recent_, lows_;
+    bool closing_ = false;
+    double close_min_ = 0;
+    std::deque<double> seed_, chunk_, recent_, lows_, troughs_;
     std::optional<OneEuro> filter_;
 };
 
