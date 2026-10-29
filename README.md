@@ -39,7 +39,7 @@ To uninstall, run `~/.local/share/babble-frame-runtime/uninstall.sh`.
 
 ## VRCFT Module
 
-Until further notice, this [VRCFT Module](https://cdn.discordapp.com/attachments/1279163592440283240/1561139947597992016/VRCFaceTracking.Baballonia.zip?ex=6ade7ee0&is=6add2d60&hm=92b516967feec073c70adf231a947d09ca4caf820d78a6a73157607361b80b13&) is required 
+Until further notice, this [VRCFT Module](https://raw.githubusercontent.com/Project-Babble/Babble-Frame-Runtime/refs/heads/main/VRCFaceTracking.Baballonia_v4.0.0.zip) is required 
 
 ## Building from source
 
