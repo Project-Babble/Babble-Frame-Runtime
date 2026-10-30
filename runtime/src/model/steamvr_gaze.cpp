@@ -166,10 +166,14 @@ bool SteamVrGaze::init() {
 
 bool SteamVrGaze::set_option(const std::string &key, const nlohmann::json &value) {
     if (key == "smoothing") {
-        if (!value.is_number_integer() || value.get<int>() < 0 || value.get<int>() > smoother_.levels())
+        // Old, screwed up configs still have a float instead of an int
+        if (!value.is_number() || value.get<double>() != std::trunc(value.get<double>()))
             return false;
-        if (value.get<int>() != smoothing_.exchange(value.get<int>()))
-            LOG.info("pipeline %s: gaze smoothing %d", name_.c_str(), value.get<int>());
+        const double level = value.get<double>();
+        if (level < 0 || level > smoother_.levels())
+            return false;
+        if (int(level) != smoothing_.exchange(int(level)))
+            LOG.info("pipeline %s: gaze smoothing %d", name_.c_str(), int(level));
         return true;
     }
     if (key != "gaze_source")

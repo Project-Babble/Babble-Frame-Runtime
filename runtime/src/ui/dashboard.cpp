@@ -413,10 +413,7 @@ void Dashboard::run() {
                 Choice &c = choices_[r.setting->first];
                 if (c.value != r.setting->second) {
                     c.value = r.setting->second;
-                    const size_t k = size_t(c.value);
-                    changes_.emplace_back(c.id, c.boolean                ? nlohmann::json(c.value != 0)
-                                                : !c.text_values.empty() ? nlohmann::json(c.text_values.at(k))
-                                                                         : nlohmann::json(c.value));
+                    changes_.emplace_back(c.id, choice_setting(c));
                 }
             }
             if (r.toggle) {

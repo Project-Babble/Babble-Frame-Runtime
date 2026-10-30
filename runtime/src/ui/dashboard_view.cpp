@@ -11,6 +11,16 @@
 
 namespace babble::ui {
 
+nlohmann::json choice_setting(const Choice &c) {
+    if (c.boolean)
+        return c.value != 0;
+    if (!c.text_values.empty())
+        return c.text_values.at(size_t(c.value));
+    if (c.value == std::trunc(c.value) && std::fabs(c.value) < 1e15)
+        return int64_t(c.value);
+    return c.value;
+}
+
 namespace {
 
 // These colours copy the dark Fluent palette of Baballonia.

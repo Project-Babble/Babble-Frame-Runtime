@@ -5,6 +5,8 @@
 #include "ui/font.h"
 #include "ui/image.h"
 
+#include <nlohmann/json.hpp>
+
 #include <array>
 #include <cstddef>
 #include <filesystem>
@@ -189,6 +191,9 @@ struct Choice {
     // For a text setting, the setting value of each option. The options are then their indexes.
     std::vector<std::string> text_values{};
 };
+
+// Gaze smoothing only takes ints
+nlohmann::json choice_setting(const Choice &c);
 
 struct Point {
     float x = 0, y = 0;
