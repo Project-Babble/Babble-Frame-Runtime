@@ -1,7 +1,14 @@
 #pragma once
 
+// Config type `frame_dsp_eye`: the eye camera reader, ported from eyecam's reader
+// (https://github.com/sasaken1102r/frameeyeosc, tools/eyecam). It is read-only: it does not write to the dsp_service
+// buffer, does not use the control block to find frames, and takes the capture time and the camera rate from the
+// camera timestamp in each slot header. See docs/eye-tracking.md, "Eye camera source".
+
 #include "camera/eye/dsp_client.h"
-#include "camera/eye/eye_pairer.h"
+#include "camera/eye/scan/dma_arena.h"
+#include "camera/eye/scan/eye_ring.h"
+#include "camera/eye/scan/slot_watcher.h"
 #include "camera/tracking_source.h"
 #include "core/metrics.h"
 #include "core/threading.h"
@@ -12,29 +19,28 @@
 
 #include <atomic>
 #include <memory>
+#include <optional>
 #include <string>
 #include <thread>
 #include <vector>
 
 namespace babble {
 
-// Gets the Steam Frame eye cameras from Valve's dsp_service and copies the frames out of the shared ring.
-class DspEyeSource : public ITrackingSource {
+class ScanEyeSource : public ITrackingSource {
 public:
     enum class State { Disabled, Connecting, Streaming, Backoff, Unavailable, Paused };
 
-    DspEyeSource(const nlohmann::json &cfg, SourceDeps deps);
-    ~DspEyeSource() override;
+    ScanEyeSource(const nlohmann::json &cfg, SourceDeps deps);
+    ~ScanEyeSource() override;
 
     void tick(uint64_t now_ns) override;
     void shutdown() override;
-    void set_process_fps(double fps) override;   // The eye rate is a divisor of the camera rate, so this only logs a warning.
+    void set_process_fps(double fps) override;
     void set_tracking(bool on) override;
     bool set_option(const std::string &key, const nlohmann::json &value) override;
     void set_frame_tap(IFrameTap *tap) override { tap_.store(tap); }
 
     double camera_fps() const override { return camera_fps_.load(std::memory_order_relaxed); }
-    uint32_t rate_divisor() const { return divisor_.load(std::memory_order_relaxed); }
     bool tracking() const override { return tracking_; }
 
     bool streaming() const override { return state_ == State::Streaming; }
@@ -50,7 +56,12 @@ private:
     bool start();
     void stop(const char *why);
     void run();
-    bool copy_view(bool right, uint32_t idx, uint64_t now, uint32_t seq, FramePtr *out);
+    bool search(eyescan::Ring *ring);
+    void stream(const eyescan::Ring &ring);
+    void update_clock_offset();
+    void read_rate_word();
+    bool make_frame(int side, const uint8_t *slot, uint64_t capture_ns, uint64_t arrival_ns, uint32_t seq,
+                    FramePtr *out);
 
     nlohmann::json cfg_;
     std::string name_;
@@ -61,34 +72,32 @@ private:
     bool pause_when_absent_ = true;
     bool tracking_ = true;   // Only the main thread uses this.
 
-    DspClient client_;
-    DspClient::Layout layout_;
+    Crop crop_[2];                  // [0] = lower-address group ("left"), [1] = higher-address group ("right").
+    size_t copy_len_ = 0;           // Bytes copied from the start of each slot header.
     std::vector<uint32_t> candidates_;
-    Crop crop_l_, crop_r_;
+
+    DspClient client_;
+    eyescan::DmaArena arena_;
+    std::optional<DspClient::Layout> layout_;   // Only to read the rate word, for comparison.
     std::shared_ptr<FramePool> pool_;
-    EyePairer pairer_;
     std::atomic<uint32_t> divisor_{1};
     std::atomic<IFrameTap *> tap_{nullptr};
     std::atomic<float> camera_fps_{0};
+    std::atomic<bool> searching_{false};
     std::thread thread_;
     std::atomic<bool> stop_{false};
     std::atomic<bool> failed_{false};
     std::string thread_error_;
+    int64_t raw_to_mono_ns_ = 0;   // CLOCK_MONOTONIC minus CLOCK_MONOTONIC_RAW.
 
     State state_ = State::Disabled;
     uint64_t retry_at_ns_ = 0, backoff_ns_ = 0, backoff_min_ns_, backoff_max_ns_;
     std::string last_error_;
-    std::string reported_layout_error_;
-    bool not_ready_ = false;   // True if the last start found that the control block was not set up.
-    bool logged_gap_ = false;
-    bool logged_dsp_messages_ = false;
 
     RateStat frames_, processed_, side_l_, side_r_;
-    Counter layout_faults_, restarts_, pool_exhausted_, late_detect_, half_pairs_;   // These are lifetime totals.
-    Counter camera_rate_;
-    Counter torn_copies_;   // Copies dropped because dsp_service published a new frame during the copy.
-    uint32_t consecutive_faults_ = 0;
-    LatencyStat copy_time_;
+    Counter restarts_, pool_exhausted_, half_pairs_, torn_copies_, missed_frames_, stale_frames_, bad_stamps_;
+    Counter searches_, camera_rate_, rate_word_;
+    LatencyStat copy_time_, stamp_age_, pair_skew_;
 };
 
 }

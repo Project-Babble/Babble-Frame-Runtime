@@ -102,11 +102,11 @@
       "poll_interval_us": 400,
       "no_frames_timeout_ms": 2000,
       "reopen_backoff_ms": { "min": 5000, "max": 60000 },
+      "search_timeout_s": 15,
       "crop": {
-        "left": [16, 56, 400, 400],
-        "right": [16, 0, 400, 400]
+        "left": [0, 0, 400, 400],
+        "right": [0, 0, 400, 400]
       },
-      "predict_margin_us": 1500,
       "pause_when_absent": true
     },
     "face": {

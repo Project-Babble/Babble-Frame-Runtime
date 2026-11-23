@@ -29,6 +29,7 @@ DspClient::~DspClient() { disconnect(); }
 
 bool DspClient::connect(uint32_t request, std::string_view name) {
     disconnect();
+    const int prot = PROT_READ;
     sock_ = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if (sock_ < 0) {
         LOG.warn("dsp: socket failed: %s", strerror(errno));
@@ -84,14 +85,14 @@ bool DspClient::connect(uint32_t request, std::string_view name) {
         return false;
     }
 
-    void *d = mmap(nullptr, kRegionBytes, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd_, 0);
+    void *d = mmap(nullptr, kRegionBytes, prot, MAP_SHARED, shm_fd_, 0);
     if (d == MAP_FAILED) {
         LOG.warn("dsp: mmap data region failed: %s", strerror(errno));
         disconnect();
         return false;
     }
     data_ = static_cast<uint8_t *>(d);
-    void *c = mmap(nullptr, kRegionBytes, PROT_READ | PROT_WRITE, MAP_SHARED, shm_fd_, kCtrlOffset);
+    void *c = mmap(nullptr, kRegionBytes, prot, MAP_SHARED, shm_fd_, kCtrlOffset);
     if (c == MAP_FAILED) {
         LOG.warn("dsp: mmap control region failed: %s", strerror(errno));
         disconnect();
@@ -172,17 +173,6 @@ bool DspClient::validate(const uint8_t *ctrl, size_t ctrl_size, const Layout &l,
     return true;
 }
 
-bool DspClient::fps_unset(const uint8_t *ctrl, size_t ctrl_size, std::span<const uint32_t> candidates) {
-    if (!ctrl || candidates.empty())
-        return false;
-    for (uint32_t base : candidates) {
-        const uint64_t off = uint64_t(base) + Layout{}.fps;
-        if (off + 4 > ctrl_size || read_u32(ctrl, uint32_t(off)) != 0)
-            return false;
-    }
-    return true;
-}
-
 std::optional<DspClient::Layout> DspClient::probe(std::span<const uint32_t> candidates, std::string *why) {
     if (!ctrl_) {
         if (why)
@@ -207,17 +197,6 @@ std::optional<DspClient::Layout> DspClient::probe(std::span<const uint32_t> cand
 
 uint32_t DspClient::load32(uint32_t off) const { return read_u32(ctrl_, off); }
 
-void DspClient::store32(uint32_t off, uint32_t v) {
-    __atomic_store_n(reinterpret_cast<uint32_t *>(ctrl_ + off), v, __ATOMIC_RELEASE);
-}
-
-void DspClient::start_streaming(const Layout &l) {
-    const uint32_t b = l.ctrl_base;
-    store32(b + l.enables, 1);
-    store32(b + l.enables + 4, 1);
-    store32(b + l.transition, 1);
-}
-
 float DspClient::read_fps(const Layout &l) const {
     if (!ctrl_)
         return 0;
@@ -225,16 +204,6 @@ float DspClient::read_fps(const Layout &l) const {
     float fps;
     memcpy(&fps, &bits, sizeof(fps));
     return std::isfinite(fps) && fps > 0.0f && fps <= 240.0f ? fps : 0.0f;
-}
-
-DspClient::Indices DspClient::read_indices(const Layout &l) const {
-    return {load32(l.ctrl_base + l.idx_l), load32(l.ctrl_base + l.idx_r)};
-}
-
-const uint8_t *DspClient::slot_ptr(const Layout &l, bool right, uint32_t idx) const {
-    if (idx >= l.slots)
-        return nullptr;
-    return data_ + l.ctrl_base + (right ? l.ring_r : l.ring_l) + size_t(idx) * l.slot_stride;
 }
 
 }

@@ -27,10 +27,6 @@ public:
         uint32_t width = 512, height = 512;
     };
 
-    struct Indices {
-        uint32_t l = kNotReady, r = kNotReady;
-    };
-
     // The abstract socket name of the service, without the leading NUL.
     static constexpr std::string_view kServiceName = "dsp_service";
 
@@ -46,25 +42,17 @@ public:
     // Finds the first candidate base with valid control words, and does not write to the memory.
     std::optional<Layout> probe(std::span<const uint32_t> candidates, std::string *why);
 
-    // Returns true if the frame-rate word is 0 at all candidates, because the service did not set up the cameras yet.
-    static bool fps_unset(const uint8_t *ctrl, size_t ctrl_size, std::span<const uint32_t> candidates);
-
     // Validates a control-block image, and the unit tests also use this function.
     static bool validate(const uint8_t *ctrl, size_t ctrl_size, const Layout &layout, std::string *why);
 
-    // Writes the enables and the transition word.
-    void start_streaming(const Layout &layout);
     // Returns the camera frame rate in fps that SteamVR's eye service set, or 0 if it is not valid.
     float read_fps(const Layout &layout) const;
 
-    Indices read_indices(const Layout &layout) const;
-    const uint8_t *slot_ptr(const Layout &layout, bool right, uint32_t idx) const;
-
     const uint8_t *ctrl() const { return ctrl_; }
+    const uint8_t *data() const { return data_; }
 
 private:
     uint32_t load32(uint32_t off) const;
-    void store32(uint32_t off, uint32_t v);
 
     int sock_ = -1;
     int shm_fd_ = -1;

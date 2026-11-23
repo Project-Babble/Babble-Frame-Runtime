@@ -1,6 +1,6 @@
 #include "camera/tracking_source.h"
 
-#include "camera/eye/dsp_eye_source.h"
+#include "camera/eye/scan/scan_eye_source.h"
 #include "camera/usb/babble_usb_source.h"
 #if BABBLE_FRUNK_MOUTH
 #include "camera/mouth/frame_mouth_source.h"
@@ -25,7 +25,7 @@ std::unique_ptr<ITrackingSource> make_tracking_source(const nlohmann::json &cfg,
     }
 #endif
     if (type == "frame_dsp_eye")
-        return std::make_unique<DspEyeSource>(cfg, std::move(deps));
+        return std::make_unique<ScanEyeSource>(cfg, std::move(deps));
     if (type == "babble_usb")
         return std::make_unique<BabbleUsbSource>(cfg, std::move(deps));
     LOG.error("source %s: unknown type '%s'", deps.name.c_str(), type.c_str());
