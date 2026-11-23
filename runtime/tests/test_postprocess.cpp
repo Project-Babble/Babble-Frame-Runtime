@@ -391,6 +391,30 @@ TEST_CASE("openness closed level: a seed of 0 keeps Lid equal to the openness") 
     CHECK(hold(c, 0.35, 0.3).lid == doctest::Approx(0.5).epsilon(0.01));
 }
 
+TEST_CASE("WindowMin drops a short spike and shows a held value after the window") {
+    eye::WindowMin m(150'000'000);
+    const uint64_t dt = 1'000'000'000 / 24;
+    uint64_t t = 0;
+    for (int i = 0; i < 10; i++, t += dt)
+        CHECK(m.update(t, 0.0) == 0.0);
+    // A blink spike of 2 updates (83 ms) never shows.
+    for (int i = 0; i < 2; i++, t += dt)
+        CHECK(m.update(t, 0.8) == 0.0);
+    for (int i = 0; i < 10; i++, t += dt)
+        CHECK(m.update(t, 0.0) == 0.0);
+    // A held squint shows when the last low value is more than 150 ms old: at the 4th update.
+    double v = 0;
+    for (int i = 0; i < 3; i++, t += dt)
+        v = m.update(t, 0.8);
+    CHECK(v == 0.0);
+    CHECK(m.update(t, 0.8) == doctest::Approx(0.8));
+    t += dt;
+    // A drop shows at once.
+    CHECK(m.update(t, 0.3) == doctest::Approx(0.3));
+    m.reset();
+    CHECK(m.update(t + dt, 0.9) == doctest::Approx(0.9));
+}
+
 TEST_CASE("openness calibration behaves the same over time at 30 Hz") {
     eye::RateScale r{90, 30};
     eye::OpennessCalibrator::Params p;

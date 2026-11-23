@@ -95,10 +95,10 @@ void check_runner_golden(const char *model, const char *golden_file, const std::
 
 }
 
-TEST_CASE("ExecuTorchRunner runs the eye kit stage 1 (lid, pupil centre, Widen) and matches the Python ExecuTorch runtime") {
-    check_runner_golden("eye_kit_stage1_fp16.pte", "eye_kit_stage1_golden.json", {{2, 1, 96, 96}}, {2, 4});
+TEST_CASE("ExecuTorchRunner runs the eye kit stage 1 (lid, pupil centre, Widen, Squint) and matches the Python ExecuTorch runtime") {
+    check_runner_golden("eye_kit_stage1_fp16.pte", "eye_kit_stage1_golden.json", {{2, 1, 96, 96}}, {2, 5});
 }
 
 TEST_CASE("ExecuTorchRunner runs the eye kit stage 2 (pupil mm from a crop) and matches the Python ExecuTorch runtime") {
-    check_runner_golden("eye_kit_stage2_fp16.pte", "eye_kit_stage2_golden.json", {{2, 1, 64, 64}, {2, 2}}, {2, 1});
+    check_runner_golden("eye_kit_stage2_fp16.pte", "eye_kit_stage2_golden.json", {{2, 1, 48, 48}, {2, 2}}, {2, 1});
 }

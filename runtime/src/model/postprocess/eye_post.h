@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <deque>
 #include <optional>
+#include <utility>
 #include <vector>
 
 namespace babble::eye {
@@ -115,6 +116,20 @@ private:
     double close_min_ = 0;
     std::deque<double> seed_, chunk_, recent_, lows_, troughs_;
     std::optional<OneEuro> filter_;
+};
+
+// This filter gives the lowest value of the last window_ns nanoseconds. A short spike, such as the EyeSquint spike of a
+// blink, is dropped, and a held value shows window_ns later.
+class WindowMin {
+public:
+    WindowMin() = default;
+    explicit WindowMin(uint64_t window_ns) : window_ns_(window_ns) {}
+    double update(uint64_t t_ns, double v);
+    void reset() { buf_.clear(); }
+
+private:
+    uint64_t window_ns_ = 0;
+    std::deque<std::pair<uint64_t, double>> buf_;
 };
 
 // This tracker filters the pupil size with a gate, a blink hold and a rate limit.

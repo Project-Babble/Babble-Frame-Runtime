@@ -48,6 +48,8 @@ struct EyeReading {
     double neutral = 0, wide_raw = 0;    // The neutral and wide ceiling of the calibration, in raw units.
     bool dilation_ok = false;            // False until the pupil baseline exists.
     double dilation = 0;                 // The Dilation output, from 0 to 1, where 0.5 is the baseline.
+    bool squint_ok = false;              // False if the eye model has no Squint output.
+    double squint = 0;                   // The Squint output, from 0 to 1.
 };
 
 // The status of the output for the front page: the PC link, VRChat native face tracking or Babble OSC.

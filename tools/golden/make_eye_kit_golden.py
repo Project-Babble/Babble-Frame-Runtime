@@ -8,7 +8,7 @@ import cv2, numpy as np
 
 out = pathlib.Path(__file__).resolve().parents[2] / "runtime" / "tests" / "data"
 ref = np.load(sys.argv[1], allow_pickle=True)
-pick = [int(p) for p in sys.argv[2:]] or [20, 100, 180]
+pick = [int(p) for p in sys.argv[2:]] or [20, 100, 140]
 cases = []
 for k, i in enumerate(pick):
     for v in range(2):
@@ -19,5 +19,7 @@ for k, i in enumerate(pick):
                   "mm": [float(2 + 5 * s2[v]) for v in range(2)]})
     if s1.shape[1] > 3:   # A stage 1 with a Widen head gives its raw output as the fourth value.
         cases[-1]["widen"] = [float(s1[v, 3]) for v in range(2)]
+    if s1.shape[1] > 4:   # A stage 1 with an EyeSquint head gives its raw output as the fifth value.
+        cases[-1]["squint"] = [float(s1[v, 4]) for v in range(2)]
 json.dump({"source": pathlib.Path(sys.argv[1]).name, "pairs": cases}, open(out / "eye_kit_golden.json", "w"), indent=1)
 print(f"wrote {len(cases)} pairs to {out}")

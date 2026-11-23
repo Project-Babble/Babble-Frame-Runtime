@@ -173,6 +173,7 @@ TEST_CASE("the SteamVR Settings section maps to live runtime settings") {
     CHECK((*d)["pipelines"]["gaze"]["smoothing"] == 0);   // Gaze smoothing is off unless the user turns it on.
     CHECK((*d)["pipelines"]["eye"]["combine_widen"] == true);   // Both eyes send the mean Widen and dilation.
     CHECK((*d)["pipelines"]["eye"]["combine_dilation"] == true);
+    CHECK((*d)["pipelines"]["eye"]["combine_squint"] == true);
     CHECK((*d)["sources"]["face"]["tracker_flip_h"] == true);   // The Babble tracker image is flipped by default.
     CHECK_FALSE((*d)["pipelines"]["face"].contains("mirror"));
     CHECK((*d)["dashboard"]["enabled"] == true);    // The Babble tab is on after a new install.

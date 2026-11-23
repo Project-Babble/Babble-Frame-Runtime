@@ -12,9 +12,9 @@
 
 namespace babble {
 
-// The "babble_eye" pipeline gets eyelid openness, Widen and pupil dilation for each eye from the stereo eye cameras.
-// It runs the two-stage EyeKit: "model" is stage 1 (lid, pupil centre and Widen) and "pupil_model" is stage 2 (pupil
-// diameter in mm from a crop at that centre).
+// The "babble_eye" pipeline gets eyelid openness, Widen, Squint and pupil dilation for each eye from the stereo eye
+// cameras. It runs the two-stage EyeKit: "model" is stage 1 (lid, pupil centre, Widen and Squint) and "pupil_model" is
+// stage 2 (pupil diameter in mm from a crop at that centre).
 class BabbleEye : public PipelineBase {
 public:
     BabbleEye(const nlohmann::json &cfg, PipelineDeps deps) : PipelineBase(cfg, std::move(deps), "infE") {}
@@ -32,6 +32,8 @@ private:
 
     std::unique_ptr<EyeKit> kit_;
     double widen_gain_ = 0.8;   // Widen is the eye kit Widen head / this gain, if the kit has the head and it is > 0.
+    double squint_gain_ = 1.0;  // Squint is the eye kit EyeSquint head / this gain, if the kit has the head.
+    std::array<eye::WindowMin, 2> squint_min_{};   // These drop the short Squint spike of a blink.
     LatencyStat pupil_preprocess_, pupil_inference_;   // These are the stage 2 parts of the eye kit.
     std::array<SignalId, 2> mm_ids_{};                 // These debug signals are the shown pupil diameter in mm.
     std::vector<uint8_t> flip_;
@@ -57,14 +59,15 @@ private:
     std::atomic<bool> reset_pending_{false};
     std::atomic<bool> native_openness_{false};   // This is true if openness_source is "native".
     std::atomic<bool> tracking_on_{true};
-    // These are "combine_widen" and "combine_dilation": both eyes then get the mean of the two eyes.
-    std::atomic<bool> combine_widen_{true}, combine_dilation_{true};
+    // These are "combine_widen", "combine_dilation" and "combine_squint": both eyes then get the mean of the two eyes.
+    std::atomic<bool> combine_widen_{true}, combine_dilation_{true}, combine_squint_{true};
     void update_eye_server_want();
     Counter native_fallback_;
     bool use_calib_ = true, babble_swap_ = false;
     double pupil_gain_ = 2.0;
 
     std::array<SignalId, 3> left_ids_{}, right_ids_{};   // The order is Lid, Widen, Dilation.
+    std::array<SignalId, 2> squint_ids_{};               // LeftEyeSquint and RightEyeSquint, if the kit has the head.
     SignalId left_raw_id_ = 0, right_raw_id_ = 0;        // These debug signals are not sent.
     std::array<SignalId, 6> cal_ids_{};   // These debug signals show the neutral, wide and closed values of each eye.
 };

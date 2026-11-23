@@ -25,9 +25,13 @@ bool BabbleEye::init() {
         return false;
     }
     kit_ = std::make_unique<EyeKit>();
-    if (!kit_->load(model_path("model"), model_path("pupil_model"), cfg_.value("pupil_crop_px", 128u)))
+    std::vector<double> lags = cfg_.value("kit_history_lags", std::vector<double>{0.1, 0.25});
+    if (!kit_->load(model_path("model"), model_path("pupil_model"), cfg_.value("pupil_crop_px", 0u), lags))
         return false;
     widen_gain_ = cfg_.value("kit_widen_gain", widen_gain_);
+    squint_gain_ = std::max(0.01, cfg_.value("kit_squint_gain", squint_gain_));
+    for (auto &m : squint_min_)
+        m = eye::WindowMin(uint64_t(std::max(0.0, cfg_.value("squint_min_s", 0.0)) * 1e9));
     const std::string p = "pipe." + name_ + ".";
     deps_.stats.add(p + "pupil_preprocess", &pupil_preprocess_);
     deps_.stats.add(p + "pupil_inference", &pupil_inference_);
@@ -48,6 +52,7 @@ bool BabbleEye::init() {
     babble_swap_ = cfg_.value("babble_swap", false);
     combine_widen_ = cfg_.value("combine_widen", true);
     combine_dilation_ = cfg_.value("combine_dilation", true);
+    combine_squint_ = cfg_.value("combine_squint", true);
     // The eyes use their own One Euro filters, which are tuned apart from the mouth filters.
     lid_filter_ = one_euro_params(cfg_.value("one_euro", nlohmann::json::object()), eye::kLidOneEuro);
     // The eye kit gives the pupil in mm, so its filter and rate limit are in mm.
@@ -69,6 +74,10 @@ bool BabbleEye::init() {
         left_ids_[k] = deps_.state.add_signal(std::string("LeftEye") + names[k]);
         right_ids_[k] = deps_.state.add_signal(std::string("RightEye") + names[k]);
     }
+    if (kit_->has_squint()) {
+        squint_ids_[0] = deps_.state.add_signal("LeftEyeSquint");
+        squint_ids_[1] = deps_.state.add_signal("RightEyeSquint");
+    }
     // The lid value before calibration is for the debug overlay.
     left_raw_id_ = deps_.state.add_signal("_LeftEyeLidRaw");
     right_raw_id_ = deps_.state.add_signal("_RightEyeLidRaw");
@@ -81,10 +90,11 @@ bool BabbleEye::init() {
     mm_ids_[1] = deps_.state.add_signal("_RightEyePupilMm");
 
     flip_.resize(400 * 400);
-    LOG.info("pipeline %s: eye kit, lid + pupil centre (%u px)%s and pupil mm from a %u px crop (%u px), %s, on %s, "
+    LOG.info("pipeline %s: eye kit, lid + pupil centre (%u px)%s%s and pupil mm from a %u px crop (%u px), %s, on %s, "
              "filters tuned at %.0f updates/s",
              name_.c_str(), kit_->res(), !kit_->has_widen() ? "" : widen_gain_ > 0 ? " + Widen head" : " (Widen head off)",
-             cfg_.value("pupil_crop_px", 128u), kit_->crop_res(), kit_->fp16() ? "fp16" : "fp32", source_.c_str(), hz);
+             kit_->has_squint() ? kit_->has_history() ? " + Squint head + history" : " + Squint head" : "",
+             kit_->crop_px(), kit_->crop_res(), kit_->fp16() ? "fp16" : "fp32", source_.c_str(), hz);
     return true;
 }
 
@@ -104,6 +114,10 @@ void BabbleEye::start_session() {
         if (lid_filter_)
             lid_euro_[e].emplace(1, *lid_filter_);
     }
+    for (auto &m : squint_min_)
+        m.reset();
+    if (kit_)
+        kit_->reset_history();
     set_pupil_windows();
     last_capture_ns_ = 0;
     update_rate_.restart();   // The gap before this session is not an update interval.
@@ -149,8 +163,8 @@ void BabbleEye::retune(double hz) {
 }
 
 bool BabbleEye::set_option(const std::string &key, const nlohmann::json &value) {
-    if ((key == "combine_widen" || key == "combine_dilation") && value.is_boolean()) {
-        auto &flag = key == "combine_widen" ? combine_widen_ : combine_dilation_;
+    if ((key == "combine_widen" || key == "combine_dilation" || key == "combine_squint") && value.is_boolean()) {
+        auto &flag = key == "combine_widen" ? combine_widen_ : key == "combine_dilation" ? combine_dilation_ : combine_squint_;
         if (value.get<bool>() != flag.exchange(value.get<bool>()))
             LOG.info("pipeline %s: %s %s", name_.c_str(), key.c_str(), value.get<bool>() ? "on" : "off");
         return true;
@@ -179,8 +193,12 @@ void BabbleEye::update_eye_server_want() {
 
 std::vector<std::pair<SignalId, Signal>> BabbleEye::neutral(uint64_t now) const {
     // Send open, relaxed eyes (the VRCFT defaults) and keep the last dilation value.
-    return {{left_ids_[0], {1.0f, 0.0f, now}}, {left_ids_[1], {0.0f, 0.0f, now}},
-            {right_ids_[0], {1.0f, 0.0f, now}}, {right_ids_[1], {0.0f, 0.0f, now}}};
+    std::vector<std::pair<SignalId, Signal>> out = {{left_ids_[0], {1.0f, 0.0f, now}}, {left_ids_[1], {0.0f, 0.0f, now}},
+                                                    {right_ids_[0], {1.0f, 0.0f, now}}, {right_ids_[1], {0.0f, 0.0f, now}}};
+    if (kit_ && kit_->has_squint())
+        for (SignalId id : squint_ids_)
+            out.push_back({id, {0.0f, 0.0f, now}});
+    return out;
 }
 
 std::array<img::View, 2> BabbleEye::canonical(const StereoFrame &sf) {
@@ -230,7 +248,7 @@ void BabbleEye::process(const StereoFrame &sf) {
     EyeKit::Timing kt;
     const uint64_t t0 = mono_ns();
     const auto views = canonical(sf);
-    if (!kit_->run(views, kr, &kt))
+    if (!kit_->run(views, kr, sf.capture_ns, &kt))
         return;
     preprocess_.add(mono_ns() - t0 - kt.infer1 - kt.prep2 - kt.infer2);   // The flip and the stage 1 resize.
     inference_.add(kt.infer1);
@@ -248,6 +266,10 @@ void BabbleEye::process(const StereoFrame &sf) {
         else
             native_fallback_.add();
     }
+    double squint[2] = {0, 0};
+    if (kit_->has_squint())
+        for (int e = 0; e < 2; e++)
+            squint[e] = squint_min_[e].update(sf.capture_ns, std::clamp(kr.squint[e] / squint_gain_, 0.0, 1.0));
     double o[2], lid_out[2], widen[2];
     std::optional<double> dil[2];
     for (int e = 0; e < 2; e++) {
@@ -278,6 +300,8 @@ void BabbleEye::process(const StereoFrame &sf) {
         dil[e] = eye::dilation(r, pupil_gain_);
         shown_mm[e] = r.px;
     }
+    if (combine_squint_.load(std::memory_order_relaxed))
+        squint[0] = squint[1] = (squint[0] + squint[1]) / 2;
     if (combine_widen_.load(std::memory_order_relaxed))
         widen[0] = widen[1] = (widen[0] + widen[1]) / 2;
     if (combine_dilation_.load(std::memory_order_relaxed)) {
@@ -299,6 +323,10 @@ void BabbleEye::process(const StereoFrame &sf) {
     };
     emit(left_ids_, left);
     emit(right_ids_, right);
+    if (kit_->has_squint()) {
+        updates.emplace_back(squint_ids_[0], Signal{float(squint[left]), 1.0f, sf.capture_ns});
+        updates.emplace_back(squint_ids_[1], Signal{float(squint[right]), 1.0f, sf.capture_ns});
+    }
     updates.emplace_back(left_raw_id_, Signal{float(lid[left]), 1.0f, sf.capture_ns});
     updates.emplace_back(right_raw_id_, Signal{float(lid[right]), 1.0f, sf.capture_ns});
     if (shown_mm[left])

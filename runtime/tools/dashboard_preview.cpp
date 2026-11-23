@@ -58,6 +58,8 @@ int main(int argc, char **argv) {
          {0, 1}, 1, true, ChoicePage::EyeModifiers},
         {"/pipelines/eye/combine_dilation", "Combine Pupil Dilation",
          "Both eyes get the average pupil dilation of the two eyes.", "", {0, 1}, 0, true, ChoicePage::EyeModifiers},
+        {"/pipelines/eye/combine_squint", "Combine Eye Squint", "Both eyes get the average Squint of the two eyes.", "",
+         {0, 1}, 1, true, ChoicePage::EyeModifiers},
         {"/sinks/camera_stream/active", "Camera Stream",
          "Stream camera frames on TCP 9099 for diagnostics. Turns off after a restart.", "", {0, 1}, 1, true, ChoicePage::Diagnostics},
     };
@@ -73,9 +75,9 @@ int main(int argc, char **argv) {
     Status tracking{true, Worn::Yes, feed(Health::Working, 119.8), feed(Health::Working, 90.1)};
     tracking.visualizer = AppState::Stopped;
     // This eye looks left and up, and is wide open.
-    tracking.eyes[0] = {true, true, -18, 6, 1.0, 0.6, true, 0.843, true, 0.742, 0.941, true, 0.62};
+    tracking.eyes[0] = {true, true, -18, 6, 1.0, 0.6, true, 0.843, true, 0.742, 0.941, true, 0.62, true, 0.3};
     // This eye is half closed and the calibration is not complete.
-    tracking.eyes[1] = {true, true, -21, 5, 0.35, 0, true, 0.251, false, 0, 0, false, 0};
+    tracking.eyes[1] = {true, true, -21, 5, 0.35, 0, true, 0.251, false, 0, 0, false, 0, false, 0};
     tracking.link = {true, true, "lan", "Demo PC", "192.0.2.10", 3.6};
     // The output modules as main.cpp fills them from the module blocks in defaults.json.
     const ModuleOption native_target{"/sinks/vrc_native/target", "VRChat On", false, false,

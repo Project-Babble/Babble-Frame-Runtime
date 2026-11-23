@@ -30,9 +30,9 @@ void Dashboard::start(SteamVrClient &vr, ThreadSpec thread, Options options, std
     if (options_.state) {
         const char *names[2 * kPerEye] = {
             "LeftEyeX",  "LeftEyeY",  "LeftEyeLid",  "LeftEyeWiden",  "_LeftEyeLidRaw",
-            "_LeftEyeNeutral",  "_LeftEyeWideRaw",  "LeftEyeDilation",
+            "_LeftEyeNeutral",  "_LeftEyeWideRaw",  "LeftEyeDilation",  "LeftEyeSquint",
             "RightEyeX", "RightEyeY", "RightEyeLid", "RightEyeWiden", "_RightEyeLidRaw",
-            "_RightEyeNeutral", "_RightEyeWideRaw", "RightEyeDilation"};
+            "_RightEyeNeutral", "_RightEyeWideRaw", "RightEyeDilation", "RightEyeSquint"};
         for (int i = 0; i < 2 * kPerEye; i++)   // add_signal is idempotent, so this gets the pipeline signals.
             eye_ids_[i] = options_.state->add_signal(names[i]);
     }
@@ -236,7 +236,7 @@ std::array<EyeReading, 2> Dashboard::read_eyes() const {
     for (int e = 0; e < 2; e++) {
         const Signal *s = v + kPerEye * e;
         const Signal &x = s[0], &y = s[1], &lid = s[2], &widen = s[3], &raw = s[4], &neutral = s[5], &wide = s[6],
-                     &dil = s[7];
+                     &dil = s[7], &squint = s[8];
         EyeReading &r = out[e];
         r.gaze = recent(x) || recent(y);
         // The gaze outputs are angles with a scale where +-1 is +-45 deg.
@@ -252,6 +252,8 @@ std::array<EyeReading, 2> Dashboard::read_eyes() const {
         r.wide_raw = wide.value;
         r.dilation_ok = recent(dil);
         r.dilation = dil.value;
+        r.squint_ok = recent(squint);
+        r.squint = squint.value;
     }
     return out;
 }

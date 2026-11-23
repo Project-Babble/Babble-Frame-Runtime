@@ -325,8 +325,9 @@ void DashboardView::render_eye(Canvas &c, float x, float y, const char *name, co
             c.fill_rect({bar.x + bar.w / 2 - 1, bar.y - 3, 2, bar.h + 6}, kText);
     };
     meter(y + 83, "Openness", e.lid, e.openness, kAccent, false);
-    meter(y + 156, "Widen", e.lid, e.widen, kAccent, false);
-    meter(y + 229, "Dilation", e.dilation_ok, e.dilation, kViolet, true);
+    meter(y + 135, "Widen", e.lid, e.widen, kAccent, false);
+    meter(y + 187, "Squint", e.squint_ok, e.squint, kAccent, false);
+    meter(y + 239, "Dilation", e.dilation_ok, e.dilation, kViolet, true);
     if (e.raw) {
         char buf[128];
         if (e.cal)

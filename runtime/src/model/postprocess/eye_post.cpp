@@ -164,6 +164,18 @@ OpennessCalibrator::Out OpennessCalibrator::update(double x, double dt_s) {
     return out;
 }
 
+double WindowMin::update(uint64_t t_ns, double v) {
+    if (!buf_.empty() && t_ns < buf_.back().first)
+        buf_.clear();   // The clock went back, so the old samples are not comparable.
+    // Keep the samples in increasing order of value, so that the front is the minimum of the window.
+    while (!buf_.empty() && buf_.back().second >= v)
+        buf_.pop_back();
+    buf_.emplace_back(t_ns, v);
+    while (buf_.front().first + window_ns_ < t_ns)
+        buf_.pop_front();
+    return buf_.front().second;
+}
+
 PupilTracker::PupilTracker(double gate, double hys, int hold, std::optional<OneEuroParams> filter, double rate,
                            size_t base_window, size_t base_min)
     : gate_(gate), hys_(hys), rate_(rate), hold_(hold), base_window_(base_window), base_min_(base_min) {

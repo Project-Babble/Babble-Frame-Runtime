@@ -80,7 +80,7 @@ private:
     // Reads the eye panel values from ExpressionState and changes the gaze to degrees.
     std::array<EyeReading, 2> read_eyes() const;
     // The number of signals for each eye.
-    static constexpr int kPerEye = 8;
+    static constexpr int kPerEye = 9;
     std::array<SignalId, 2 * kPerEye> eye_ids_{};
     std::array<EyeReading, 2> drawn_eyes_{};
     uint64_t last_present_ns_ = 0;

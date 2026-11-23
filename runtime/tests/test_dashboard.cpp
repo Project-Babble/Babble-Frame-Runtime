@@ -373,22 +373,31 @@ TEST_CASE("the eye panel places gaze and fills labelled output meters") {
     CHECK_FALSE(is(px(meter_right - 10, 249), 0x0073cf));
     CHECK(is(px(meter_left + 10, 249), 0x0073cf));
 
-    CHECK_FALSE(is(px(meter_left + 10, 322), 0x0073cf));
+    CHECK_FALSE(is(px(meter_left + 10, 301), 0x0073cf));
     s.eyes[0].openness = 1.0;
     s.eyes[0].widen = 0.5;
     view.render(c, s, rates(), std::nullopt);
-    CHECK(is(px(meter_left + 10, 322), 0x0073cf));
-    CHECK_FALSE(is(px(meter_right - 10, 322), 0x0073cf));
+    CHECK(is(px(meter_left + 10, 301), 0x0073cf));
+    CHECK_FALSE(is(px(meter_right - 10, 301), 0x0073cf));
+
+    // Squint shows "No data" without an EyeSquint head, and fills when the model sends it.
+    s.eyes[0].squint = 0.5;
+    view.render(c, s, rates(), std::nullopt);
+    CHECK_FALSE(is(px(meter_left + 10, 353), 0x0073cf));
+    s.eyes[0].squint_ok = true;
+    view.render(c, s, rates(), std::nullopt);
+    CHECK(is(px(meter_left + 10, 353), 0x0073cf));
+    CHECK_FALSE(is(px(meter_right - 10, 353), 0x0073cf));
 
     // The view hides dilation until its baseline is ready, but the 50% baseline tick stays visible.
     s.eyes[0].dilation = 0.8;
     view.render(c, s, rates(), std::nullopt);
-    CHECK_FALSE(is(px(480, 395), 0xa78bfa));
-    CHECK(is(px(422, 395), 0xffffff));
+    CHECK_FALSE(is(px(480, 405), 0xa78bfa));
+    CHECK(is(px(422, 405), 0xffffff));
     s.eyes[0].dilation_ok = true;
     view.render(c, s, rates(), std::nullopt);
-    CHECK(is(px(480, 395), 0xa78bfa));
-    CHECK_FALSE(is(px(meter_right - 10, 395), 0xa78bfa));
+    CHECK(is(px(480, 405), 0xa78bfa));
+    CHECK_FALSE(is(px(meter_right - 10, 405), 0xa78bfa));
 
     // Readings out of range never go outside a meter or plot.
     s.eyes[0].yaw_deg = 90;
@@ -399,8 +408,8 @@ TEST_CASE("the eye panel places gaze and fills labelled output meters") {
     CHECK(is(px(cx + half, cy), 0x0073cf));
     CHECK(is(px(meter_right - 10, 249), 0x0073cf));
     CHECK_FALSE(is(px(meter_right + 2, 249), 0x0073cf));
-    CHECK_FALSE(is(px(meter_left + 10, 322), 0x0073cf));
-    CHECK_FALSE(is(px(meter_left + 10, 395), 0xa78bfa));
+    CHECK_FALSE(is(px(meter_left + 10, 301), 0x0073cf));
+    CHECK_FALSE(is(px(meter_left + 10, 405), 0xa78bfa));
 }
 
 TEST_CASE("the logo becomes the tab thumbnail, with a badge fallback") {
